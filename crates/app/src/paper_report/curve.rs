@@ -15,23 +15,30 @@ use super::{
 use crate::paper_calendar::fmt_offset_minute;
 use crate::paper_chrome::{caption, fmt_decimal, fmt_points, position_word};
 use crate::theme;
+use quantick_paper::report::EquityWalk;
 
 /// The realized equity curve, `E_k` by trade index — the closing order
 /// that defines the drawdown, so calling the axis "time" would misstate
 /// what is plotted. One quiet line; a diverging fill against the zero
 /// baseline answers "was I ever under water?" at a glance; the deepest
 /// drawdown is annotated so the number in the grid below is locatable.
+/// Units that never add up stack one curve each, sharing the height.
 pub(super) fn draw_equity_curve(ui: &mut egui::Ui, view: &ReportView, floor: f32) {
+    if view.rows.is_empty() {
+        return;
+    }
+    let count = view.equity.walks().len() as f32;
+    let height = ((ui.available_height() - CURVE_GRID_RESERVE_PX) / count)
+        .clamp(floor / count, CURVE_MAX_H_PX / count);
+    for walk in view.equity.walks() {
+        draw_walk(ui, view, walk, height);
+    }
+}
+
+fn draw_walk(ui: &mut egui::Ui, view: &ReportView, walk: &EquityWalk, height: f32) {
     let palette = theme::get(ui.ctx());
     let n = view.rows.len();
-    if n == 0 {
-        return;
-    }
-    ui.label(caption(&palette, &view.equity.caption()));
-    if !view.equity.plotted() {
-        return;
-    }
-    let height = (ui.available_height() - CURVE_GRID_RESERVE_PX).clamp(floor, CURVE_MAX_H_PX);
+    ui.label(caption(&palette, &walk.caption()));
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
         egui::Sense::hover(),
@@ -40,7 +47,7 @@ pub(super) fn draw_equity_curve(ui: &mut egui::Ui, view: &ReportView, floor: f32
         return;
     }
     // The walk E_0..E_n was cut with the view; the frame only plots it.
-    let (low, high) = (view.equity.low, view.equity.high);
+    let (low, high) = (walk.low, walk.high);
     let curve = CurveFrame {
         palette: palette.clone(),
         painter: ui.painter_at(rect),
@@ -52,13 +59,13 @@ pub(super) fn draw_equity_curve(ui: &mut egui::Ui, view: &ReportView, floor: f32
         n,
         low,
         span: (high - low).max(f32::EPSILON),
-        equity: &view.equity.plot,
+        walk,
     };
     curve.grid(high);
-    let stride = n.div_ceil(CURVE_MAX_POINTS).max(1);
+    let stride = walk.stride(CURVE_MAX_POINTS);
     curve.fill_and_line(stride);
-    if let Some((peak, trough, _)) = view.equity.drawdown {
-        curve.drawdown(peak, trough, view);
+    if let Some((peak, trough, _)) = walk.drawdown {
+        curve.drawdown(peak, trough);
     }
     curve.axis_words(stride);
     // Hover: snap to the nearest trade index and answer in the ledger's
@@ -84,7 +91,7 @@ struct CurveFrame<'a> {
     n: usize,
     low: f32,
     span: f32,
-    equity: &'a [f32],
+    walk: &'a EquityWalk,
 }
 
 impl CurveFrame<'_> {
@@ -122,24 +129,26 @@ impl CurveFrame<'_> {
     }
 
     /// Diverging fill to the zero baseline: gains and losses each in their
-    /// own area colour (`paper::equity_area`), split exactly at each crossing. Then the zero baseline over the
+    /// own area colour (`paper::equity_area`), split where the walk crosses
+    /// zero (`EquityWalk::fill_pieces`). Then the zero baseline over the
     /// fill, and the line over everything.
     fn fill_and_line(&self, stride: usize) {
-        let palette = &self.palette;
-        let (n, equity) = (self.n, self.equity);
-        let zero_y = self.y_at(0.0);
-        let mut drawn_points = vec![egui::pos2(self.x_at(0), self.y_at(equity[0]))];
-        let mut previous = 0usize;
-        let mut next = stride;
-        while previous < n {
-            let k = next.min(n);
-            let (a, b) = (equity[previous], equity[k]);
-            self.fill_step(self.x_at(previous), self.x_at(k), a, b, zero_y);
-            drawn_points.push(egui::pos2(self.x_at(k), self.y_at(b)));
-            previous = k;
-            next += stride;
+        let (palette, plot, equity) = (&self.palette, self.plot, &self.walk.plot);
+        let at = |(k, value): (f32, f32)| {
+            let x = plot.left() + plot.width() * k / (self.n as f32);
+            egui::pos2(x, self.y_at(value))
+        };
+        for piece in self.walk.fill_pieces(stride) {
+            let area = quantick_appearance::paper::equity_area(palette.resolved.dark, piece.gain);
+            let fill = theme::with_opacity(*palette.get(area), CURVE_FILL_ALPHA);
+            let corners = piece.corners.into_iter().map(at).collect();
+            self.painter.add(egui::Shape::convex_polygon(
+                corners,
+                fill,
+                egui::Stroke::NONE,
+            ));
         }
-        let plot = self.plot;
+        let zero_y = self.y_at(0.0);
         self.painter.line_segment(
             [
                 egui::pos2(plot.left(), zero_y),
@@ -147,11 +156,12 @@ impl CurveFrame<'_> {
             ],
             egui::Stroke::new(1.0_f32, palette.border()),
         );
+        let drawn = self.walk.drawn(stride).into_iter();
         self.painter.add(egui::Shape::line(
-            drawn_points,
+            drawn.map(|k| at((k as f32, equity[k]))).collect(),
             egui::Stroke::new(1.5_f32, palette.text_primary()),
         ));
-        if n == 1 {
+        if self.n == 1 {
             self.painter.circle_filled(
                 egui::pos2(self.x_at(1), self.y_at(equity[1])),
                 2.0,
@@ -167,62 +177,17 @@ impl CurveFrame<'_> {
         }
     }
 
-    /// The fill under one step of the walk, from `a` at `x0` to `b` at `x1`.
-    fn fill_step(&self, x0: f32, x1: f32, a: f32, b: f32, zero_y: f32) {
-        let palette = &self.palette;
-        let fill_of = |value: f32| {
-            let area = quantick_appearance::paper::equity_area(palette.resolved.dark, value >= 0.0);
-            theme::with_opacity(*palette.get(area), CURVE_FILL_ALPHA)
-        };
-        if a == 0.0 && b == 0.0 {
-            // Nothing to fill on the baseline itself.
-        } else if (a >= 0.0) == (b >= 0.0) {
-            self.painter.add(egui::Shape::convex_polygon(
-                vec![
-                    egui::pos2(x0, self.y_at(a)),
-                    egui::pos2(x1, self.y_at(b)),
-                    egui::pos2(x1, zero_y),
-                    egui::pos2(x0, zero_y),
-                ],
-                fill_of(if a == 0.0 { b } else { a }),
-                egui::Stroke::NONE,
-            ));
-        } else {
-            // The step crosses zero: split it at the exact crossing.
-            let t = a / (a - b);
-            let xc = x0 + (x1 - x0) * t;
-            self.painter.add(egui::Shape::convex_polygon(
-                vec![
-                    egui::pos2(x0, self.y_at(a)),
-                    egui::pos2(xc, zero_y),
-                    egui::pos2(x0, zero_y),
-                ],
-                fill_of(a),
-                egui::Stroke::NONE,
-            ));
-            self.painter.add(egui::Shape::convex_polygon(
-                vec![
-                    egui::pos2(xc, zero_y),
-                    egui::pos2(x1, self.y_at(b)),
-                    egui::pos2(x1, zero_y),
-                ],
-                fill_of(b),
-                egui::Stroke::NONE,
-            ));
-        }
-    }
-
     /// The deepest drawdown, locatable: its peak level dotted, the drop
     /// solid, the number on a chip at the drop's midpoint.
-    fn drawdown(&self, peak: usize, trough: usize, view: &ReportView) {
+    fn drawdown(&self, peak: usize, trough: usize) {
         let palette = &self.palette;
         if trough > self.n {
             return;
         }
         let painter = &self.painter;
-        let peak_y = self.y_at(self.equity[peak]);
+        let peak_y = self.y_at(self.walk.plot[peak]);
         let trough_x = self.x_at(trough);
-        let trough_y = self.y_at(self.equity[trough]);
+        let trough_y = self.y_at(self.walk.plot[trough]);
         painter.extend(egui::Shape::dashed_line(
             &[
                 egui::pos2(self.x_at(peak), peak_y),
@@ -236,7 +201,7 @@ impl CurveFrame<'_> {
             [egui::pos2(trough_x, peak_y), egui::pos2(trough_x, trough_y)],
             egui::Stroke::new(1.0_f32, palette.sell()),
         );
-        let label = view.equity.drawdown_text();
+        let label = self.walk.drawdown_text();
         let chip = quantick_appearance::paper::drawdown_chip(palette.resolved.dark);
         let (fill, ink) = (*palette.get(chip.fill), *palette.get(chip.ink));
         let galley = painter.layout_no_wrap(label, palette.mono_font(10.0), ink);
@@ -314,7 +279,7 @@ impl CurveFrame<'_> {
         };
         let lines = [
             head,
-            format!("equity {}", view.equity.text(k)),
+            format!("equity {}", self.walk.text(k)),
             if k == 0 {
                 String::new()
             } else {

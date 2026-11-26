@@ -21,7 +21,7 @@ use super::{
     REPORT_MIN_HEIGHT_PX, REPORT_MIN_WIDTH_PX, ReportEnv, SourceFilter,
 };
 use crate::paper_calendar::{DayFace, draw_month, today};
-use crate::paper_chrome::pill_toggle;
+use crate::paper_chrome::{pill_toggle, pnl_mode_switch};
 use crate::theme;
 use crate::timezone::TzOffset;
 
@@ -78,7 +78,7 @@ impl Paint<'_, '_> {
                         self.update(Intent::ClearFilters(env.symbol.to_owned()));
                     }
                 }
-                self.draw_report_dates(ui, tz);
+                self.draw_report_dates(ui, tz, env);
                 self.ensure_report_view(tz, env.pnl);
                 if let Some(view) = self.report_view() {
                     ui.label(
@@ -281,7 +281,7 @@ impl Paint<'_, '_> {
     /// The `Dates` button, the picked days' chip and, while open, the
     /// popover: presets, the month grid and its gesture hint. Every pick
     /// applies at once; a press outside the popover closes it.
-    fn draw_report_dates(&mut self, ui: &mut egui::Ui, tz: TzOffset) {
+    fn draw_report_dates(&mut self, ui: &mut egui::Ui, tz: TzOffset, env: &ReportEnv<'_>) {
         let open = self.calendar().open;
         let (button, chip, clear) = ui
             .horizontal(|ui| {
@@ -291,18 +291,26 @@ impl Paint<'_, '_> {
                     open,
                     "pick the days to report: click = day, Shift+click = range",
                 );
-                if self.picked_days().is_empty() {
-                    return (button, None, false);
-                }
                 // The chip's label opens the picker; only its x clears.
-                let label = self.picked_days().label();
-                let chip = pill_toggle(ui, &label, true, "open the date picker");
-                let back = format!(
-                    "clear the dates - back to {}",
-                    self.report_period().phrase()
-                );
-                let clear = ui.small_button(icons::X).on_hover_text(back).clicked();
-                (button, Some(chip), clear)
+                let (chip, clear) = if self.picked_days().is_empty() {
+                    (None, false)
+                } else {
+                    let label = self.picked_days().label();
+                    let chip = pill_toggle(ui, &label, true, "open the date picker");
+                    let back = format!(
+                        "clear the dates - back to {}",
+                        self.report_period().phrase()
+                    );
+                    (
+                        Some(chip),
+                        ui.small_button(icons::X).on_hover_text(back).clicked(),
+                    )
+                };
+                let (current, modes) = (env.pnl.primary(env.symbol), env.pnl.modes(env.symbol));
+                if let Some(primary) = pnl_mode_switch(ui, current, modes) {
+                    self.update(Intent::PnlPrimary(primary));
+                }
+                (button, chip, clear)
             })
             .inner;
         if clear {

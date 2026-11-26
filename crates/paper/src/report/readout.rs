@@ -20,10 +20,6 @@ use crate::pnl::{PnlKey, PnlPrimary, PnlReader, PnlTotal, SymbolPnl, fmt_amount}
 
 /// Why a walk is in grouped points when money was asked for.
 const UNSET_FALLBACK: &str = "pt value unset";
-const MIXED_FALLBACK: &str = "mixed currencies";
-/// Why there is no walk at all: no money to plot, and points that add up
-/// to nothing.
-const NO_CURVE: &str = "mixed units — no curve";
 
 /// The realized-equity walk `E_0..E_n` (`E_0 = 0` before the first trade),
 /// in the two shapes its two readers need: exact values for the trade
@@ -45,6 +41,178 @@ pub struct EquityWalk {
     pub fallback: Option<&'static str>,
     /// The deepest drawdown of this walk: peak index, trough index, depth.
     pub drawdown: Option<(usize, usize, Decimal)>,
+    /// The instrument a points walk measures, named when other walks
+    /// share the report; empty otherwise.
+    pub label: String,
+}
+
+/// The report's walks: one per unit that adds up — one currency in money,
+/// one instrument in points — and which walk each trade belongs to. Never
+/// empty.
+pub struct EquityWalks {
+    walks: Vec<EquityWalk>,
+    /// Per row, the index of its walk.
+    of_row: Vec<usize>,
+}
+
+/// What one row's figure adds up with.
+#[derive(PartialEq, Eq)]
+struct UnitKey {
+    primary: PnlPrimary,
+    fallback: Option<&'static str>,
+    /// The currency code in money; the price unit's suffix in points.
+    unit: String,
+    /// The instrument a points figure measures; empty in money.
+    instrument: String,
+}
+
+impl UnitKey {
+    fn of(row: &HistoryRow, pnl: PnlReader<'_>, chosen: PnlPrimary) -> Self {
+        let units = pnl.book.units(&row.symbol);
+        match (chosen, units.money) {
+            (PnlPrimary::Money, Some(money)) => Self {
+                primary: PnlPrimary::Money,
+                fallback: None,
+                unit: money.currency.code().to_string(),
+                instrument: String::new(),
+            },
+            _ => Self {
+                primary: match chosen {
+                    PnlPrimary::Money => PnlPrimary::PointsTimesQty,
+                    points => points,
+                },
+                fallback: (chosen == PnlPrimary::Money).then_some(UNSET_FALLBACK),
+                unit: units.unit_suffix(),
+                instrument: units.family.unwrap_or(&row.symbol).to_owned(),
+            },
+        }
+    }
+}
+
+impl EquityWalks {
+    /// One walk over every row.
+    #[must_use]
+    pub fn single(walk: EquityWalk) -> Self {
+        Self {
+            of_row: vec![0; walk.points.len().saturating_sub(1)],
+            walks: vec![walk],
+        }
+    }
+
+    /// The walks of `rows` in the figure the trader reads P&L by. Each
+    /// spans every row, flat where another unit's trade closes, so trade
+    /// `k` sits at the same x on every curve; a sum across units is never
+    /// drawn. Money asked of a trade with no point value walks its points
+    /// and says why. `total` is `pnl`'s sum of the same rows.
+    #[must_use]
+    pub fn read(rows: &[HistoryRow], pnl: PnlReader<'_>, total: &PnlTotal) -> Self {
+        let chosen = pnl.settings.primary(total.money().is_some());
+        let mut keys: Vec<UnitKey> = Vec::new();
+        let of_row: Vec<usize> = rows
+            .iter()
+            .map(|row| {
+                let key = UnitKey::of(row, pnl, chosen);
+                keys.iter()
+                    .position(|seen| *seen == key)
+                    .unwrap_or_else(|| {
+                        keys.push(key);
+                        keys.len() - 1
+                    })
+            })
+            .collect();
+        if keys.is_empty() {
+            let walk = EquityWalk::walk([], chosen, total.unit_label(chosen));
+            return Self::single(walk);
+        }
+        let several = keys.len() > 1;
+        let walks = keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| {
+                let mine = |at: &usize| *at == index;
+                let unit = pnl
+                    .sum(
+                        rows.iter()
+                            .zip(&of_row)
+                            .filter(|(_, at)| mine(at))
+                            .map(|(row, _)| (row.symbol.as_str(), &row.trade)),
+                    )
+                    .unit_label(key.primary);
+                let values = rows.iter().zip(&of_row).map(|(row, at)| {
+                    mine(at)
+                        .then(|| pnl.value(&row.symbol, &row.trade, key.primary))
+                        .flatten()
+                        .unwrap_or_default()
+                });
+                let mut walk = EquityWalk::walk(values, key.primary, unit);
+                walk.fallback = key.fallback;
+                if several {
+                    walk.label.clone_from(&key.instrument);
+                }
+                walk
+            })
+            .collect();
+        Self { walks, of_row }
+    }
+
+    /// Every walk, the first trade's unit first.
+    #[must_use]
+    pub fn walks(&self) -> &[EquityWalk] {
+        &self.walks
+    }
+
+    /// The walk `E_k` is read on: trade `k`'s own, the first before any.
+    #[must_use]
+    pub fn walk_at(&self, k: usize) -> &EquityWalk {
+        let index = k
+            .checked_sub(1)
+            .and_then(|row| self.of_row.get(row))
+            .copied()
+            .unwrap_or(0);
+        &self.walks[index]
+    }
+
+    /// `E_k` on trade `k`'s own walk, as the EQUITY cell reads it.
+    #[must_use]
+    pub fn text(&self, k: usize) -> String {
+        self.walk_at(k).text(k)
+    }
+
+    /// `E_k` on trade `k`'s own walk, for the cell's colour.
+    #[must_use]
+    pub fn value(&self, k: usize) -> Decimal {
+        self.walk_at(k).points.get(k).copied().unwrap_or_default()
+    }
+
+    /// The sign every walk ends on, or zero where they disagree.
+    #[must_use]
+    pub fn ends_tint(&self) -> Decimal {
+        let ends = || self.walks.iter().filter_map(|walk| walk.points.last());
+        if ends().all(|end| *end > Decimal::ZERO) {
+            Decimal::ONE
+        } else if ends().all(|end| *end < Decimal::ZERO) {
+            Decimal::NEGATIVE_ONE
+        } else {
+            Decimal::ZERO
+        }
+    }
+
+    /// Each walk's end side by side: the net of units that never add up.
+    #[must_use]
+    pub fn ends_text(&self) -> String {
+        self.walks
+            .iter()
+            .map(|walk| {
+                let end = walk.text(walk.points.len().saturating_sub(1));
+                if walk.label.is_empty() {
+                    end
+                } else {
+                    format!("{end} {}", walk.label)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" / ")
+    }
 }
 
 impl EquityWalk {
@@ -98,68 +266,13 @@ impl EquityWalk {
             unit,
             fallback: None,
             drawdown,
+            label: String::new(),
         }
     }
 
-    /// The walk of `rows` in the figure `pnl` leads a total of them with —
-    /// grouped points, labelled, where that is money no single currency
-    /// can hold. `total` is `pnl`'s sum of the same rows.
-    #[must_use]
-    pub fn read(rows: &[HistoryRow], pnl: PnlReader<'_>, total: &PnlTotal) -> Self {
-        let chosen = pnl.total_primary(total);
-        let fallback = match (chosen, total.money()) {
-            (PnlPrimary::Money, None) => Some(UNSET_FALLBACK),
-            (PnlPrimary::Money, Some(money)) if money.len() > 1 => Some(MIXED_FALLBACK),
-            _ => None,
-        };
-        let primary = if fallback.is_some() {
-            PnlPrimary::PointsTimesQty
-        } else {
-            chosen
-        };
-        if primary != PnlPrimary::Money && total.mixed_units() {
-            // Points of instruments worth different things are no figure at
-            // all, chosen or fallen back to: no curve beats a sum across units.
-            return Self::unplotted();
-        }
-        let values = rows.iter().map(|row| {
-            pnl.value(&row.symbol, &row.trade, primary)
-                .unwrap_or_default()
-        });
-        let mut walk = Self::walk(values, primary, total.unit_label(primary));
-        walk.fallback = fallback;
-        walk
-    }
-
-    /// The walk that is not plotted: trades whose money cannot be read and
-    /// whose points are worth different things. No values, no drawdown —
-    /// only the caption saying why.
-    fn unplotted() -> Self {
-        Self {
-            points: Vec::new(),
-            plot: Vec::new(),
-            low: 0.0,
-            high: 0.0,
-            primary: PnlPrimary::PointsTimesQty,
-            unit: String::new(),
-            fallback: Some(NO_CURVE),
-            drawdown: None,
-        }
-    }
-
-    /// Whether there is a curve to paint; see [`Self::unplotted`].
-    #[must_use]
-    pub fn plotted(&self) -> bool {
-        !self.plot.is_empty()
-    }
-
-    /// `E_k` in the walk's figure and unit; flat past the end. Empty for a
-    /// walk that is not plotted.
+    /// `E_k` in the walk's figure and unit; flat past the end.
     #[must_use]
     pub fn text(&self, k: usize) -> String {
-        if !self.plotted() {
-            return String::new();
-        }
         let value = self.points.get(k).copied().unwrap_or_default();
         fmt_amount(value, self.primary, &self.unit)
     }
@@ -169,6 +282,10 @@ impl EquityWalk {
     #[must_use]
     pub fn caption(&self) -> String {
         let mut caption = "REALIZED EQUITY".to_owned();
+        if !self.label.is_empty() {
+            caption.push_str(" · ");
+            caption.push_str(&self.label);
+        }
         if !self.unit.is_empty() {
             caption.push_str(" · ");
             caption.push_str(&self.unit);
@@ -197,14 +314,25 @@ impl ReportView {
                 .iter()
                 .map(|row| (row.symbol.as_str(), &row.trade)),
         );
-        self.equity = EquityWalk::read(&self.rows, pnl, &total);
+        self.equity = EquityWalks::read(&self.rows, pnl, &total);
         self.pnl_rows = self
             .rows
             .iter()
             .map(|row| pnl.trade(&row.symbol, row.trade.net_points(), row.trade.quantity))
             .collect();
-        self.net_text = pnl.word_split(&total);
-        self.net_tint = pnl.tint(&total);
+        if self.equity.walks().len() > 1 {
+            // Units that never add up: the net is each walk's end, the
+            // other figure behind it, and the colour only where all agree.
+            let other = match self.equity.walks()[0].primary {
+                PnlPrimary::Money => PnlPrimary::PointsPerContract,
+                _ => PnlPrimary::Money,
+            };
+            self.net_text = (self.equity.ends_text(), total.fmt(other));
+            self.net_tint = self.equity.ends_tint();
+        } else {
+            self.net_text = pnl.word_split(&total);
+            self.net_tint = pnl.tint(&total);
+        }
         self.pnl_key = Some(pnl.key());
         self
     }

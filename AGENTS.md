@@ -22,10 +22,10 @@ and `.agents/skills/`.
 | `mcp` | control-local, control | The MCP adapter; stdout carries MCP frames only. |
 | `guards` | — | Ratchets and scans. |
 | `control-handlers` | alerts, chart*, civil, control, control-host, control-schema, drawings, engine, orderflow, paper, replay, session, sim, sources, stores, workspace | Port handlers. |
-| `control-schema` | control, control-host, stores, pine, layers, operability, trading, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
+| `control-schema` | control, control-host, stores, pine, layers, operability, session, trading, orderflow, indicators, orderbook, engine | Wire schemas over the domain. |
 | `stores` | alerts, appearance, chart, drawings, sources, workspace, orderflow, indicators, engine, orderbook (dev) | Cockpit documents; the alert observer cache. |
 | `ui-model` | alerts, appearance, chart*, civil, control, control-handlers, control-schema, drawings, engine, indicators, layers, orderflow, paper, replay, session, sources, stores, strategy, workspace, sim (dev), trading (dev) | UI contracts and catalog. |
-| `session` | chart*, civil, engine, paper, sim, sources, strategy, workspace | Candles, paging, draft choices. |
+| `session` | chart*, civil, engine, paper, script-trigger, sim, sources, strategy, trading, workspace | Candles, paging, draft choices. |
 | `drawings` | alerts, anchored-studies, appearance, chart*, engine, indicators, workspace | Chart marks: store, update, scenes. |
 | `alerts` | civil, workspace | Alerts and sounds. |
 | `appearance` | — | Colors and typography. |
@@ -40,12 +40,12 @@ and `.agents/skills/`.
 | `replay` | civil, engine | Recorded sessions, playback clock; told the time. Test support: `replay::test_support`. |
 | `paper` | sim, trading, replay, workspace, civil, engine | Paper account, risk, journal and report. |
 | `sim` | trading, engine | `TradingVenue` impl; fills only on tape, never quotes. |
-| `trading` | engine | Venue-neutral order vocabulary and the `TradingVenue` port. |
+| `trading` | engine | Order vocabulary and the `TradingVenue` port. |
 | `broker-mt5` | trading, engine | MT5 broker `TradingVenue`; owns one socket. |
 | `feed` | feed-*, control-local, sources, replay, operability, orderbook, engine | `FeedEvent`/`FeedCommand`, adapters; owns runtimes, threads, clock |
 | `feed-binance`, `feed-hyperliquid`, `feed-mt5` | engine, orderbook; binance also sources | Produce trades. |
 | `sources` | engine | Feed config vocabulary and history reach. |
-| `orderflow` | appearance, engine, orderbook | Liquidity history, grouping, timeline and heatmaps. Told the time. |
+| `orderflow` | appearance, engine, orderbook | Liquidity history, grouping, timeline, heatmaps; told the time. |
 | `engine` | — | Trades in, bars out. Deterministic, no clock. |
 | `orderbook` | — | L2 book core. |
 | `control` | — | Control-plane contracts and `fake` ports. |

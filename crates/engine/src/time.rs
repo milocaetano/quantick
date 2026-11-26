@@ -1,30 +1,6 @@
-//! Time bars — the baseline reference, driven only by trade timestamps.
-//!
-//! Time bars close on fixed wall-clock intervals (1s, 1m, ...). They are not
-//! the point of quantick — the alternative bars are — but they are the baseline
-//! the alternative bars are compared against, on the chart and in research, and
-//! they are nearly free once the builder skeleton exists.
-//!
-//! Crucially, the interval boundary is derived **only from trade timestamps**,
-//! never from a wall clock: a trade at time `t` falls in the bucket
-//! [`crate::time_bucket::time_bucket_start`] names — `floor(t / interval) * interval` for a fixed
-//! interval, Monday 00:00 UTC for whole weeks and the calendar month for
-//! months (see [`crate::time_bucket`]). Reading the host clock would make the
-//! same fixture produce different bars on different runs — a determinism
-//! violation.
-//!
-//! # Empty-interval policy: skip, don't fabricate
-//!
-//! An interval in which no trade occurred produces **no bar**. The alternative:
-//! emitting an "empty" bar (volume 0, OHLC carried forward from the previous
-//! close) would fabricate a price for a moment that had no trade — inferred data
-//! presented as if it were sampled, which the data-honesty rule forbids. The
-//! alternative bars never have empty bars either, so skipping keeps the baseline
-//! consistent with them.
-//!
-//! The skip is not hidden: consecutive closed bars can be non-contiguous in
-//! time (a bar's `open_time` bucket may be several intervals after the previous
-//! bar's), and that gap is the honest record that no trades happened in between.
+//! Time bars: the baseline reference, driven only by trade timestamps, never a wall clock.
+//! A trade falls in the bucket [`crate::time_bucket::time_bucket_start`] names (see
+//! [`crate::time_bucket`]). An interval with no trades yields no bar: never fabricate a price.
 
 use rust_decimal::Decimal;
 
@@ -32,31 +8,23 @@ use crate::time_bucket::TimeBucketLaw;
 use crate::{Bar, BarBuilder, BarProgress, Trade};
 
 /// Builds time bars: one bar per `interval_ms` interval that contains trades.
-///
-/// Feed trades in non-decreasing timestamp order with
-/// [`push`](BarBuilder::push); a bar closes when the first trade of a *later*
-/// interval arrives. Intervals with no trades are skipped (see the [module
-/// docs](self)).
+/// Feed trades in non-decreasing timestamp order; a bar closes when a later interval's trade
+/// arrives. Empty intervals are skipped (see the module docs).
 #[derive(Debug, Clone)]
 pub struct TimeBarBuilder {
     interval_ms: i64,
     /// The interval's shape, read once: a trade never re-derives it.
     law: TimeBucketLaw,
     bucket_start: i64,
-    /// Where the forming bar's bucket ends, exclusive. A trade before it (and
-    /// not before `bucket_start`) joins the forming bar on one comparison;
-    /// only a trade past it asks the law where its bucket starts.
+    /// Where the forming bucket ends, exclusive: a trade before it joins on one comparison.
     bucket_end: i64,
     current: Option<Bar>,
 }
 
 impl TimeBarBuilder {
     /// Create a builder with the given interval, in milliseconds.
-    ///
     /// # Panics
-    ///
-    /// Panics if `interval_ms <= 0`: a non-positive interval has no meaningful
-    /// bucket boundary.
+    /// Panics if `interval_ms <= 0`: a non-positive interval has no bucket boundary.
     #[must_use]
     pub fn new(interval_ms: i64) -> Self {
         assert!(
@@ -84,17 +52,14 @@ impl TimeBarBuilder {
 impl BarBuilder for TimeBarBuilder {
     fn push(&mut self, trade: &Trade) -> Option<Bar> {
         let time = trade.timestamp_ms;
-        // Same interval: fold the trade into the forming bar. The hot path,
-        // and one comparison against the bucket already resolved.
+        // Same interval: fold into the forming bar (the hot path).
         if let Some(bar) = &mut self.current
             && (self.bucket_start..self.bucket_end).contains(&time)
         {
             bar.extend(trade);
             return None;
         }
-        // The first trade, or one in another interval: open a fresh bar for it
-        // and close the one forming, if any. Intervening empty intervals are
-        // simply skipped.
+        // The first trade, or one in another interval: open a fresh bar and close the forming one.
         self.bucket_start = self.law.start(time);
         self.bucket_end = self.law.end(self.bucket_start);
         self.current.replace(Bar::opened_by(trade))
@@ -109,14 +74,8 @@ impl BarBuilder for TimeBarBuilder {
         self.current.as_ref()
     }
 
-    /// Elapsed time *of the trades seen*, against the interval — never a wall
-    /// clock, which would make the same fixture report differently on two runs.
-    /// A quiet stretch therefore freezes the readout instead of running it out:
-    /// the bar closes on the first trade of a later interval, so with no trades
-    /// there is nothing yet to close it.
-    ///
-    /// The target is this bucket's own length, which for a calendar month is
-    /// the month's days rather than the nominal interval.
+    /// Elapsed time of the trades seen against the bucket's own length, never a wall clock.
+    /// A quiet stretch freezes the readout: only a later trade closes the bar.
     fn progress(&self) -> Option<BarProgress> {
         let bar = self.current.as_ref()?;
         let length = self.bucket_end - self.bucket_start;
@@ -208,8 +167,7 @@ mod tests {
         assert_eq!(b.partial().unwrap().open_time, 4200);
     }
 
-    /// The bucket resolved once and cached must cut exactly where the law
-    /// does for every trade: same trades in, same bars out, whichever shape.
+    /// The bucket resolved once and cached must cut exactly where the law does for every trade.
     #[test]
     fn the_cached_bucket_cuts_where_the_law_does() {
         use crate::time_bucket::{CALENDAR_MONTH_MS, DAY_MS, WEEK_MS, time_bucket_start};
@@ -237,8 +195,7 @@ mod tests {
         }
     }
 
-    /// The countdown follows the trades, not a wall clock — the same fixture
-    /// must report the same progress on every run.
+    /// The countdown follows the trades, not a wall clock.
     #[test]
     fn progress_is_elapsed_trade_time_inside_the_interval() {
         let mut b = TimeBarBuilder::new(1000);

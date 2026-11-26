@@ -1,11 +1,6 @@
 //! [`TradeTape`]: the chart's retained tape, and what an append may cost.
-//!
-//! The oracle is the `Vec<Trade>` the chart held before the tape was chunked:
-//! after every one of a sequence of irregular appends and prepends, every read
-//! the tape offers must answer exactly as the same read over the vector
-//! does, across several chunk boundaries. Three tests pin what the chunks buy
-//! — no print moves when the tape grows, at most one chunk is held unused,
-//! and a stretch comes back as one slice per chunk it touches.
+//! The oracle is a `Vec<Trade>`: every read must answer as the vector does across chunk
+//! boundaries; other tests pin no print moves, one unused chunk at most, one slice per chunk.
 
 use quantick_engine::trade_tape::{CHUNK_TRADES, TradeSeq, TradeTape};
 use quantick_engine::{Side, Trade, fixture::parse_trades};
@@ -117,9 +112,7 @@ fn assert_reads_like(tape: &TradeTape, oracle: &[Trade]) {
     for &start in &at {
         for &end in at.iter().filter(|&&end| end >= start) {
             let want = &oracle[start..end];
-            // Windows up to a chunk and a bit, and the whole tape, are read
-            // whole; longer ones at both ends and at every chunk seam inside,
-            // which is where the chunk arithmetic lives.
+            // Windows up to a chunk and a bit are read whole; longer ones at both ends and chunk seams.
             let whole = want.len() <= CHUNK_TRADES + 8 || (start == 0 && end == len);
             let window = tape.range(start..end);
             assert_eq!(window.len(), want.len(), "range({start}..{end}).len()");
@@ -186,8 +179,7 @@ fn assert_reads_like(tape: &TradeTape, oracle: &[Trade]) {
     assert_eq!(TradeSeq::len(oracle), len);
     assert_eq!(TradeSeq::get(oracle, len / 2), oracle.get(len / 2));
 
-    // A binary search answers only for a tape sorted by the key it cuts on;
-    // the chart's own tape is, and so are the synthetic ones here.
+    // A binary search answers only for a tape sorted by its key; the chart's own tape is.
     if !oracle.is_sorted_by_key(|trade| trade.timestamp_ms) {
         return;
     }
@@ -369,8 +361,7 @@ fn a_range_out_of_order_panics_like_a_vec() {
     let _ = tape.range(2..1);
 }
 
-/// The stall this type exists to remove: growing the tape must never move a
-/// print it already holds — a moved print is a copied tape.
+/// Growing the tape must never move a print it already holds: a moved print is a copied tape.
 #[test]
 fn appending_never_moves_a_trade_already_held() {
     let mut tape = TradeTape::new();
@@ -404,8 +395,7 @@ fn appending_never_moves_a_trade_already_held() {
     }
 }
 
-/// What the chunks cost in memory: at most one chunk held and unused, where
-/// a doubling vector holds up to the whole tape again.
+/// At most one chunk held and unused, where a doubling vector holds up to the whole tape again.
 #[test]
 fn the_tape_reserves_at_most_one_chunk_it_does_not_use() {
     for len in [

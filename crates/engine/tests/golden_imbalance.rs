@@ -20,16 +20,10 @@ fn bar_lengths_tell_the_information_story() {
     // Sell regime continues: the adapted threshold tracks it, so the second
     // bar runs a full expected length too.
     assert_eq!(bars[1].trade_count, 8);
-    // Contrary buy burst — information the expectations did not predict —
-    // closes the third bar after only 3 trades: sampling accelerates exactly
-    // when new information arrives. Three and not two because the threshold
-    // floor is `round(sqrt(8))` = 3 typical trades rather than the old
-    // `E[T] * 0.05`, which had collapsed to 0.1 and would have closed a bar
-    // on any single print at all.
+    // Contrary buy burst closes the third bar after only 3 trades: sampling accelerates on new
+    // information. Three because the threshold floor is `round(sqrt(8))` = 3 typical trades.
     assert_eq!(bars[2].trade_count, 3);
     assert!(bars[2].delta() > rust_decimal::Decimal::ZERO, "a buy bar");
-    // And the choppy two-way flow after it closes nothing: it carries no
-    // imbalance, so it waits in the forming bar instead of being sampled one
-    // print at a time. That cascade is what the old floor produced here.
+    // The choppy two-way flow after it carries no imbalance, so it waits in the forming bar.
     assert_eq!(bars.len(), 3, "no bar closes on noise after the burst");
 }

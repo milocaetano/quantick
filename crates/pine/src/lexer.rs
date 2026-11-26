@@ -546,22 +546,26 @@ impl<'a> Lexer<'a> {
                     break;
                 }
                 Some(b'\\') => {
-                    let escaped = self.bytes.get(self.pos + 1).copied();
+                    // The escaped character may be multi-byte, or missing at
+                    // the end of the file: step over exactly it, or the next
+                    // read starts inside a character.
+                    let escaped = self.source[self.pos + 1..].chars().next();
+                    let length = 1 + escaped.map_or(0, char::len_utf8);
                     match escaped {
-                        Some(b'n') => value.push('\n'),
-                        Some(b't') => value.push('\t'),
-                        Some(b'\\') => value.push('\\'),
-                        Some(b'"') => value.push('"'),
-                        Some(b'\'') => value.push('\''),
+                        Some('n') => value.push('\n'),
+                        Some('t') => value.push('\t'),
+                        Some('\\') => value.push('\\'),
+                        Some('"') => value.push('"'),
+                        Some('\'') => value.push('\''),
                         _ => {
                             self.errors.push(PineError::new(
                                 ErrorCode::PineLex,
-                                Span::new(self.pos, self.pos + 2),
+                                Span::new(self.pos, self.pos + length),
                                 "unknown escape sequence",
                             ));
                         }
                     }
-                    self.pos += 2;
+                    self.pos += length;
                 }
                 Some(_) => {
                     // Multi-byte UTF-8 advances by the full scalar.
@@ -661,6 +665,24 @@ mod tests {
             .into_iter()
             .map(|t| t.tok)
             .collect()
+    }
+
+    /// Found by the source property: an unknown escape stepped two bytes,
+    /// landing inside a multi-byte character, and the next read panicked.
+    #[test]
+    fn an_unknown_escape_of_a_multi_byte_character_is_an_error_not_a_panic() {
+        for source in ["'\\é'", "\"\\€\"", "'\\"] {
+            let errors = lex(source).expect_err(source);
+            assert!(
+                errors
+                    .iter()
+                    .all(|error| error.code == ErrorCode::PineLex && error.span.end <= source.len()),
+                "{source}: {errors:?}"
+            );
+        }
+        let errors = lex("'\\é'").expect_err("unknown escape");
+        assert_eq!(errors.len(), 1, "the string still closes: {errors:?}");
+        assert_eq!(errors[0].message, "unknown escape sequence");
     }
 
     #[test]

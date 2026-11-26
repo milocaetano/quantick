@@ -633,11 +633,16 @@ fn dump_report(view: &ReportView) -> String {
         view.hidden_by_source_or_scope
     ));
     out.push_str(&format!("anchor_ms: {:?}\n", view.anchor_ms));
-    out.push_str(&format!("equity.points: {:?}\n", view.equity.points));
-    out.push_str(&format!("equity.plot: {:?}\n", view.equity.plot));
+    let equity = &view.equity.walks()[0];
+    out.push_str(&format!(
+        "equity.points: {:?}
+",
+        equity.points
+    ));
+    out.push_str(&format!("equity.plot: {:?}\n", equity.plot));
     out.push_str(&format!(
         "equity.low: {:?}  equity.high: {:?}\n",
-        view.equity.low, view.equity.high
+        equity.low, equity.high
     ));
     // Indented, and not merely for looks. `{:#?}` closes its braces in
     // column 0, and the size guard finds the end of a `#[cfg(test)]`

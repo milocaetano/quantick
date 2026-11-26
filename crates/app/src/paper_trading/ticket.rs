@@ -19,7 +19,9 @@ use super::{
     ArmedPlacement, PaperTrading, TradingTabAction, cmd, kind_short, kind_word, reveal_folder,
     side_word_upper, strategies,
 };
-use crate::paper_chrome::{caption, financial_text, fmt_decimal, pill_toggle, points_color};
+use crate::paper_chrome::{
+    caption, financial_text, fmt_decimal, pill_toggle, pnl_mode_switch, points_color,
+};
 use crate::paper_report::LedgerAction;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -462,17 +464,8 @@ impl PaperTrading {
     /// The P&L mode switch: which figure leads every readout; the other
     /// always follows it. True when the trader picked another one.
     fn draw_pnl_mode_switch(&mut self, ui: &mut egui::Ui) -> bool {
-        let current = self.paper.account.pnl_primary();
-        let mut picked = None;
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            for (primary, label) in self.paper.account.pnl_modes().into_iter().rev() {
-                let hover = format!("lead P&L with {label} - the other figure stays beside it (session.pnl_display.set)");
-                if ui.selectable_label(primary == current, egui::RichText::new(label).small()).on_hover_text(hover).clicked() && primary != current {
-                    picked = Some(primary);
-                }
-            }
-        });
-        picked
+        let account = &self.paper.account;
+        pnl_mode_switch(ui, account.pnl_primary(), account.pnl_modes())
             .inspect(|primary| self.paper.account.set_pnl_primary(*primary))
             .is_some()
     }
@@ -599,6 +592,10 @@ impl PaperTrading {
         // must never do nothing quietly" was written against.
         if let Some(message) = asked.toast {
             self.show_toast(message);
+        }
+        if let Some(primary) = asked.pnl_primary {
+            self.paper.account.set_pnl_primary(primary);
+            self.paper.desk.note_pnl_pick();
         }
     }
 

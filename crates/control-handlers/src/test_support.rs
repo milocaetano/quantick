@@ -22,7 +22,7 @@ mod window;
 pub(crate) use access::FakeAccess;
 pub(crate) use indicators::FakeIndicators;
 pub(crate) use pane::{FakeBubbles, FakePane, FakeTape};
-pub(crate) use paper::{NoDesk, PaperDesk};
+pub(crate) use paper::{DeskWindow, NoDesk, PaperDesk};
 pub(crate) use tab::FakeTab;
 pub(crate) use window::{FakeWindow, TabsWindow};
 

@@ -1,29 +1,6 @@
-//! quantick-engine — raw trades in, alternative bars out.
-//!
-//! Headless and deterministic: no UI, no network, no async, no wall-clock
-//! time. Same trades in, same bars out, always. See `CLAUDE.md` for the
-//! non-negotiable design rules.
-//!
-//! # The input/output contract
-//!
-//! The engine consumes [`Trade`]s and produces [`Bar`]s. Everything else is a
-//! consumer of this contract:
-//!
-//! - [`Trade`] — one executed (aggregate) trade: price, quantity, aggressor
-//!   [`Side`], exchange id and timestamp. Prices and quantities are
-//!   [`rust_decimal::Decimal`] for exact, deterministic arithmetic.
-//! - [`Bar`] — the OHLCV + order-flow summary of the trades in one sampling
-//!   bucket. The bucketing rule (tick / volume / dollar / time / Renko) lives
-//!   in a bar *builder*; the summary shape is shared.
-//! - [`bar_registry`] — stable definitions, parameter contracts and factories.
-//!   Chart, backtest and bot retain its resolved configurations. [`BarSpec`]
-//!   preserves the original enum API as an adapter to those definitions.
-//!
-//! The [`fixture`] module defines the plain-text trade format that golden tests
-//! replay to guard determinism.
-//!
-//! [`work_meter`] is the counting allocator the hot-path budgets are held
-//! with, here and in every crate above: each test binary installs it.
+//! quantick-engine: raw trades in, alternative bars out. Headless and deterministic (no UI,
+//! network, async or wall clock): same trades in, same bars out. [`bar_registry`] holds the
+//! definitions ([`BarSpec`] adapts the enum); [`fixture`] feeds golden tests.
 
 pub mod bar_registry;
 pub mod bar_selection;
@@ -80,11 +57,8 @@ pub use time::TimeBarBuilder;
 pub use trade::{Side, Trade};
 pub use volume::{VolumeBarBuilder, VolumeMeasure};
 
-/// Source-to-consumer delay observed when an event arrives.
-///
-/// `None` when there is no event timestamp to compare. Can be slightly negative
-/// if the local clock is behind the source's — reported as-is (honest), not
-/// clamped.
+/// Source-to-consumer delay when an event arrives; `None` without an event timestamp.
+/// Negative if the local clock is behind the source's: reported as-is, not clamped.
 #[must_use]
 pub fn feed_lag_ms(received_at_ms: i64, event_time_ms: Option<i64>) -> Option<i64> {
     event_time_ms.map(|timestamp_ms| received_at_ms.saturating_sub(timestamp_ms))

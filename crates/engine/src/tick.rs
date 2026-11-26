@@ -1,13 +1,6 @@
-//! Tick bars — close a bar every `N` trades.
-//!
-//! Tick bars are the simplest activity-sampled bar type: count trades, close a
-//! bar every `N`. Unlike time bars, they sample faster when the market is busy
-//! and slower when it's quiet, so each bar carries a comparable amount of
-//! trading activity.
-//!
-//! Tick bars are the [generic threshold accumulator](crate::ThresholdBarBuilder)
-//! with the measure "1 per trade" ([`TickMeasure`]). This module is the thin
-//! tick-specific layer: an integer `N` and a convenient constructor.
+//! Tick bars: close a bar every `N` trades.
+//! The [generic threshold accumulator](crate::ThresholdBarBuilder) with the measure
+//! "1 per trade" ([`TickMeasure`]); this module adds an integer `N` and a constructor.
 
 use rust_decimal::Decimal;
 
@@ -23,14 +16,8 @@ impl Measure for TickMeasure {
     }
 }
 
-/// Builds tick bars: one closed [`Bar`] per `N` trades.
-///
-/// A thin wrapper over [`ThresholdBarBuilder`] with [`TickMeasure`]. Feed trades
-/// in order with [`push`](BarBuilder::push); every `N`th trade returns a closed
-/// bar. The in-progress bar is available via [`partial`](BarBuilder::partial).
-///
-/// Because the measure is exactly 1 per trade, tick bars close precisely at `N`
-/// and never overshoot (unlike volume and dollar bars).
+/// Builds tick bars: one closed [`Bar`] per `N` trades; the in-progress bar is
+/// [`partial`](BarBuilder::partial). The measure is exactly 1 per trade, so bars never overshoot.
 #[derive(Debug, Clone)]
 pub struct TickBarBuilder {
     n: u64,
@@ -39,11 +26,8 @@ pub struct TickBarBuilder {
 
 impl TickBarBuilder {
     /// Create a builder that closes a bar every `n` trades.
-    ///
     /// # Panics
-    ///
-    /// Panics if `n == 0`: a bar of zero trades is meaningless, and silently
-    /// coercing it would violate the data-honesty rule.
+    /// Panics if `n == 0`: coercing it silently would violate data honesty.
     #[must_use]
     pub fn new(n: u64) -> Self {
         assert!(n >= 1, "tick bar size N must be >= 1, got {n}");

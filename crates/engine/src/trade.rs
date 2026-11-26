@@ -2,25 +2,9 @@
 
 use rust_decimal::Decimal;
 
-/// The aggressor (taker) side of a trade.
-///
-/// A trade happens when an incoming *taker* order crosses the spread and matches
-/// a resting *maker* order. The aggressor is the taker: the side that removed
-/// liquidity and, by convention, "caused" the print. Order-flow bars track how
-/// much volume was taker-buy vs taker-sell.
-///
+/// The aggressor (taker) side of a trade: the side that removed liquidity.
 /// # Venue mappings
-///
-/// A feed maps its venue vocabulary here before the engine sees it. Binance
-/// reports `m` (`is_buyer_maker`) per aggregate trade. If the buyer is the
-/// maker, then the taker — the aggressor — is the seller, and vice versa:
-///
-/// | `is_buyer_maker` | aggressor      |
-/// |------------------|----------------|
-/// | `true`           | [`Side::Sell`] |
-/// | `false`          | [`Side::Buy`]  |
-///
-/// Use [`Side::from_buyer_is_maker`] to apply this mapping.
+/// Binance `is_buyer_maker` `true` is [`Side::Sell`], `false` is [`Side::Buy`] ([`Side::from_buyer_is_maker`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Side {
     /// A buy-initiated (taker-buy) trade — the aggressor lifted the offer.
@@ -30,10 +14,7 @@ pub enum Side {
 }
 
 impl Side {
-    /// Map Binance's `is_buyer_maker` flag to the aggressor side.
-    ///
-    /// See the [type-level docs](Side#venue-mappings) for why
-    /// the flag inverts.
+    /// Map Binance's `is_buyer_maker` flag to the aggressor side; see [type docs](Side#venue-mappings).
     #[must_use]
     pub fn from_buyer_is_maker(is_buyer_maker: bool) -> Self {
         if is_buyer_maker {
@@ -53,20 +34,9 @@ impl Side {
     }
 }
 
-/// A single executed trade — the engine's sole input.
-///
-/// One `Trade` corresponds to the smallest factual execution unit a source
-/// publishes: one Binance aggregate trade, one Hyperliquid public trade, or one
-/// mapped terminal tick. [`agg_id`](Trade::agg_id) is monotonic within the
-/// source stream. It may be venue-assigned (Binance) or explicitly synthetic
-/// when the venue has no monotonic id (Hyperliquid and MetaTrader); each feed
-/// documents that boundary and retains the venue identity it needs for
-/// deduplication.
-///
-/// Prices and quantities are [`Decimal`] for exact, deterministic arithmetic: no
-/// binary-float rounding error accumulates as bars are built across a session.
-/// Timestamps are epoch milliseconds carried from the exchange — the engine
-/// never reads a wall clock (see the determinism rule in `CLAUDE.md`).
+/// A single executed trade: the engine's sole input, the smallest execution unit a source
+/// publishes. [`agg_id`](Trade::agg_id) is monotonic per source stream, venue-assigned or synthetic.
+/// Prices and quantities are [`Decimal`] (exact); timestamps are exchange epoch ms, never a clock.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Trade {
     /// Source trade id, monotonic within one symbol/session stream.
@@ -83,15 +53,8 @@ pub struct Trade {
 
 impl Trade {
     /// Notional value of the trade: `price * quantity`.
-    ///
-    /// Exact for every realistic print, because both operands are [`Decimal`].
-    /// The multiplication **saturates** at [`Decimal::MAX`] instead of panicking
-    /// on the (physically impossible) overflow: prices and quantities arrive
-    /// from an untrusted feed (a live exchange socket, or the local MT5 bridge
-    /// any process can dial), and a corrupt or adversarial print near
-    /// `Decimal::MAX` must never panic a bar builder, backtest or bot. Saturation
-    /// keeps the engine deterministic — realistic values are unaffected — while
-    /// honouring the "never panic on feed input" rule the feeds already follow.
+    /// Saturates at [`Decimal::MAX`] instead of panicking: feed input is untrusted and must never
+    /// panic a builder, backtest or bot.
     #[must_use]
     pub fn notional(&self) -> Decimal {
         self.price.saturating_mul(self.quantity)
@@ -130,8 +93,7 @@ mod tests {
 
     #[test]
     fn notional_saturates_instead_of_panicking_on_overflow() {
-        // A corrupt or adversarial feed print near Decimal::MAX must not panic a
-        // dollar-bar builder, backtest or bot: the product saturates.
+        // A print near Decimal::MAX must not panic a dollar-bar builder: the product saturates.
         let t = Trade {
             agg_id: 1,
             timestamp_ms: 0,

@@ -3038,6 +3038,7 @@ name = "quantick-broker-mt5"
 version = "0.1.0"
 dependencies = [
  "getrandom 0.3.4",
+ "proptest",
  "quantick-engine",
  "quantick-trading",
  "rust_decimal",
@@ -3082,6 +3083,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "jsonschema",
+ "proptest",
  "rust_decimal",
  "schemars",
  "serde",
@@ -3157,6 +3159,7 @@ dependencies = [
  "quantick-orderbook",
  "quantick-orderflow",
  "quantick-pine",
+ "quantick-session",
  "quantick-stores",
  "quantick-trading",
  "rust_decimal",
@@ -3223,6 +3226,7 @@ name = "quantick-feed-binance"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "proptest",
  "quantick-engine",
  "quantick-orderbook",
  "quantick-sources",
@@ -3241,6 +3245,7 @@ name = "quantick-feed-hyperliquid"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "proptest",
  "quantick-engine",
  "quantick-orderbook",
  "quantick-sources",
@@ -3256,6 +3261,7 @@ dependencies = [
 name = "quantick-feed-mt5"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "quantick-engine",
  "quantick-orderbook",
  "rust_decimal",
@@ -3351,6 +3357,7 @@ dependencies = [
 name = "quantick-pine"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "quantick-indicators",
 ]
 
@@ -3398,8 +3405,12 @@ dependencies = [
  "quantick-sim",
  "quantick-sources",
  "quantick-strategy",
+ "quantick-trading",
  "quantick-workspace",
  "rust_decimal",
+ "schemars",
+ "serde",
+ "serde_json",
  "tracing",
 ]
 
@@ -3463,6 +3474,8 @@ version = "0.1.0"
 dependencies = [
  "quantick-engine",
  "rust_decimal",
+ "schemars",
+ "serde",
 ]
 
 [[package]]

@@ -16,6 +16,8 @@ quantick-operability = { path = "../operability" }
 quantick-orderbook = { path = "../orderbook" }
 quantick-orderflow = { path = "../orderflow" }
 quantick-pine = { path = "../pine" }
+# The trade calls' inputs and result, owned by the paper desk.
+quantick-session = { path = "../session" }
 quantick-stores = { path = "../stores" }
 quantick-trading = { path = "../trading" }
 # PNG encoding for the evidence screenshot: a raster no viewer accepts would

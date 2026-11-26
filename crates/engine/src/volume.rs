@@ -1,14 +1,6 @@
-//! Volume bars — close after `N` units traded.
-//!
-//! Volume bars close when accumulated traded quantity reaches `N`. A 10-unit
-//! trade weighs 10× a 1-unit trade, so bars normalise by real traded quantity
-//! instead of by event count (tick bars). They are the [generic threshold
-//! accumulator](crate::ThresholdBarBuilder) with the measure "traded quantity"
-//! ([`VolumeMeasure`]).
-//!
-//! Because a single large trade is never split (see the threshold module's
-//! boundary rule), a volume bar can overshoot `N` — a 25-unit trade closes a
-//! 10-unit bar as one 25-unit bar.
+//! Volume bars: close after `N` units traded.
+//! The [generic threshold accumulator](crate::ThresholdBarBuilder) with the measure "traded
+//! quantity" ([`VolumeMeasure`]); a bar can overshoot `N` since a trade is never split.
 
 use rust_decimal::Decimal;
 
@@ -24,11 +16,7 @@ impl Measure for VolumeMeasure {
     }
 }
 
-/// Builds volume bars: closes once accumulated traded quantity reaches `units`.
-///
-/// A thin wrapper over [`ThresholdBarBuilder`] with [`VolumeMeasure`]. Feed
-/// trades in order with [`push`](BarBuilder::push); the bar closes on the trade
-/// that brings cumulative quantity to `units` or beyond.
+/// Builds volume bars: closes on the trade that brings cumulative quantity to `units` or beyond.
 #[derive(Debug, Clone)]
 pub struct VolumeBarBuilder {
     inner: ThresholdBarBuilder<VolumeMeasure>,
@@ -36,9 +24,7 @@ pub struct VolumeBarBuilder {
 
 impl VolumeBarBuilder {
     /// Create a builder that closes a bar every `units` of traded quantity.
-    ///
     /// # Panics
-    ///
     /// Panics if `units <= 0` (see [`ThresholdBarBuilder::new`]).
     #[must_use]
     pub fn new(units: Decimal) -> Self {
