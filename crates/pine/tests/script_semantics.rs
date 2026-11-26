@@ -205,6 +205,32 @@ fn the_loop_budget_errors_instead_of_hanging() {
 }
 
 #[test]
+fn nested_loops_share_one_budget_per_bar() {
+    // Each loop alone stays far under the budget; together they run 20,200
+    // iterations, which a per-loop budget would let through.
+    let source = "//@version=5\nindicator(\"t\")\nn = 0\nfor i = 1 to 200\n    for j = 1 to 100\n        n := n + 1\nplot(n)\n";
+    let mut h = Harness::load(source);
+    let error = h
+        .close(&bar(0, 1.0))
+        .expect_err("must hit the shared budget");
+    assert!(
+        error.message.contains("PINE_LOOP_BUDGET"),
+        "{}",
+        error.message
+    );
+    assert_eq!(h.indicator.plots().len(), 0, "no half-appended row");
+}
+
+#[test]
+fn the_loop_budget_refills_on_every_bar() {
+    // 6,000 iterations per bar: three bars spend 18,000 in total.
+    let source = "//@version=5\nindicator(\"t\")\nn = 0\nfor i = 1 to 3000\n    n := n + 1\nfor j = 1 to 3000\n    n := n + 1\nplot(n)\n";
+    let mut h = Harness::load(source);
+    h.close_all(&[1.0, 1.0, 1.0]);
+    assert_eq!(h.column(0), vec![6000.0, 6000.0, 6000.0]);
+}
+
+#[test]
 fn division_by_zero_is_na_not_infinity() {
     let mut h = Harness::load("//@version=5\nindicator(\"t\")\nplot(close / 0)\n");
     h.close_all(&[5.0]);

@@ -27,17 +27,9 @@ impl Eval<'_> {
         self.advance_skipped(body)?;
         let mut i = from;
         let mut last = Value::Na;
-        let mut budget = LOOP_BUDGET;
         let ascending = step > 0.0;
         while (ascending && i <= to) || (!ascending && i >= to) {
-            if budget == 0 {
-                return Err(self.err(
-                    id,
-                    ErrorCode::PineLoopBudget,
-                    format!("loop exceeded {LOOP_BUDGET} iterations in one bar"),
-                ));
-            }
-            budget -= 1;
+            self.spend_loop_iteration(id)?;
             self.write_resolved(id, Value::Num(i));
             last = self.eval(body)?;
             i += step;
@@ -55,18 +47,21 @@ impl Eval<'_> {
     ) -> Result<Value, PineError> {
         self.advance_skipped(body)?;
         let mut last = Value::Na;
-        let mut budget = LOOP_BUDGET;
         while self.cond(condition)? {
-            if budget == 0 {
-                return Err(self.err(
-                    id,
-                    ErrorCode::PineLoopBudget,
-                    format!("loop exceeded {LOOP_BUDGET} iterations in one bar"),
-                ));
-            }
-            budget -= 1;
+            self.spend_loop_iteration(id)?;
             last = self.eval(body)?;
         }
         Ok(last)
+    }
+    fn spend_loop_iteration(&mut self, id: NodeId) -> Result<(), PineError> {
+        if self.loop_budget == 0 {
+            return Err(self.err(
+                id,
+                ErrorCode::PineLoopBudget,
+                format!("loop exceeded {LOOP_BUDGET} iterations in one bar"),
+            ));
+        }
+        self.loop_budget -= 1;
+        Ok(())
     }
 }

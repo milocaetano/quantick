@@ -1,34 +1,6 @@
-//! The retained trade tape: every print a chart holds, oldest first, stored
-//! in fixed-size chunks so that growing it never copies what it holds.
-//!
-//! A contiguous `Vec<Trade>` must move its whole contents when it outgrows
-//! its block. On a live chart that is one print whose ingest copies the
-//! entire session on the UI thread: 117 MB at print 2,097,152 (25 ms on the
-//! reference host) and 235 MB at 4,194,304 (52 ms) — a dropped frame, then
-//! three. [`TradeTape`] keeps its prints in chunks of [`CHUNK_TRADES`], each
-//! allocated once at full size and never reallocated, so an append writes
-//! one print and at most allocates one new chunk; no print already held ever
-//! moves.
-//!
-//! **Reading it.** Positions are the same as the `Vec`'s: print `i` is the
-//! `i`-th oldest, [`TradeTape::get`] and indexing find it with a shift and a
-//! mask, and [`TradeTape::range`] walks any stretch front to back or back to
-//! front. A reader that wants contiguous memory — a bulk copy, a fold over a
-//! slice — takes [`TradeTape::slices`], the stretch as at most one slice per
-//! chunk; nothing hands out the whole tape as one slice, because nothing
-//! holds it as one. [`TradeSeq`] is the positional read the feed's history
-//! reach walks with, over this tape or over a plain slice alike.
-//!
-//! **Memory.** Every chunk but the last is full, so the tape reserves at most
-//! one chunk it does not use, where a doubling vector reserves up to the
-//! whole tape again. The newest chunk, the one appends write to, sits in the
-//! tape itself; the others are listed in a directory of one pointer triple
-//! each — 60 of them at the live envelope's 3,960,000 prints. The other end
-//! of the bound: the first print allocates a whole chunk, 3.5 MiB, so a
-//! short tape reserves more than a vector of its length would. Its untouched
-//! pages cost commit charge, not working set; growing the first chunk
-//! geometrically instead would copy it, which is what this type exists not
-//! to do.
+//! The retained trade tape: every print a chart holds, oldest first, in fixed-size chunks.
+//! A contiguous `Vec` copies the whole session when it grows; chunks of [`CHUNK_TRADES`] are
+//! allocated once and never move. Reads keep `Vec` positions; [`TradeSeq`] is the positional read.
 
 use std::iter::FusedIterator;
 use std::ops::{Bound, Index, RangeBounds};
@@ -39,35 +11,25 @@ use crate::Trade;
 /// Bits of a print's position that pick its offset inside a chunk.
 const CHUNK_SHIFT: u32 = 16;
 
-/// Prints per chunk: 65,536, which is 3.5 MiB of 56-byte trades.
-///
-/// A power of two, so a position splits into a chunk and an offset with a
-/// shift and a mask. Small beside the tapes it holds — under 2 % of the live
-/// envelope's 222 MB tape, which bounds the reserved-but-unused tail of the
-/// last chunk — and large enough that a pane opens a chunk rarely: one every
-/// 3.6 minutes at the envelope's sustained 300 prints a second, 61 of them
-/// at its edge.
+/// Prints per chunk: 65,536, 3.5 MiB of 56-byte trades. A power of two, so a position splits
+/// by shift and mask; small beside the tapes it holds and large enough to open a chunk rarely.
 pub const CHUNK_TRADES: usize = 1 << CHUNK_SHIFT;
 
 const OFFSET_MASK: usize = CHUNK_TRADES - 1;
 
 /// Every print a chart holds, oldest first, in fixed-size chunks.
 ///
-/// See the [module docs](self) for why chunks, and what an append costs.
+/// An append writes one print and allocates at most one chunk; see the [module docs](self).
 #[derive(Debug, Default)]
 pub struct TradeTape {
     /// The full chunks, oldest first: [`CHUNK_TRADES`] prints each.
     full: Vec<Arc<Vec<Trade>>>,
-    /// The newest chunk, the one an append writes to: allocated at
-    /// [`CHUNK_TRADES`] capacity with its first print and never grown, and
-    /// empty only while the whole tape is. Kept beside the directory rather
-    /// than in it, so a print's append reads nothing but this.
+    /// The newest chunk, written by appends: allocated at full capacity, never grown, empty only
+    /// while the whole tape is.
     tail: Vec<Trade>,
 }
 
-/// Completed chunks are immutable and shared; only the append tail is copied.
-/// A snapshot therefore copies at most one chunk of prints, independent of the
-/// length of the session. Its tail retains full capacity for bounded appends.
+/// Completed chunks are immutable and shared; a snapshot copies at most the append tail.
 impl Clone for TradeTape {
     fn clone(&self) -> Self {
         let mut tail = Vec::with_capacity(self.tail.capacity());
@@ -138,8 +100,7 @@ impl TradeTape {
     /// chunk when that is full; never moves a print already held.
     #[inline]
     pub fn push(&mut self, trade: Trade) {
-        // The tail is empty only on a new tape and full at a whole chunk:
-        // either way its length is a multiple of one.
+        // The tail is empty only on a new tape and full at a whole chunk: length is a multiple of one.
         if self.tail.len() & OFFSET_MASK == 0 {
             self.open_tail();
         }
@@ -159,13 +120,9 @@ impl TradeTape {
         }
     }
 
-    /// Put `older` in front of everything held, keeping every chunk but the
-    /// last full.
-    ///
-    /// A copy of the whole tape, which is why only a rare path calls it —
-    /// paging older history in, which then rebuilds every bar from the tape
-    /// anyway. Each old chunk is freed as soon as it has been copied, so the
-    /// peak is the tape plus one chunk rather than two tapes.
+    /// Put `older` in front of everything held, keeping every chunk but the last full.
+    /// Copies the whole tape, so only the rare history-paging path calls it; old chunks are freed
+    /// as copied.
     pub fn prepend(&mut self, older: &[Trade]) {
         if older.is_empty() {
             return;
@@ -184,8 +141,7 @@ impl TradeTape {
         self.range(..)
     }
 
-    /// The prints at positions `range`, oldest first. Panics as slicing a
-    /// `Vec` would when the range is out of order or runs past the end.
+    /// The prints at positions `range`, oldest first; panics as slicing a `Vec` would.
     #[must_use]
     pub fn range(&self, range: impl RangeBounds<usize>) -> Iter<'_> {
         let (start, end) = self.bounds(&range);
@@ -220,10 +176,8 @@ impl TradeTape {
         self.slices_between(start, end)
     }
 
-    /// The position of the first print for which `pred` is false, given that
-    /// it is true for every print before that one and false for every print
-    /// after — `slice::partition_point`, over the chunks: a binary search
-    /// for the chunk, then one inside it.
+    /// The position of the first print for which `pred` is false, given it is true for every
+    /// earlier print and false for every later one (`slice::partition_point` over the chunks).
     pub fn partition_point(&self, mut pred: impl FnMut(&Trade) -> bool) -> usize {
         let whole = self
             .full
@@ -275,8 +229,7 @@ impl TradeTape {
                 tail: &[],
             };
         }
-        // Only the last chunk of a range can be the tail, so every chunk
-        // strictly between its ends is a full one.
+        // Only the last chunk of a range can be the tail; chunks between its ends are full.
         Slices {
             head: &chunk(first_chunk)[from..],
             middle: self.full[first_chunk + 1..last_chunk].iter(),
@@ -465,10 +418,8 @@ impl DoubleEndedIterator for Iter<'_> {
 impl ExactSizeIterator for Iter<'_> {}
 impl FusedIterator for Iter<'_> {}
 
-/// Oldest-first prints read by position: what a reader needs that walks a
-/// tape by index — a binary search, a walk backwards from an anchor — rather
-/// than front to back. A [`TradeTape`], a slice and a vector all read the
-/// same through it.
+/// Oldest-first prints read by position, for readers that walk by index (binary search, backwards
+/// from an anchor). A [`TradeTape`], a slice and a vector read the same through it.
 pub trait TradeSeq {
     /// Prints held.
     fn len(&self) -> usize;

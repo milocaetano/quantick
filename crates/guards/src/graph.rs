@@ -145,6 +145,8 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "orderbook",
             "orderflow",
             "pine",
+            // The trade calls' inputs and result: the paper desk's own types.
+            "session",
             "stores",
             // Orders and round trips from their owner, not the simulator.
             "trading",
@@ -202,6 +204,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // `chart-interaction` for the history state and the view effects that
     // install decides, and the live-trade plan a print is carried through.
     // `script-trigger` for the Pine scripts a pane arms alarm-only.
+    // `trading` for the order vocabulary a named trade call states.
     (
         "session",
         &[
@@ -214,6 +217,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "sim",
             "sources",
             "strategy",
+            "trading",
             "workspace",
         ],
     ),

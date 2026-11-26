@@ -45,6 +45,22 @@ mod bounded_reader_tests {
     }
 
     #[tokio::test]
+    async fn the_tail_of_a_line_far_past_the_cap_never_arrives_as_a_line() {
+        // Found by the line-reader property: the cap is crossed before the
+        // newline is in the buffer, and the rest of the line used to be
+        // framed as a line of its own, decoded as if the peer had sent it.
+        let mut bytes = vec![b'x'; 3 * MAX_LINE_BYTES];
+        bytes.extend_from_slice(b"{\"type\":\"bye\",\"reason\":\"tail\"}\nsurvivor\n");
+        let mut reader = BoundedLineReader::new(std::io::Cursor::new(bytes));
+        assert_eq!(reader.next_line().await.unwrap(), BoundedLine::TooLong);
+        assert_eq!(
+            reader.next_line().await.unwrap(),
+            BoundedLine::Line("survivor".to_owned())
+        );
+        assert_eq!(reader.next_line().await.unwrap(), BoundedLine::Eof);
+    }
+
+    #[tokio::test]
     async fn invalid_utf8_is_reported_and_skipped_not_fatal() {
         // A Windows-encoded path inside a Python traceback is exactly this.
         let mut bytes = b"before\n".to_vec();
@@ -78,6 +94,8 @@ pub enum BoundedLine {
         len: usize,
     },
     /// The peer streamed more than [`MAX_LINE_BYTES`] without a newline.
+    /// The whole line is skipped, through its newline: no part of it is
+    /// ever returned as a line.
     TooLong,
     /// The peer closed the connection.
     Eof,
@@ -88,8 +106,15 @@ pub enum BoundedLine {
 enum ReadStep {
     Eof,
     Line(usize),
+    /// The cap was crossed at a newline: the whole line is consumed.
     TooLong(usize),
+    /// The cap was crossed before the newline: the rest of the line is still
+    /// unread and must be skipped, or its tail would arrive as a line.
+    TooLongUnterminated(usize),
     More(usize),
+    /// Bytes of an oversized line already reported; `true` once its newline
+    /// is consumed.
+    Skipped(usize, bool),
 }
 
 /// A newline-delimited reader that never buffers more than
@@ -105,6 +130,8 @@ enum ReadStep {
 pub struct BoundedLineReader<R> {
     reader: BufReader<R>,
     buf: Vec<u8>,
+    /// Inside an oversized line already reported as [`BoundedLine::TooLong`].
+    skipping: bool,
 }
 
 impl<R: tokio::io::AsyncRead + Unpin> BoundedLineReader<R> {
@@ -113,6 +140,7 @@ impl<R: tokio::io::AsyncRead + Unpin> BoundedLineReader<R> {
         Self {
             reader: BufReader::new(source),
             buf: Vec::new(),
+            skipping: false,
         }
     }
 
@@ -123,6 +151,11 @@ impl<R: tokio::io::AsyncRead + Unpin> BoundedLineReader<R> {
                 let available = self.reader.fill_buf().await?;
                 if available.is_empty() {
                     ReadStep::Eof
+                } else if self.skipping {
+                    match available.iter().position(|&b| b == b'\n') {
+                        Some(pos) => ReadStep::Skipped(pos + 1, true),
+                        None => ReadStep::Skipped(available.len(), false),
+                    }
                 } else if let Some(pos) = available.iter().position(|&b| b == b'\n') {
                     if self.buf.len() + pos > MAX_LINE_BYTES {
                         ReadStep::TooLong(pos + 1)
@@ -131,7 +164,7 @@ impl<R: tokio::io::AsyncRead + Unpin> BoundedLineReader<R> {
                         ReadStep::Line(pos + 1)
                     }
                 } else if self.buf.len() + available.len() > MAX_LINE_BYTES {
-                    ReadStep::TooLong(available.len())
+                    ReadStep::TooLongUnterminated(available.len())
                 } else {
                     self.buf.extend_from_slice(available);
                     ReadStep::More(available.len())
@@ -139,6 +172,7 @@ impl<R: tokio::io::AsyncRead + Unpin> BoundedLineReader<R> {
             };
             match step {
                 ReadStep::Eof => {
+                    self.skipping = false;
                     // A trailing unterminated line still counts, like
                     // `lines()` behaves.
                     if self.buf.is_empty() {
@@ -155,7 +189,17 @@ impl<R: tokio::io::AsyncRead + Unpin> BoundedLineReader<R> {
                     self.buf.clear();
                     return Ok(BoundedLine::TooLong);
                 }
+                ReadStep::TooLongUnterminated(consume) => {
+                    self.reader.consume(consume);
+                    self.buf.clear();
+                    self.skipping = true;
+                    return Ok(BoundedLine::TooLong);
+                }
                 ReadStep::More(consume) => self.reader.consume(consume),
+                ReadStep::Skipped(consume, ended) => {
+                    self.reader.consume(consume);
+                    self.skipping = !ended;
+                }
             }
         }
     }

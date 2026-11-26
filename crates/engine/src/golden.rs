@@ -1,28 +1,13 @@
-//! Golden / snapshot test harness for bar builders.
-//!
-//! Determinism is a non-negotiable design rule: same trades in, same bars out,
-//! always. This module is how that rule is guarded — it replays a committed
-//! trade fixture through a [`BarBuilder`] and compares the produced bars against
-//! a committed expected-bars fixture, with a human-readable diff on mismatch.
-//!
-//! It also enforces determinism directly: [`assert_golden`] builds the builder
-//! twice, replays the same trades through each, and asserts the two runs are
-//! byte-identical. A builder that reads a wall clock, a random source, or a
-//! `HashMap`'s iteration order would fail that check.
-//!
-//! Everything here has zero non-deterministic inputs: it only ever touches the
-//! trades and expected bars it is given.
+//! Golden test harness for bar builders: replays a committed trade fixture through a
+//! [`BarBuilder`] and diffs the bars against a committed expected-bars fixture.
+//! [`assert_golden`] also runs the builder twice and requires byte-identical output.
 
 use std::fmt::Write as _;
 
 use crate::{Bar, BarBuilder, Trade, fixture};
 
 /// Feed every trade through `builder` in order, collecting the closed bars.
-///
-/// The trailing in-progress bar (if any) is intentionally *not* emitted: it is
-/// incomplete, and emitting it as if it were closed would be dishonest. Query
-/// [`BarBuilder::partial`] for it instead. A configured builder (a
-/// `dyn BarBuilder`) replays as well as a named one.
+/// The trailing in-progress bar is not emitted (it is not closed); use [`BarBuilder::partial`].
 #[must_use]
 pub fn replay<B: BarBuilder + ?Sized>(builder: &mut B, trades: &[Trade]) -> Vec<Bar> {
     let mut bars = Vec::with_capacity(trades.len());
@@ -33,9 +18,7 @@ pub fn replay<B: BarBuilder + ?Sized>(builder: &mut B, trades: &[Trade]) -> Vec<
 }
 
 /// Compare produced bars against expected bars.
-///
-/// Returns `None` when they match exactly, or `Some(report)` with a
-/// human-readable diff pinpointing every differing bar and field:
+/// Returns `None` on an exact match, or `Some(report)` pinpointing every differing bar and field:
 ///
 /// ```text
 /// golden mismatch (expected 2 bars, got 2):
@@ -101,19 +84,9 @@ fn field_diffs(e: &Bar, g: &Bar) -> Vec<String> {
     diffs
 }
 
-/// Assert that replaying `trades_csv` through the builder produces
-/// `expected_bars_csv`, and that the builder is deterministic.
-///
-/// `make_builder` is a *factory* so the harness can build two independent
-/// builders and confirm both runs are byte-identical. On any mismatch this
-/// panics with the [`diff_bars`] report — that panic message is the test
-/// failure a developer reads.
-///
+/// Assert replaying `trades_csv` yields `expected_bars_csv` twice over (`make_builder` is a factory).
 /// # Panics
-///
-/// - if either fixture fails to parse;
-/// - if the two runs differ (non-determinism);
-/// - if the produced bars differ from the expected bars.
+/// On a fixture parse failure, non-determinism, or bars differing (with the [`diff_bars`] report).
 pub fn assert_golden<B, F>(make_builder: F, trades_csv: &str, expected_bars_csv: &str)
 where
     B: BarBuilder,

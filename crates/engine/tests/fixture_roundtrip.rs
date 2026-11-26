@@ -1,7 +1,5 @@
-//! Integration test: the committed sample fixture parses and round-trips.
-//!
-//! Reads the real file from disk (not an inline string) so the on-disk fixture
-//! format itself is covered, and asserts `parse -> write -> parse` is stable.
+//! The committed sample fixture parses and round-trips (`parse -> write -> parse` is stable),
+//! read from disk so the on-disk format is covered.
 
 use quantick_engine::fixture;
 

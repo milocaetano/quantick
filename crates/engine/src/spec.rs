@@ -1,10 +1,6 @@
-//! The bar vocabulary: which rule cuts bars, and its parameter, as a value and
-//! as the `kind:parameter` string a person types — `tick:50`, `volume:5`,
-//! `dollar:500000`, `time:1m`, `imbalance:volume:500`, `trades:2000`.
-//!
-//! Legacy value vocabulary. Definitions, parsing and construction belong to
-//! [`crate::bar_registry`]; the chart and runner retain its resolved configurations.
-//! This closed enum remains an adapter for callers of the original API.
+//! The bar vocabulary: which rule cuts bars and its parameter, as a value and as the
+//! `kind:parameter` string (`tick:50`, `time:1m`, `imbalance:volume:500`).
+//! Legacy adapter: definitions and parsing live in [`crate::bar_registry`].
 
 use rust_decimal::Decimal;
 
@@ -47,11 +43,7 @@ impl BarKind {
         BarKind::Trades,
     ];
 
-    /// The spec this kind opens on when nothing has chosen a parameter for it
-    /// yet — the value a fresh chart, and every kind the trader has not
-    /// visited, starts from.
-    ///
-    /// The default comes from the registered definition, like every consumer's.
+    /// The spec this kind opens on when nothing chose a parameter; comes from the registered definition.
     #[must_use]
     pub fn default_spec(self) -> BarSpec {
         BarSpec::try_from(
@@ -76,13 +68,8 @@ impl BarKind {
         }
     }
 
-    /// Whether this rule counts the venue's deals, and so needs a feed whose
-    /// prints come with that count.
-    ///
-    /// A consumer without a counter does not offer the kind rather than grey
-    /// it out: without one the rule has nothing to cut on, and an entry that
-    /// can never work would only invite the reading "tick is the same thing",
-    /// which is the misunderstanding this kind exists to correct.
+    /// Whether this rule counts the venue's deals and so needs a feed that reports that count.
+    /// A consumer without one does not offer the kind: it has nothing to cut on.
     #[must_use]
     pub fn needs_deal_counter(self) -> bool {
         BUILTIN_BARS
@@ -92,17 +79,9 @@ impl BarKind {
             .deal_counter
     }
 
-    /// Whether this rule measures traded size, and so needs a venue that
-    /// prints one.
-    ///
-    /// Tick, time and imbalance bars all count *events*: imbalance in its
-    /// default trades unit sums a signed ±1 per trade (López de Prado's tick
-    /// imbalance bars), never a quantity. They stay meaningful on a
-    /// quote-driven feed. Volume and dollar bars do not — fed one synthetic
-    /// unit per tick, a "volume 500" bar is a 500-tick bar wearing a
-    /// misleading label. The imbalance *kind* answers for that default: its
-    /// volume/dollar units measure size too, and a consumer gates them per
-    /// feed exactly as this method gates the kinds.
+    /// Whether this rule measures traded size and so needs a venue that prints one.
+    /// Tick, time and imbalance (trades unit) count events and work on quote-driven feeds;
+    /// volume and dollar do not. Imbalance volume/dollar units are gated per feed.
     #[must_use]
     pub fn needs_traded_volume(self) -> bool {
         BUILTIN_BARS
@@ -132,10 +111,8 @@ pub enum BarSpec {
     Volume(Decimal),
     /// N notional per bar.
     Dollar(Decimal),
-    /// N milliseconds per bar, inside
-    /// [`MIN_TIME_INTERVAL_MS`]..=[`MAX_TIME_INTERVAL_MS`] when parsed — or a
-    /// whole number of [`crate::time_bucket::CALENDAR_MONTH_MS`], which reads
-    /// as that many calendar months (see [`crate::time_bucket`]).
+    /// N milliseconds per bar, within [`MIN_TIME_INTERVAL_MS`]..=[`MAX_TIME_INTERVAL_MS`] when
+    /// parsed, or a whole number of [`crate::time_bucket::CALENDAR_MONTH_MS`] (calendar months).
     Time(i64),
     /// The adaptive imbalance rule: the measure θ accumulates (trades, volume
     /// or dollar — López de Prado's TIB/VIB/DIB) and the target trades per
@@ -160,13 +137,8 @@ impl BarSpec {
         }
     }
 
-    /// This spec with its parameter held to what the builders will accept.
-    ///
-    /// A spec can hold a zero — a workspace written by an older build, a
-    /// config file, or a control call that asked for one — and a zero-length
-    /// bar rule is not a rule: a volume bar that closes on no volume closes on
-    /// every trade. The floors are `1` for the counted kinds and
-    /// [`DECIMAL_PARAM_FLOOR`] for the two measured in `Decimal`.
+    /// This spec with its parameter held to what the builders accept: a zero-length rule would
+    /// close on every trade. Floors are `1` for counted kinds, [`DECIMAL_PARAM_FLOOR`] for Decimal.
     #[must_use]
     pub fn clamped(&self) -> BarSpec {
         Self::try_from(BarConfiguration::from(*self).clamped()).expect("legacy kind")
@@ -179,11 +151,7 @@ impl BarSpec {
         BarConfiguration::from(*self).build()
     }
 
-    /// The interval this spec cuts bars at, when it cuts by time at all.
-    ///
-    /// Only a time spec has one: a tick or volume bar covers whatever span its
-    /// count happened to take, which is not an interval anything can be folded
-    /// to.
+    /// The interval this spec cuts bars at; only a time spec has one.
     #[must_use]
     pub fn time_interval_ms(&self) -> Option<i64> {
         match self {
@@ -198,33 +166,16 @@ impl BarSpec {
         BarConfiguration::from(*self).summary()
     }
 
-    /// This spec in the `kind:parameter` vocabulary [`Self::parse`] reads —
-    /// the form a feeds configuration's `default_bars`, a saved workspace and
-    /// the backtest's `--bars` all use.
-    ///
-    /// The round trip is the point: whatever a chart is showing, a config or a
-    /// workspace file can ask for by name.
+    /// This spec in the `kind:parameter` vocabulary [`Self::parse`] reads (configs, workspaces,
+    /// `--bars`); the round trip is exact.
     #[must_use]
     pub fn to_config_string(&self) -> String {
         BarConfiguration::from(*self).to_config_string()
     }
 
-    /// Parse a `kind:parameter` spec string: `tick:50`, `trades:2000`,
-    /// `volume:5`, `dollar:500000`, `imbalance:100` (also
-    /// `imbalance:volume:500` / `imbalance:dollar:500` to pick what θ
-    /// accumulates), `time:1m` (also `time:30s`, `time:1h`, `time:1d`,
-    /// `time:1w`, `time:1mo`, `time:1500ms` or a bare millisecond count).
-    ///
-    /// Every rule a chart control enforces holds here too — a positive
-    /// parameter, and a time interval inside
-    /// [`MIN_TIME_INTERVAL_MS`]..=[`MAX_TIME_INTERVAL_MS`] — so a config or a
-    /// command line cannot ask for a chart no control could have produced.
-    ///
+    /// Parse `kind:parameter` (`tick:50`, `imbalance:volume:500`, `time:1m`) under every chart-control rule.
     /// # Errors
-    ///
-    /// A [`BarSpecError`] naming the reason as a variant; its `Display` is the
-    /// human-readable sentence, with the accepted forms, for the caller to
-    /// surface verbatim.
+    /// A [`BarSpecError`]: the variant is the reason, `Display` the sentence to show.
     pub fn parse(text: &str) -> Result<Self, BarSpecError> {
         if let Some((kind, _)) = text.split_once(':')
             && !BarKind::ALL
@@ -240,12 +191,8 @@ impl BarSpec {
     }
 }
 
-/// Why a `kind:parameter` string is not a [`BarSpec`].
-///
-/// The variant is the reason, for a caller that repairs its own request — a
-/// control call, a script — without reading prose. `Display` is the sentence a
-/// person reads, the same one the config loader and the backtest have always
-/// printed.
+/// Why a `kind:parameter` string is not a [`BarSpec`]; the variant is the machine-readable
+/// reason and `Display` the sentence a person reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BarSpecError {
     /// No `kind:parameter` shape at all.

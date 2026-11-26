@@ -1,31 +1,6 @@
-//! Dollar bars — close after `N` notional traded.
-//!
-//! Dollar bars close when accumulated notional (`price * quantity`) reaches `N`.
-//! Because they sample by value rather than by count or quantity, they stay
-//! comparable across large price moves — which is why the research literature
-//! (Lopez de Prado) favours them for ML features. They are the [generic
-//! threshold accumulator](crate::ThresholdBarBuilder) with the measure
-//! "notional" ([`DollarMeasure`]).
-//!
-//! # Numeric representation of accumulated notional
-//!
-//! Notional is accumulated as [`rust_decimal::Decimal`], the same exact decimal
-//! type used for every price and quantity in the engine. This is the decision
-//! this issue calls for, and the reasoning is:
-//!
-//! - **No float drift.** `price * quantity` is an exact decimal product, and
-//!   summing exact decimals is exact. Over a session, binary-float notional
-//!   (`f64`) accumulates rounding error and would cross the threshold a trade
-//!   early or late depending on the exact drift — a non-determinism the golden
-//!   tests would catch. Decimal cannot drift: the close point is exact.
-//! - **Determinism holds regardless.** `Decimal` arithmetic uses a fixed
-//!   rounding rule, so even the rare product exceeding 28 significant digits
-//!   rounds deterministically. Realistic crypto notionals stay far below that
-//!   bound, and the accumulator resets every bar, so in practice accumulation is
-//!   exact and never overflows.
-//!
-//! The `notional_accumulation_is_exact` test demonstrates a threshold that an
-//! `f64` accumulator would miss (ten 0.1 notionals summing to 0.999… < 1.0).
+//! Dollar bars: close after `N` notional traded.
+//! Notional (`price * quantity`) accumulates as exact [`rust_decimal::Decimal`], never `f64`.
+//! Built on the [generic threshold accumulator](crate::ThresholdBarBuilder).
 
 use rust_decimal::Decimal;
 
@@ -41,11 +16,7 @@ impl Measure for DollarMeasure {
     }
 }
 
-/// Builds dollar bars: closes once accumulated notional reaches `notional`.
-///
-/// A thin wrapper over [`ThresholdBarBuilder`] with [`DollarMeasure`]. Feed
-/// trades in order with [`push`](BarBuilder::push); the bar closes on the trade
-/// that brings cumulative notional to `notional` or beyond.
+/// Builds dollar bars: closes on the trade that brings cumulative notional to `notional` or beyond.
 #[derive(Debug, Clone)]
 pub struct DollarBarBuilder {
     inner: ThresholdBarBuilder<DollarMeasure>,
@@ -53,9 +24,7 @@ pub struct DollarBarBuilder {
 
 impl DollarBarBuilder {
     /// Create a builder that closes a bar every `notional` of traded value.
-    ///
     /// # Panics
-    ///
     /// Panics if `notional <= 0` (see [`ThresholdBarBuilder::new`]).
     #[must_use]
     pub fn new(notional: Decimal) -> Self {
@@ -124,9 +93,7 @@ mod tests {
 
     #[test]
     fn notional_accumulation_is_exact() {
-        // Ten notionals of 0.1 sum to exactly 1.0 in Decimal, so the bar closes
-        // on the tenth trade. In f64 the same sum is 0.9999999999999999 < 1.0,
-        // which would NOT close here — proving the exact-decimal choice.
+        // Ten 0.1 notionals sum to exactly 1.0 in Decimal and close on the tenth trade; f64 would not.
         let f64_sum: f64 = (0..10).map(|_| 1.0_f64 * 0.1_f64).sum();
         assert!(f64_sum < 1.0, "f64 drifts below 1.0: {f64_sum}");
 

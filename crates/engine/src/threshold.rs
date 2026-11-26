@@ -1,39 +1,13 @@
-//! The generic threshold accumulator shared by tick, volume and dollar bars.
-//!
-//! Tick, volume and dollar bars are the *same* algorithm with a different
-//! accumulated measure: 1 per trade (tick), traded quantity (volume), or
-//! notional `price * quantity` (dollar). "One engine, three consumers" applies
-//! internally too — there is one closing rule here, parameterised by a
-//! [`Measure`], never three forked implementations.
-//!
-//! # Boundary rule: whole trades, overshoot allowed, no carry
-//!
-//! When a single trade pushes the accumulated measure to or past the threshold,
-//! **the whole trade is included in the bar it completes** — a trade is never
-//! split across two bars. A trade is an atomic market event; splitting one would
-//! fabricate synthetic sub-trades that never happened, violating the
-//! data-honesty rule.
-//!
-//! A consequence: volume and dollar bars can **overshoot** the threshold (a
-//! 25-unit trade closes a 10-unit bar as a single 25-unit bar). That is honest —
-//! real trades are not divisible. Tick bars never overshoot, because each trade
-//! contributes exactly 1 and the bar closes precisely at `N`.
-//!
-//! On close the accumulator **resets to zero — the overshoot is not carried**
-//! into the next bar. Each bar's accumulated measure is therefore exactly the
-//! sum of its own trades' measures, with no phantom offset borrowed from a
-//! previous bar. "This bar closed because its own trades reached the threshold"
-//! stays literally true.
+//! The generic threshold accumulator shared by tick, volume and dollar bars, parameterised by a [`Measure`].
+//! Boundary rule: a trade is never split, so the whole trade joins the bar it completes (volume and
+//! dollar bars may overshoot) and the overshoot is not carried: the accumulator resets to zero.
 
 use rust_decimal::Decimal;
 
 use crate::{Bar, BarBuilder, BarProgress, Trade};
 
-/// How much one trade contributes toward closing a bar.
-///
-/// Implementors are usually zero-sized markers ([`crate::TickMeasure`],
-/// volume, dollar). Custom measures let the same accumulator drive
-/// application-specific bar types without forking the closing logic.
+/// How much one trade contributes toward closing a bar. Usually a zero-sized marker
+/// ([`crate::TickMeasure`], volume, dollar); custom measures reuse the same closing logic.
 pub trait Measure {
     /// The contribution of `trade` to the running total.
     ///
@@ -42,10 +16,7 @@ pub trait Measure {
 }
 
 /// Builds bars that close when an accumulated [`Measure`] reaches a threshold.
-///
-/// See the [module docs](self) for the boundary rule (whole trades, overshoot
-/// allowed, no carry). Tick, volume and dollar builders are this type with a
-/// different `M`.
+/// See the [module docs](self) for the boundary rule.
 #[derive(Debug, Clone)]
 pub struct ThresholdBarBuilder<M: Measure> {
     threshold: Decimal,
@@ -55,14 +26,9 @@ pub struct ThresholdBarBuilder<M: Measure> {
 }
 
 impl<M: Measure> ThresholdBarBuilder<M> {
-    /// Create a builder that closes a bar once the accumulated measure reaches
-    /// `threshold`.
-    ///
+    /// Create a builder that closes a bar once the accumulated measure reaches `threshold`.
     /// # Panics
-    ///
-    /// Panics if `threshold <= 0`: a non-positive threshold would close a bar on
-    /// (or before) the first trade forever. Coercing it silently would violate
-    /// the data-honesty rule.
+    /// Panics if `threshold <= 0`: coercing it silently would violate data honesty.
     pub fn new(threshold: Decimal, measure: M) -> Self {
         assert!(
             threshold > Decimal::ZERO,
@@ -89,10 +55,8 @@ impl<M: Measure + Send> BarBuilder for ThresholdBarBuilder<M> {
             None => self.current = Some(Bar::opened_by(trade)),
             Some(bar) => bar.extend(trade),
         }
-        // Saturating: the measure comes from untrusted feed data and must never
-        // panic the builder on overflow. A saturated accumulator is `>= threshold`
-        // and simply closes the bar — deterministic, and identical to exact
-        // arithmetic for every representable total.
+        // Saturating: the measure comes from untrusted feed data. A saturated total is `>= threshold`
+        // and closes the bar deterministically.
         self.acc = self.acc.saturating_add(self.measure.of(trade));
         if self.acc >= self.threshold {
             self.acc = Decimal::ZERO;
@@ -111,10 +75,7 @@ impl<M: Measure + Send> BarBuilder for ThresholdBarBuilder<M> {
         self.current.as_ref()
     }
 
-    /// The accumulator itself: this rule *is* a running total against a fixed
-    /// threshold, so there is nothing to derive and nothing to approximate.
-    /// Reported between bars too, as a plain zero — the next bar has taken
-    /// nothing yet, which is a fact rather than an absence.
+    /// The accumulator itself; reported between bars as a plain zero (nothing taken yet).
     fn progress(&self) -> Option<BarProgress> {
         Some(BarProgress {
             done: self.acc,
@@ -129,8 +90,7 @@ mod tests {
     use crate::Side;
     use std::str::FromStr as _;
 
-    /// Test measure: accumulate traded quantity (a stand-in for volume bars,
-    /// which land in #7). Enough to exercise the boundary rule here.
+    /// Test measure: accumulate traded quantity, enough to exercise the boundary rule.
     struct QtyMeasure;
     impl Measure for QtyMeasure {
         fn of(&self, trade: &Trade) -> Decimal {
@@ -160,8 +120,7 @@ mod tests {
 
     #[test]
     fn a_single_trade_crossing_the_threshold_closes_a_whole_trade_bar() {
-        // threshold 10, one 25-unit trade: the trade is NOT split — it closes a
-        // single bar that overshoots to 25.
+        // Threshold 10, one 25-unit trade: not split; one bar overshooting to 25.
         let mut b = ThresholdBarBuilder::new(dec("10"), QtyMeasure);
         let bar = b
             .push(&trade("25"))
@@ -176,8 +135,7 @@ mod tests {
 
     #[test]
     fn overshoot_is_not_carried_into_the_next_bar() {
-        // 3 + 4 + 5 crosses 10 on the third trade (sum 12). The next trade
-        // starts a fresh bar from zero, not from the overshoot of 2.
+        // 3 + 4 + 5 crosses 10 on the third trade; the next starts from zero, not from the overshoot.
         let mut b = ThresholdBarBuilder::new(dec("10"), QtyMeasure);
         assert!(b.push(&trade("3")).is_none());
         assert!(b.push(&trade("4")).is_none());
@@ -185,8 +143,7 @@ mod tests {
         assert_eq!(first.volume(), dec("12"), "12 = 3+4+5, whole trades");
         assert_eq!(first.trade_count, 3);
 
-        // A fresh 9-unit trade must NOT close a bar; if the overshoot (2) were
-        // carried, 2 + 9 = 11 >= 10 would close here. It stays open.
+        // A fresh 9-unit trade must not close a bar; a carried overshoot (2 + 9) would.
         assert!(
             b.push(&trade("9")).is_none(),
             "next bar started from zero, so 9 < 10 does not close"
@@ -196,9 +153,7 @@ mod tests {
 
     #[test]
     fn extreme_measure_saturates_and_closes_without_panicking() {
-        // An adversarial/corrupt feed quantity near Decimal::MAX must not panic
-        // the accumulator: it saturates, crosses the threshold, and closes the
-        // bar (which is `>= threshold` by construction).
+        // A quantity near Decimal::MAX must not panic: it saturates, crosses the threshold, closes.
         let mut b = ThresholdBarBuilder::new(dec("10"), QtyMeasure);
         let huge = Trade {
             agg_id: 0,

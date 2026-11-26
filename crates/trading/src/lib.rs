@@ -37,6 +37,7 @@ mod order;
 mod position;
 pub mod rates;
 mod venue;
+mod wire;
 
 pub mod fake;
 
@@ -56,3 +57,4 @@ pub use order::{
 };
 pub use position::{ClosedTrade, Position, signed_points};
 pub use venue::TradingVenue;
+pub use wire::{ActionEntryKind, ActionSide};

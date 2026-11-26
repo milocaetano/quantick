@@ -1,14 +1,6 @@
 //! Range-profile benchmark: how fast does a profile fold a long venue prefix?
-//!
-//! A fixed-range volume profile over a time-based chart folds whatever the
-//! range covers, and on a time chart that is the venue's backfilled candles —
-//! tens of thousands of them. Those candles carry no tape, so each joins as an
-//! *approximated* ladder: its volume spread over its high–low span. Spelling
-//! that spread out row by row costs `O(candles x rows)`, and on a wide candle
-//! `rows` runs to the level cap.
-//!
-//! Dependency-free like `hot_path`, deterministic in shape, run with
-//! `cargo bench -p quantick-engine --bench profile_fold`.
+//! Backfilled candles join as approximated ladders (volume spread over high-low), which costs
+//! `O(candles x rows)`. Dependency-free; run `cargo bench -p quantick-engine --bench profile_fold`.
 
 use std::hint::black_box;
 use std::time::Instant;

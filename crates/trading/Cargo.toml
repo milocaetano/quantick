@@ -11,6 +11,9 @@ publish.workspace = true
 quantick-civil = { path = "../civil" }
 quantick-engine = { path = "../engine" }
 rust_decimal = { workspace = true }
+# The order vocabulary as the trade calls' wire says it (`wire`).
+schemars = { workspace = true }
+serde = { workspace = true }
 
 [lints]
 workspace = true

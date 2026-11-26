@@ -226,7 +226,7 @@ impl PaperAccount {
     }
 
     /// The same refusal as the sentence the trader reads - what the control
-    /// plane answers a refused `place_order` with.
+    /// plane answers a refused `trade.order.place` with.
     #[must_use]
     pub fn risk_refusal_for(&self, intent: &OrderIntent) -> Option<String> {
         self.risk_refusal(intent).map(|refusal| refusal.sentence())

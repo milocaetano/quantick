@@ -1,12 +1,5 @@
-//! How a number is spelled where a person reads it.
-//!
-//! Every painted value — a price, a quantity, a point count, an indicator
-//! reading — shows at most [`DISPLAY_DECIMALS`] places, trailing zeros
-//! stripped, so a computed `1.3333333333` reads `1.33` and never widens a
-//! label. One exception keeps data honest: a non-zero value too small to
-//! survive that rounding shows [`SMALL_SIGNIFICANT_DIGITS`] significant
-//! digits (`0.004`), never a `0` that would hide a real size or move.
-//! Presentation only: the stored and transmitted values stay exact.
+//! Display spelling: painted values show at most [`DISPLAY_DECIMALS`] places, zeros stripped; tiny
+//! non-zero values keep [`SMALL_SIGNIFICANT_DIGITS`] digits, never `0`. Stored values stay exact.
 
 use rust_decimal::Decimal;
 

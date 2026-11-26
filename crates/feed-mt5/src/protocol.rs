@@ -430,12 +430,16 @@ impl SettlementReadings {
             return None;
         };
         let (at, day) = (reading.time_ms, reading.time_ms.div_euclid(SERVER_DAY_MS));
-        let day_end = |day: i64| (day + 1) * SERVER_DAY_MS;
+        // Saturating: `time_ms` is the bridge's to declare, and the last
+        // server day before `i64::MAX` ends past it.
+        let day_end = |day: i64| day.saturating_add(1).saturating_mul(SERVER_DAY_MS);
         let window = match self.last {
             Some((_, held, (from, until))) if held == price && (from..until).contains(&at) => {
                 (from, until)
             }
-            Some((held_day, ..)) if held_day == day => (day_end(day), day_end(day + 1)),
+            Some((held_day, ..)) if held_day == day => {
+                (day_end(day), day_end(day.saturating_add(1)))
+            }
             _ => (at, day_end(day)),
         };
         self.last = Some((day, price, window));
@@ -766,6 +770,27 @@ mod tests {
             Some(at + HOUR_MS + B3_TO_UTC_MS),
             "a withdrawal forgets the window held"
         );
+    }
+
+    /// Found by the protocol property: the server day holding `i64::MAX`
+    /// ends past it, and computing that end overflowed. The window saturates.
+    #[test]
+    fn a_settlement_stamped_at_the_end_of_time_saturates_its_window() {
+        let mut readings = SettlementReadings::default();
+        let mut read = |price: &str| {
+            let line = format!(
+                r#"{{"type":"settlement","price":"{price}","time_ms":{}}}"#,
+                i64::MAX
+            );
+            let BridgeMsg::Settlement(msg) = parse_line(&line).expect("a settlement parses") else {
+                panic!("expected a settlement");
+            };
+            readings.read(&msg, |server| server)
+        };
+        let first = read("0.1").expect("a positive price");
+        assert_eq!((first.from_ms, first.until_ms), (i64::MAX, i64::MAX));
+        let next = read("0.2").expect("a positive price");
+        assert_eq!((next.from_ms, next.until_ms), (i64::MAX, i64::MAX));
     }
 
     /// WIN on day N reads the N-1 settlement in the morning; B3 publishes

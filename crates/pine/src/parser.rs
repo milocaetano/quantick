@@ -17,7 +17,11 @@ use crate::lexer::{Tok, Token};
 #[path = "libraries/parse.rs"]
 mod library_parse;
 
-/// How deeply expressions may nest.
+/// How deeply expressions and blocks may nest, counted together: every
+/// recursive descent — a `(`, a unary operator, a ternary branch, an
+/// `else if`, an indented block — is one level, and so is every link of a
+/// chain the parser builds in a loop (a binary operator, a call, `[]`, `.`),
+/// because the passes after parsing recurse as deep as the tree is.
 ///
 /// Descent costs about five stack frames per `(`, and a stack overflow
 /// aborts the process — no unwind, no `PineError`, nothing for the script
@@ -25,7 +29,11 @@ mod library_parse;
 /// open parens is the realistic way to hit it. The limit is far above any
 /// script a person writes and the check is one comparison on a path that
 /// runs once per load.
-const MAX_NEST_DEPTH: usize = 64;
+///
+/// Measured in a debug build on a 1 MiB thread (the Windows main stack): a
+/// tree 500 levels deep compiles and 1,000 overflows, so this bound keeps a
+/// fourfold margin.
+const MAX_NEST_DEPTH: usize = 128;
 
 /// Parse a lexed token stream into an AST (root = `Script`).
 ///
@@ -61,7 +69,8 @@ struct Parser<'a> {
     pos: usize,
     ast: Ast,
     errors: Vec<PineError>,
-    /// Current expression nesting, guarded by [`MAX_NEST_DEPTH`].
+    /// Current nesting of expressions and blocks, guarded by
+    /// [`MAX_NEST_DEPTH`].
     depth: usize,
 }
 
@@ -485,6 +494,10 @@ impl Parser<'_> {
     // ---- block expressions ---------------------------------------------
 
     fn block(&mut self) -> Option<NodeId> {
+        self.nested(Self::block_statements)
+    }
+
+    fn block_statements(&mut self) -> Option<NodeId> {
         let start = self.span();
         if !self.expect(&Tok::Indent, "an indented block") {
             return None;
@@ -532,7 +545,9 @@ impl Parser<'_> {
         let then_block = self.block()?;
         let otherwise = if self.eat(&Tok::KwElse) {
             if *self.peek() == Tok::KwIf {
-                Some(self.if_expression()?)
+                // Each arm nests one level deeper in the tree the passes
+                // walk, so a chain is bounded like any other descent.
+                Some(self.nested(Self::if_expression)?)
             } else {
                 self.expect(&Tok::Newline, "a newline after `else`");
                 Some(self.block()?)
@@ -671,22 +686,43 @@ impl Parser<'_> {
     // ---- expressions -----------------------------------------------------
 
     fn expression(&mut self) -> Option<NodeId> {
-        // The descent happens on the way *down*, so the guard belongs here:
-        // by the time unbalanced input would be rejected, the stack is
-        // already gone.
+        self.nested(Self::ternary)
+    }
+
+    /// Run `descend` one level deeper, or refuse past [`MAX_NEST_DEPTH`].
+    ///
+    /// The descent happens on the way *down*, so the guard belongs on every
+    /// recursive call: by the time unbalanced input would be rejected, the
+    /// stack is already gone.
+    fn nested(&mut self, descend: fn(&mut Self) -> Option<NodeId>) -> Option<NodeId> {
+        self.deeper()?;
+        let node = descend(self);
+        self.depth -= 1;
+        node
+    }
+
+    /// Run a chain the parser builds in a loop, restoring the depth its
+    /// links took: each link nests the tree one level, though not the stack.
+    fn chain(&mut self, links: impl FnOnce(&mut Self) -> Option<NodeId>) -> Option<NodeId> {
+        let entry = self.depth;
+        let node = links(self);
+        self.depth = entry;
+        node
+    }
+
+    /// Take one level, or refuse past [`MAX_NEST_DEPTH`].
+    fn deeper(&mut self) -> Option<()> {
         if self.depth >= MAX_NEST_DEPTH {
             let span = self.span();
             self.errors.push(PineError::new(
                 ErrorCode::PineSyntax,
                 span,
-                format!("expression nests deeper than {MAX_NEST_DEPTH} levels"),
+                format!("code nests deeper than {MAX_NEST_DEPTH} levels"),
             ));
             return None;
         }
         self.depth += 1;
-        let node = self.ternary();
-        self.depth -= 1;
-        node
+        Some(())
     }
 
     fn ternary(&mut self) -> Option<NodeId> {
@@ -695,9 +731,9 @@ impl Parser<'_> {
         if !self.eat(&Tok::Question) {
             return Some(condition);
         }
-        let if_true = self.ternary()?;
+        let if_true = self.nested(Self::ternary)?;
         self.expect(&Tok::Colon, "`:` of the ternary");
-        let if_false = self.ternary()?;
+        let if_false = self.nested(Self::ternary)?;
         let span = self.spanned_from(start);
         Some(self.ast.push(
             NodeKind::Ternary {
@@ -711,6 +747,10 @@ impl Parser<'_> {
 
     /// Precedence climbing over the binary operators.
     fn binary(&mut self, min_level: u8) -> Option<NodeId> {
+        self.chain(|parser| parser.binary_links(min_level))
+    }
+
+    fn binary_links(&mut self, min_level: u8) -> Option<NodeId> {
         let start = self.span();
         let mut lhs = self.unary()?;
         loop {
@@ -721,6 +761,7 @@ impl Parser<'_> {
                 return Some(lhs);
             }
             self.advance();
+            self.deeper()?;
             let rhs = self.binary(level + 1)?;
             let span = self.spanned_from(start);
             lhs = self.ast.push(NodeKind::Binary { op, lhs, rhs }, span);
@@ -730,7 +771,7 @@ impl Parser<'_> {
     fn unary(&mut self) -> Option<NodeId> {
         let start = self.span();
         if self.eat(&Tok::Minus) {
-            let operand = self.unary()?;
+            let operand = self.nested(Self::unary)?;
             let span = self.spanned_from(start);
             return Some(self.ast.push(
                 NodeKind::Unary {
@@ -741,7 +782,7 @@ impl Parser<'_> {
             ));
         }
         if self.eat(&Tok::KwNot) {
-            let operand = self.unary()?;
+            let operand = self.nested(Self::unary)?;
             let span = self.spanned_from(start);
             return Some(self.ast.push(
                 NodeKind::Unary {
@@ -755,9 +796,16 @@ impl Parser<'_> {
     }
 
     fn postfix(&mut self) -> Option<NodeId> {
+        self.chain(Self::postfix_links)
+    }
+
+    fn postfix_links(&mut self) -> Option<NodeId> {
         let start = self.span();
         let mut expr = self.primary()?;
         loop {
+            if matches!(self.peek(), Tok::LParen | Tok::LBracket | Tok::Dot) {
+                self.deeper()?;
+            }
             match self.peek() {
                 Tok::LParen => {
                     self.advance();

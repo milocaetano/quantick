@@ -1,11 +1,6 @@
-//! The bar vocabulary — `tick:50`, `time:1m`, `imbalance:volume:500`,
-//! `trades:2000` — as the one definition every consumer reads.
-//!
-//! The chart and the backtest used to carry a copy each. These tests pin the
-//! engine's copy: what parses, what is refused, what a spec writes back, what
-//! a zero parameter becomes, and — the point of owning it here — that the
-//! builder a spec names cuts each hand-computed golden into exactly its
-//! committed bars.
+//! The bar vocabulary (`tick:50`, `time:1m`, `imbalance:volume:500`) as the one definition every
+//! consumer reads: what parses, what is refused, what a spec writes back, what a zero becomes,
+//! and that the builder a spec names cuts each golden into its committed bars.
 
 use std::str::FromStr as _;
 
@@ -20,9 +15,7 @@ fn dec(s: &str) -> Decimal {
     Decimal::from_str(s).unwrap()
 }
 
-/// One committed golden per kind the fixtures cover, named by the spec
-/// string a trader would type for it. The app and the backtest hold their
-/// own copies of this table and assert against the same files.
+/// One committed golden per kind, named by the spec string a trader would type for it.
 const GOLDENS: [(&str, &str, &str); 5] = [
     (
         "tick:3",
@@ -73,10 +66,8 @@ fn the_builder_a_spec_names_cuts_each_golden_exactly() {
     }
 }
 
-/// The one thing a per-kind table takes on trust: that `ALL` is the whole of
-/// `BarKind`. The match is exhaustive and unmatchable by a wildcard, so adding
-/// a variant breaks this line at compile time; the assertion then catches the
-/// variant that was added here but forgotten in `ALL`.
+/// `ALL` must be the whole of `BarKind`: the exhaustive match breaks on a new variant at compile
+/// time, and the assertion catches one forgotten in `ALL`.
 #[test]
 fn barkind_all_lists_every_variant() {
     let named = [
@@ -113,8 +104,7 @@ fn barkind_all_lists_every_variant() {
     );
 }
 
-/// What a fresh chart opens each kind on. Written as the config strings a
-/// workspace saves, because those are what must not move.
+/// What a fresh chart opens each kind on, as the config strings a workspace saves.
 #[test]
 fn each_kind_opens_on_the_default_it_always_had() {
     let written: Vec<String> = BarKind::ALL
@@ -135,11 +125,8 @@ fn each_kind_opens_on_the_default_it_always_had() {
     assert_eq!(DEFAULT_TIME_INTERVAL_MS, 60_000);
 }
 
-/// A zero parameter reaches a spec from outside — a workspace file, a config
-/// line, a control call — and no kind may pass one on. The counted kinds
-/// floor at one; the two measured in `Decimal` floor at
-/// [`DECIMAL_PARAM_FLOOR`]. Volume is the one that bites: a bar closing on no
-/// quantity closes on every trade.
+/// A zero parameter from a workspace, config or control call must not pass through: counted
+/// kinds floor at one, Decimal kinds at [`DECIMAL_PARAM_FLOOR`] (a zero-volume bar closes every trade).
 #[test]
 fn a_zero_parameter_is_clamped_to_a_rule_that_closes_on_something() {
     for (zeroed, floored) in [
@@ -164,8 +151,7 @@ fn a_zero_parameter_is_clamped_to_a_rule_that_closes_on_something() {
     assert_eq!(BarSpec::Tick(377).clamped(), BarSpec::Tick(377));
 }
 
-/// Whatever a chart is showing, a config or a saved workspace can name — and
-/// naming it gets that chart back.
+/// Whatever a chart shows, a config or workspace can name and get that chart back.
 #[test]
 fn every_bar_spec_survives_the_config_round_trip() {
     for spec in [
@@ -178,8 +164,7 @@ fn every_bar_spec_survives_the_config_round_trip() {
         BarSpec::Dollar(dec("500000")),
         BarSpec::Time(60_000),
         BarSpec::Time(3_600_000),
-        // A parameter with no round unit: the suffix ladder has to fall
-        // through to bare milliseconds rather than rounding it away.
+        // A parameter with no round unit must fall through to bare milliseconds.
         BarSpec::Time(1_500),
     ] {
         let text = spec.to_config_string();
@@ -191,8 +176,7 @@ fn every_bar_spec_survives_the_config_round_trip() {
     }
 }
 
-/// `default_bars`, a saved workspace and the backtest's `--bars` speak one
-/// vocabulary — every kind, every interval suffix, padding tolerated.
+/// `default_bars`, a workspace and `--bars` speak one vocabulary; padding is tolerated.
 #[test]
 fn bar_specs_parse_in_the_config_vocabulary() {
     assert_eq!(BarSpec::parse("tick:50"), Ok(BarSpec::Tick(50)));
@@ -231,8 +215,7 @@ fn bar_specs_parse_in_the_config_vocabulary() {
     assert_eq!(BarSpec::parse(" time : 5m "), Ok(BarSpec::Time(300_000)));
 }
 
-/// Whatever the status bar can say, a config can ask for: the interval
-/// formatter and the parser are inverses over the whole domain shape.
+/// The interval formatter and the parser are inverses over the whole domain.
 #[test]
 fn time_interval_labels_round_trip_through_the_parser() {
     for ms in [
@@ -252,8 +235,7 @@ fn time_interval_labels_round_trip_through_the_parser() {
     }
 }
 
-/// A spec no live control could produce must not come in through a config or
-/// a command line either — its only symptom would be a chart nobody asked for.
+/// A spec no live control could produce must not enter through a config or command line.
 #[test]
 fn a_spec_no_control_could_produce_does_not_parse() {
     for bad in [
@@ -281,8 +263,7 @@ fn a_spec_no_control_could_produce_does_not_parse() {
         let error = BarSpec::parse(bad).expect_err(bad);
         assert!(!error.to_string().is_empty(), "{bad} must explain itself");
     }
-    // The message is the point: an operator who typed it wrong gets the
-    // vocabulary back, not "invalid input".
+    // The message gives the vocabulary back, not "invalid input".
     assert!(
         BarSpec::parse("candles:5")
             .expect_err("rejected")
@@ -291,9 +272,7 @@ fn a_spec_no_control_could_produce_does_not_parse() {
     );
 }
 
-/// A caller that is not a person — a control call, a script repairing its own
-/// request — reads why a spec was refused from the variant, not by parsing
-/// prose; a person still reads the same sentence as before.
+/// A non-person caller reads why a spec was refused from the variant, not from prose.
 #[test]
 fn a_refusal_names_its_reason_as_a_variant_and_keeps_its_sentence() {
     let cases: [(&str, BarSpecError, &str); 8] = [
@@ -367,12 +346,10 @@ fn a_refusal_names_its_reason_as_a_variant_and_keeps_its_sentence() {
 
 #[test]
 fn only_the_size_measuring_rules_need_a_traded_volume() {
-    // Volume and dollar bars measure size, so a venue that prints none can
-    // only fake them.
+    // Volume and dollar bars measure size, so a venue that prints none can only fake them.
     assert!(BarKind::Volume.needs_traded_volume());
     assert!(BarKind::Dollar.needs_traded_volume());
-    // The others count events, not quantity — imbalance answering for its
-    // default trades unit, which sums a signed ±1 per trade.
+    // The others count events; imbalance answers for its default trades unit (signed +-1).
     assert!(!BarKind::Tick.needs_traded_volume());
     assert!(!BarKind::Time.needs_traded_volume());
     assert!(!BarKind::Imbalance.needs_traded_volume());
@@ -390,9 +367,7 @@ fn only_the_deal_count_rule_needs_a_deal_counter() {
     }
 }
 
-/// The custom-interval drag writes and reads the same units the chips do: a
-/// day is `1d` on screen, never `86400000 ms`, and typing it back gives the
-/// same interval.
+/// The custom-interval drag reads and writes the chips' units: a day is `1d`, not `86400000 ms`.
 #[test]
 fn the_interval_drag_reads_back_what_it_writes() {
     use quantick_engine::parse_time_interval;
@@ -411,9 +386,8 @@ fn the_interval_drag_reads_back_what_it_writes() {
     assert_eq!(parse_time_interval("5 apples"), None);
 }
 
-/// One vocabulary for every surface that names a timeframe: the summary speaks
-/// the chips' own labels, falling back to finer units only where no coarser
-/// one writes the value back exactly.
+/// The summary speaks the chips' labels, falling to finer units only where no coarser one
+/// writes the value back exactly.
 #[test]
 fn time_summaries_speak_the_chips_language() {
     assert_eq!(fmt_time_interval(60_000), "1m");
@@ -446,8 +420,7 @@ fn build_dispatches_every_kind() {
         quantity: dec("1.0"),
         side: Side::Buy,
     };
-    // Tick(1) and Imbalance(1) close on the first trade; the others simply
-    // must build and accept a trade without panicking.
+    // Tick(1) and Imbalance(1) close on the first trade; the others must build and accept one.
     for spec in [
         BarSpec::Tick(1),
         BarSpec::Volume(dec("1.0")),
