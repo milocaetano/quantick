@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "LayoutTabSnapshot": {
+      "description": "One layout tab, as the strip lists it.",
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "indicator_count": {
+          "$ref": "#/$defs/WireU64",
+          "description": "How many indicators the layout holds."
+        },
+        "layout_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "layout_id",
+        "name",
+        "active",
+        "indicator_count"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What every layout-tab call answers with: the strip as it now stands.",
+  "properties": {
+    "active_layout_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "active_layout_name": {
+      "type": "string"
+    },
+    "changed": {
+      "description": "Whether the call changed anything. `false` is a real answer:\nswitching to the layout already showing is a no-op, not a failure.",
+      "type": "boolean"
+    },
+    "layouts": {
+      "items": {
+        "$ref": "#/$defs/LayoutTabSnapshot"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "active_layout_id",
+    "active_layout_name",
+    "layouts",
+    "changed"
+  ],
+  "title": "LayoutTabResult",
+  "type": "object"
+}

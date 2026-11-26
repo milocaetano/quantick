@@ -1,0 +1,42 @@
+{
+  "$defs": {
+    "PnlDisplayMode": {
+      "description": "Which figure a paper P&L readout leads with; the other always follows.",
+      "oneOf": [
+        {
+          "const": "money",
+          "description": "Money in the instrument's own currency.",
+          "type": "string"
+        },
+        {
+          "const": "points_per_contract",
+          "description": "The move one contract made, with the quantity beside it.",
+          "type": "string"
+        },
+        {
+          "const": "points_times_qty",
+          "description": "The move times the quantity — the stored figure.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Read the P&L display, or set which figure leads it.",
+  "properties": {
+    "primary": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PnlDisplayMode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The figure to lead with. Left out, the call only reads."
+    }
+  },
+  "title": "SetPnlDisplayInput",
+  "type": "object"
+}

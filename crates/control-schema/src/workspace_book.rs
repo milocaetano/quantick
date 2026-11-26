@@ -20,21 +20,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::layout::transient_descriptor;
-use crate::readback::{EVERY_OPTIONAL_TEST, Readback, journal};
+use crate::readback::EVERY_OPTIONAL_TEST;
 use crate::workspace::{MODULE_ID, WorkspaceColourDto};
-
-pub const TAB_WORKSPACE_SET_CAPABILITY_ID: &str = "tab.workspace.set";
-pub const WORKSPACE_SAVE_TO_CAPABILITY_ID: &str = "workspace.save_to";
-pub const WORKSPACE_SAVE_AS_CAPABILITY_ID: &str = "workspace.save_as";
-pub const WORKSPACE_NEW_CAPABILITY_ID: &str = "workspace.new";
-pub const WORKSPACE_REVERT_CAPABILITY_ID: &str = "workspace.revert";
-pub const WORKSPACE_REVERT_UNDO_CAPABILITY_ID: &str = "workspace.revert.undo";
-pub const WORKSPACE_RENAME_CAPABILITY_ID: &str = "workspace.rename";
-pub const WORKSPACE_DELETE_CAPABILITY_ID: &str = "workspace.delete";
-pub const WORKSPACE_LIST_CAPABILITY_ID: &str = "workspace.list";
-pub const WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID: &str = "workspace.autosave.set";
-pub const TAB_CLOSE_CAPABILITY_ID: &str = "tab.close";
-pub const WORKSPACE_COLOUR_SET_CAPABILITY_ID: &str = "workspace.colour.set";
 
 /// A tab moved to another workspace.
 pub const TAB_WORKSPACE_SET_EVENT_KIND: &str = "workspace.tab_set";
@@ -317,246 +304,363 @@ pub(crate) fn writes_the_book(mut descriptor: CapabilityDescriptor) -> Capabilit
     bounded(descriptor)
 }
 
-pub fn tab_workspace_set_descriptor() -> CapabilityDescriptor {
-    bounded(transient_descriptor::<
-        TabWorkspaceSetInput,
-        TabWorkspaceSetResult,
-    >(
-        TAB_WORKSPACE_SET_CAPABILITY_ID,
-        quantick_control_host::authority::TAB_MODULE_ID,
-        "Put a tab on a workspace",
-        "Switches one tab to a saved workspace: its charts, each chart's bar rule, indicators, layers and footprint style, as the workspace saved them; a rule or style it does not name stays the tab's. Drawings, anchored studies and the paper position stay with the market. A switch that would drop unsaved edits refuses with workspace.unsaved_edits, naming the workspace, the target, the tabs a save also changes and what changed, and changes nothing; edits discard drops them (dropped_edits true), and workspace.save_to first keeps them. Discover names with workspace.list.",
-        "The call names the workspace it wants, so a repeat leaves the tab there, keeps any edits made since and answers changed false.",
+/// The builders `declare_calls!` calls as `<builder>::<Input, Output>(id, module, prose..)`.
+/// A transient call capped at [`RESULT_MAX_BYTES`].
+fn bounded_call<Input: JsonSchema, Output: JsonSchema>(
+    id: &str,
+    module: &str,
+    title: &str,
+    description: &str,
+    retry: &str,
+) -> CapabilityDescriptor {
+    bounded(transient_descriptor::<Input, Output>(
+        id,
+        module,
+        title,
+        description,
+        retry,
     ))
 }
 
-pub fn workspace_save_to_descriptor() -> CapabilityDescriptor {
-    writes_the_book(
-        transient_descriptor::<WorkspaceTabInput, WorkspaceSaveResult>(
-            WORKSPACE_SAVE_TO_CAPABILITY_ID,
-            MODULE_ID,
-            "Save a tab's edits to its workspace",
-            "Writes the tab's edits into the workspace it uses and answers the other tabs that changed: the ones on that workspace without edits of their own. A tab with edits keeps them. Default refuses overwrite. Use workspace.save_as to keep its edits. Save also commits layout configuration (selection, count, names, pane geometry and timeframes). Drawing autosave and its saved snapshot are independent; Save never writes paused drawings.",
-            "A repeat finds no edits, writes nothing and answers changed false.",
-        ),
-    )
-}
-
-pub fn workspace_save_as_descriptor() -> CapabilityDescriptor {
-    writes_the_book(transient_descriptor::<
-        WorkspaceSaveAsInput,
-        WorkspaceSaveResult,
-    >(
-        WORKSPACE_SAVE_AS_CAPABILITY_ID,
-        MODULE_ID,
-        "Save a tab as a new workspace",
-        "Makes a workspace of what the tab shows and puts the tab on it, in colour (a preset's name or #RRGGBB; left out, the next free colour). No other tab changes. An empty or taken name is refused with the reason; a colour another workspace holds is refused with workspace.colour_taken, never swapped on create; one that is neither with workspace.colour_invalid. The Save as new workspace dialog's Save; open it with workspace.dialog.open. Layout configuration is committed independently of drawings; paused drawings remain paused.",
-        "A repeat from the tab that made the name writes nothing and answers changed false.",
+/// A call that writes the book, behind [`writes_the_book`].
+fn book_write<Input: JsonSchema, Output: JsonSchema>(
+    id: &str,
+    module: &str,
+    title: &str,
+    description: &str,
+    retry: &str,
+) -> CapabilityDescriptor {
+    writes_the_book(transient_descriptor::<Input, Output>(
+        id,
+        module,
+        title,
+        description,
+        retry,
     ))
 }
 
-pub fn workspace_new_descriptor() -> CapabilityDescriptor {
-    writes_the_book(
-        transient_descriptor::<WorkspaceNewInput, WorkspaceNewResult>(
-            WORKSPACE_NEW_CAPABILITY_ID,
-            MODULE_ID,
-            "Make a new, empty workspace for a tab",
-            "Creates a clean workspace with charts (1-8, default 1) and timeframe_ms (current time interval, otherwise 5m), on a generic Layout N. All charts use the chosen interval. Existing workspace edits are parked and restored when revisiting it; dropped_edits is false. Other tabs and market-owned drawings are preserved. An omitted or blank name requires an idempotency key and chooses Workspace N. An explicit name must be unique. Colour is a preset or #RRGGBB; omitted selects the next free color, and a held color is refused without swapping. Invalid choices are refused before mutation. The New workspace form's Create action; open and preview it with workspace.dialog.open.",
-            "Repeat the same payload and key to replay the original result. An explicit name also permits an unkeyed request; repeating it refuses with workspace.name_taken.",
-        ),
-    )
-}
-
-pub fn workspace_revert_descriptor() -> CapabilityDescriptor {
-    bounded(transient_descriptor::<
-        WorkspaceTabInput,
-        WorkspaceRevertResult,
-    >(
-        WORKSPACE_REVERT_CAPABILITY_ID,
-        MODULE_ID,
-        "Discard a tab's unsaved layout edits",
-        "Puts the tab back on its workspace as saved: pane sizes, each chart's bar rule, chart type, indicators and layers; a bar rule the workspace does not name goes back to the one the tab opened with. Drawings, orders and other tabs are not touched, and nothing is written. The dropped edits are held for workspace.revert.undo until the workspace is saved or the tab switches workspace; each revert replaces the last. A tab without unsaved edits answers changed false.",
-        "A repeat finds no edits and answers changed false; the held edits stay.",
-    ))
-}
-
-pub fn workspace_revert_undo_descriptor() -> CapabilityDescriptor {
-    bounded(transient_descriptor::<
-        WorkspaceTabInput,
-        WorkspaceRevertResult,
-    >(
-        WORKSPACE_REVERT_UNDO_CAPABILITY_ID,
-        MODULE_ID,
-        "Bring back the edits a revert dropped",
-        "Puts back the unsaved edits the tab's last workspace.revert dropped, unsaved again. Answers changed false when there are none: nothing reverted, the workspace saved or the tab switched since, or the tab holds edits of its own since, which a revert drops first.",
-        "The held edits are taken once: a repeat answers changed false.",
-    ))
-}
-
-pub fn workspace_autosave_set_descriptor() -> CapabilityDescriptor {
-    writes_the_book(transient_descriptor::<
-        WorkspaceAutosaveInput,
-        WorkspaceAutosaveResult,
-    >(
-        WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID,
-        MODULE_ID,
-        "Turn auto save layout changes on or off",
-        "On, every layout edit on a tab is written into its workspace a second after it stops, and the clean tabs on that workspace follow; a tab reads as modified only while its copy is not in its workspace: a write that failed (retried each quiet second until another tab saves that workspace), a second tab on that workspace holding edits (one copy is written: of every tab there holding edits, the active tab's, else the lowest id's), or a copy a restart brought back differing. Such a tab holds its edits as with autosave off: autosave never writes it, and closing it, switching it or exiting asks. Off, a tab holds its edits, marked, until workspace.save_to, and closing it asks. Turning it on saves every tab holding edits at once, one per workspace (never one marked as above), and answers each save; when one fails the setting stays on, the setting and the saves that landed are journaled, and the call refuses with workspace.write_failed whose details name auto_save and the workspaces saved. The desk keeps the choice; the workspace snapshot reads it as auto_save. This choice controls workspace configuration only; drawing writes are controlled independently by chart.drawings.autosave.set.",
-        "The call names the state it wants, so a repeat answers changed false and writes only a save still owed, as after a failure.",
-    ))
-}
-
-pub fn tab_close_descriptor() -> CapabilityDescriptor {
-    writes_the_book(transient_descriptor::<TabCloseInput, TabCloseResult>(
-        TAB_CLOSE_CAPABILITY_ID,
-        quantick_control_host::authority::TAB_MODULE_ID,
-        "Close a market tab",
-        "Closes one tab. With autosave on an edit on its way is written first and it closes at once; a tab whose copy autosave did not write (marked) asks as held edits do. With autosave off and edits held, a call without save refuses with workspace.unsaved_edits, naming the workspace, the tabs a save also changes and what changed, and closes nothing; save true writes the edits first, save false drops them. The window's last tab refuses with workspace.last_tab before anything is saved or written.",
-        "A closed tab is gone, so a repeat names an unknown tab and is refused with workspace.unknown_tab; nothing else closes.",
-    ))
-}
-
-pub fn workspace_rename_descriptor() -> CapabilityDescriptor {
-    writes_the_book(transient_descriptor::<
-        WorkspaceRenameInput,
-        WorkspaceRenameResult,
-    >(
-        WORKSPACE_RENAME_CAPABILITY_ID,
-        MODULE_ID,
-        "Rename a workspace",
-        "Renames a workspace; the tabs on it follow. Default cannot be renamed, and an empty or taken name is refused with the reason.",
-        "Naming the name it already has writes nothing and answers changed false.",
-    ))
-}
-
-pub fn workspace_delete_descriptor() -> CapabilityDescriptor {
-    writes_the_book(transient_descriptor::<
-        WorkspaceDeleteInput,
-        WorkspaceDeleteResult,
-    >(
-        WORKSPACE_DELETE_CAPABILITY_ID,
-        MODULE_ID,
-        "Delete a workspace",
-        "Deletes a workspace and moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •. Default cannot be deleted. For 10 seconds, until the answer's undo_until_unix_ms, workspace.delete.undo brings it back with its recipe, colour and tabs, as Manage workspaces' Undo does.",
-        "A repeat finds no such workspace and is refused with workspace.unknown; nothing is written.",
-    ))
-}
-
-pub fn workspace_colour_set_descriptor() -> CapabilityDescriptor {
-    writes_the_book(transient_descriptor::<
-        WorkspaceColourSetInput,
-        WorkspaceColourSetResult,
-    >(
-        WORKSPACE_COLOUR_SET_CAPABILITY_ID,
-        MODULE_ID,
-        "Give a workspace a colour",
-        "Gives a workspace a colour: one of the sixteen presets by name (cobalt, orchid, sky, violet, slate, fuchsia, petrol, lavender, ultramarine, mauve, denim, grape, ink, plum, ice, blossom) or a custom #RRGGBB. The open tab paints its symbol in it, the capsule its tint, border and left bar, and the workspace menu its row's and header's slot. No two workspaces hold identical colours (the same value in either theme): a colour another workspace holds is refused with workspace.colour_taken, its details listing the holders in owners and, for a single holder, the colour it would get in owner_would_get. With swap true a single holder takes this workspace's old colour, named in swapped_with and holder_colour; two or more holders, or a swap that would give the holder a colour a third workspace matches, are refused even with swap. A new workspace takes the next free colour and a deleted one frees its own. Read the colours with workspace.list or on each tab of workspace.summary. The answer's warnings list what the colour warns, none of which blocks: kind close (hard to tell from the named workspace's colour), near_buy, near_sell, or low_contrast (lost on the named theme's tab strip, dark or light). An applied custom colour becomes the palette's last custom colour (workspace.colour.palette). A name no workspace has is refused with workspace.unknown, a colour that is neither a preset nor #RRGGBB with workspace.colour_invalid.",
-        "Default is protected against direct changes and swaps. The call names the colour it wants, so a repeat answers changed false and writes nothing.",
-    ))
-}
-
-pub fn workspace_list_descriptor() -> CapabilityDescriptor {
-    read_descriptor::<WorkspaceListInput, WorkspaceListResult>(&ReadSpec {
-        id: WORKSPACE_LIST_CAPABILITY_ID,
-        module: MODULE_ID,
-        title: "List the workspaces",
-        description: "Lists every saved workspace with a one-line summary (panes, intervals, indicator count), its colour and the open tabs using it, The immutable factory Default comes first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
+/// A read an observer granted `observe.workspace` may make.
+fn book_read<Input: JsonSchema, Output: JsonSchema>(
+    id: &'static str,
+    module: &'static str,
+    title: &'static str,
+    description: &'static str,
+) -> CapabilityDescriptor {
+    read_descriptor::<Input, Output>(&ReadSpec {
+        id,
+        module,
+        title,
+        description,
         permissions: &[OBSERVE_PERMISSION_ID, "observe.workspace"],
         pagination: None,
     })
 }
 
-/// How a client reconciles an interrupted call.
-pub const READBACKS: &[Readback] = &[
-    journal(
-        TAB_WORKSPACE_SET_CAPABILITY_ID,
-        IdempotencyPolicy::Optional,
-        TAB_WORKSPACE_SET_EVENT_KIND,
-        "payload.workspace",
-        "an event after the pre-call cursor names the requested workspace",
-        &[EVERY_OPTIONAL_TEST],
-    ),
-    journal(
-        WORKSPACE_SAVE_TO_CAPABILITY_ID,
-        IdempotencyPolicy::Optional,
-        WORKSPACE_SAVED_EVENT_KIND,
-        "payload.workspace",
-        "an event after the pre-call cursor names the tab's workspace",
-        &[EVERY_OPTIONAL_TEST],
-    ),
-    journal(
-        WORKSPACE_SAVE_AS_CAPABILITY_ID,
-        IdempotencyPolicy::Optional,
-        WORKSPACE_SAVED_EVENT_KIND,
-        "payload.workspace",
-        "an event after the pre-call cursor names the new workspace",
-        &[EVERY_OPTIONAL_TEST],
-    ),
-    journal(
-        WORKSPACE_NEW_CAPABILITY_ID,
-        IdempotencyPolicy::Optional,
-        WORKSPACE_CREATED_EVENT_KIND,
-        "payload.workspace",
-        "an event after the pre-call cursor names the new workspace",
-        &[EVERY_OPTIONAL_TEST],
-    ),
-    journal(
-        WORKSPACE_REVERT_CAPABILITY_ID,
-        IdempotencyPolicy::Optional,
-        WORKSPACE_REVERTED_EVENT_KIND,
-        "payload.workspace",
-        "an event after the pre-call cursor names the tab's workspace",
-        &[EVERY_OPTIONAL_TEST],
-    ),
-    journal(
-        WORKSPACE_REVERT_UNDO_CAPABILITY_ID,
-        IdempotencyPolicy::Optional,
-        WORKSPACE_REVERT_UNDONE_EVENT_KIND,
-        "payload.workspace",
-        "an event after the pre-call cursor names the tab's workspace",
-        &[EVERY_OPTIONAL_TEST],
-    ),
-    journal(
-        WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID,
-        IdempotencyPolicy::Optional,
-        WORKSPACE_AUTOSAVE_SET_EVENT_KIND,
-        "payload.auto_save",
-        "an event after the pre-call cursor carries the requested state",
-        &[EVERY_OPTIONAL_TEST],
-    ),
-    journal(
-        TAB_CLOSE_CAPABILITY_ID,
-        IdempotencyPolicy::Optional,
-        TAB_CLOSED_EVENT_KIND,
-        "payload.tab_id",
-        "an event after the pre-call cursor names the closed tab",
-        &[EVERY_OPTIONAL_TEST],
-    ),
-    journal(
-        WORKSPACE_RENAME_CAPABILITY_ID,
-        IdempotencyPolicy::Optional,
-        WORKSPACE_RENAMED_EVENT_KIND,
-        "payload.workspace",
-        "an event after the pre-call cursor carries the new name",
-        &[EVERY_OPTIONAL_TEST],
-    ),
-    journal(
-        WORKSPACE_COLOUR_SET_CAPABILITY_ID,
-        IdempotencyPolicy::Optional,
-        WORKSPACE_COLOUR_SET_EVENT_KIND,
-        "payload.colour",
-        "an event after the pre-call cursor gives the workspace the requested colour's word",
-        &[EVERY_OPTIONAL_TEST],
-    ),
-    journal(
-        WORKSPACE_DELETE_CAPABILITY_ID,
-        IdempotencyPolicy::Optional,
-        WORKSPACE_DELETED_EVENT_KIND,
-        "payload.workspace",
-        "an event after the pre-call cursor names the deleted workspace",
-        &[EVERY_OPTIONAL_TEST],
-    ),
-];
+/// The workspace book's calls, one declaration each: the shape
+/// `crate::calls` documents. Expanded here by `declare_calls!` and in
+/// `quantick_control_handlers::workspace_book` into the registration.
+#[macro_export]
+macro_rules! workspace_book_calls {
+    ($($consumer:ident)::+ $(, $argument:expr)* $(,)?) => {
+        $($consumer)::+! {
+            [$($argument),*]
+            tab_workspace_set_descriptor {
+                id: TAB_WORKSPACE_SET_CAPABILITY_ID = "tab.workspace.set",
+                handler: set,
+                module: quantick_control_host::authority::TAB_MODULE_ID,
+                input: TabWorkspaceSetInput,
+                result: TabWorkspaceSetResult,
+                descriptor: bounded_call(
+                    "Put a tab on a workspace",
+                    "Switches one tab to a saved workspace: its charts, each chart's bar rule, indicators, layers and footprint style, as the workspace saved them; a rule or style it does not name stays the tab's. Drawings, anchored studies and the paper position stay with the market. A switch that would drop unsaved edits refuses with workspace.unsaved_edits, naming the workspace, the target, the tabs a save also changes and what changed, and changes nothing; edits discard drops them (dropped_edits true), and workspace.save_to first keeps them. Discover names with workspace.list.",
+                    "The call names the workspace it wants, so a repeat leaves the tab there, keeps any edits made since and answers changed false.",
+                ),
+                readback: journal(
+                    IdempotencyPolicy::Optional,
+                    TAB_WORKSPACE_SET_EVENT_KIND,
+                    "payload.workspace",
+                    "an event after the pre-call cursor names the requested workspace",
+                    &[EVERY_OPTIONAL_TEST],
+                ),
+                ui: {
+                    title: "Put a tab on a saved workspace",
+                    reach: "the capsule's workspace name, Ctrl+Shift+O",
+                    keys: [
+                        (Hotkey, "WORKSPACE_MENU_SHORTCUT"),
+                        (ToolbarAction, "ToggleWorkspaceMenu"),
+                    ],
+                },
+            }
+            workspace_save_to_descriptor {
+                id: WORKSPACE_SAVE_TO_CAPABILITY_ID = "workspace.save_to",
+                handler: save_to,
+                module: MODULE_ID,
+                input: WorkspaceTabInput,
+                result: WorkspaceSaveResult,
+                descriptor: book_write(
+                    "Save a tab's edits to its workspace",
+                    "Writes the tab's edits into the workspace it uses and answers the other tabs that changed: the ones on that workspace without edits of their own. A tab with edits keeps them. Default refuses overwrite. Use workspace.save_as to keep its edits. Save also commits layout configuration (selection, count, names, pane geometry and timeframes). Drawing autosave and its saved snapshot are independent; Save never writes paused drawings.",
+                    "A repeat finds no edits, writes nothing and answers changed false.",
+                ),
+                readback: journal(
+                    IdempotencyPolicy::Optional,
+                    WORKSPACE_SAVED_EVENT_KIND,
+                    "payload.workspace",
+                    "an event after the pre-call cursor names the tab's workspace",
+                    &[EVERY_OPTIONAL_TEST],
+                ),
+                ui: {
+                    title: "Save a tab's edits to its workspace",
+                    reach: "the capsule's floppy, its workspace menu, window menu, Save to, Ctrl+S",
+                    keys: [
+                        (ToolbarAction, "SaveWorkspace"),
+                        (MenuEntry, "Save to workspace"),
+                        (Hotkey, "SAVE_TO_WORKSPACE_SHORTCUT"),
+                    ],
+                },
+            }
+            workspace_revert_descriptor {
+                id: WORKSPACE_REVERT_CAPABILITY_ID = "workspace.revert",
+                handler: revert::revert,
+                module: MODULE_ID,
+                input: WorkspaceTabInput,
+                result: WorkspaceRevertResult,
+                descriptor: bounded_call(
+                    "Discard a tab's unsaved layout edits",
+                    "Puts the tab back on its workspace as saved: pane sizes, each chart's bar rule, chart type, indicators and layers; a bar rule the workspace does not name goes back to the one the tab opened with. Drawings, orders and other tabs are not touched, and nothing is written. The dropped edits are held for workspace.revert.undo until the workspace is saved or the tab switches workspace; each revert replaces the last. A tab without unsaved edits answers changed false.",
+                    "A repeat finds no edits and answers changed false; the held edits stay.",
+                ),
+                readback: journal(
+                    IdempotencyPolicy::Optional,
+                    WORKSPACE_REVERTED_EVENT_KIND,
+                    "payload.workspace",
+                    "an event after the pre-call cursor names the tab's workspace",
+                    &[EVERY_OPTIONAL_TEST],
+                ),
+                ui: {
+                    title: "Discard a tab's unsaved layout edits, back to its workspace as saved",
+                    reach: "the capsule's revert arrow, right of the floppy, while the tab holds edits",
+                    keys: [(ToolbarAction, "RevertWorkspace")],
+                },
+            }
+            workspace_revert_undo_descriptor {
+                id: WORKSPACE_REVERT_UNDO_CAPABILITY_ID = "workspace.revert.undo",
+                handler: revert::undo,
+                module: MODULE_ID,
+                input: WorkspaceTabInput,
+                result: WorkspaceRevertResult,
+                descriptor: bounded_call(
+                    "Bring back the edits a revert dropped",
+                    "Puts back the unsaved edits the tab's last workspace.revert dropped, unsaved again. Answers changed false when there are none: nothing reverted, the workspace saved or the tab switched since, or the tab holds edits of its own since, which a revert drops first.",
+                    "The held edits are taken once: a repeat answers changed false.",
+                ),
+                readback: journal(
+                    IdempotencyPolicy::Optional,
+                    WORKSPACE_REVERT_UNDONE_EVENT_KIND,
+                    "payload.workspace",
+                    "an event after the pre-call cursor names the tab's workspace",
+                    &[EVERY_OPTIONAL_TEST],
+                ),
+                ui: {
+                    title: "Bring back the edits a revert dropped, until a save or a switch",
+                    reach: "the capsule's restore arrow, in the revert's slot after a revert",
+                    keys: [(ToolbarAction, "UndoRevertWorkspace")],
+                },
+            }
+            workspace_save_as_descriptor {
+                id: WORKSPACE_SAVE_AS_CAPABILITY_ID = "workspace.save_as",
+                handler: save_as,
+                module: MODULE_ID,
+                input: WorkspaceSaveAsInput,
+                result: WorkspaceSaveResult,
+                descriptor: book_write(
+                    "Save a tab as a new workspace",
+                    "Makes a workspace of what the tab shows and puts the tab on it, in colour (a preset's name or #RRGGBB; left out, the next free colour). No other tab changes. An empty or taken name is refused with the reason; a colour another workspace holds is refused with workspace.colour_taken, never swapped on create; one that is neither with workspace.colour_invalid. The Save as new workspace dialog's Save; open it with workspace.dialog.open. Layout configuration is committed independently of drawings; paused drawings remain paused.",
+                    "A repeat from the tab that made the name writes nothing and answers changed false.",
+                ),
+                readback: journal(
+                    IdempotencyPolicy::Optional,
+                    WORKSPACE_SAVED_EVENT_KIND,
+                    "payload.workspace",
+                    "an event after the pre-call cursor names the new workspace",
+                    &[EVERY_OPTIONAL_TEST],
+                ),
+                ui: {
+                    title: "Save a tab as a new workspace",
+                    reach: "window menu, Workspace, Save as new, or the capsule's workspace menu, Save as\u{2026}: \
+                            its dialog suggests a name and holds the palette on the next free colour",
+                    keys: [
+                        (MenuEntry, "Save as new\u{2026}"),
+                        (
+                            Authored,
+                            "the dialog's name field, palette and Save are marks the dialog paints: listed \
+                             in the scene as toolbar.name_dialog.colour.<key>"
+                        ),
+                    ],
+                    with: ["workspace.dialog.open"],
+                },
+            }
+            workspace_new_descriptor {
+                id: WORKSPACE_NEW_CAPABILITY_ID = "workspace.new",
+                handler: new,
+                module: MODULE_ID,
+                input: WorkspaceNewInput,
+                result: WorkspaceNewResult,
+                descriptor: book_write(
+                    "Make a new, empty workspace for a tab",
+                    "Creates a clean workspace with charts (1-8, default 1) and timeframe_ms (current time interval, otherwise 5m), on a generic Layout N. All charts use the chosen interval. Existing workspace edits are parked and restored when revisiting it; dropped_edits is false. Other tabs and market-owned drawings are preserved. An omitted or blank name requires an idempotency key and chooses Workspace N. An explicit name must be unique. Colour is a preset or #RRGGBB; omitted selects the next free color, and a held color is refused without swapping. Invalid choices are refused before mutation. The New workspace form's Create action; open and preview it with workspace.dialog.open.",
+                    "Repeat the same payload and key to replay the original result. An explicit name also permits an unkeyed request; repeating it refuses with workspace.name_taken.",
+                ),
+                readback: journal(
+                    IdempotencyPolicy::Optional,
+                    WORKSPACE_CREATED_EVENT_KIND,
+                    "payload.workspace",
+                    "an event after the pre-call cursor names the new workspace",
+                    &[EVERY_OPTIONAL_TEST],
+                ),
+                ui: {
+                    title: "Make a new, empty workspace for a tab",
+                    reach: "the capsule's workspace menu, New workspace\u{2026}, or Manage workspaces' footer: \
+                            its dialog suggests a name and holds the palette on the next free colour",
+                    keys: [(MenuEntry, "New workspace\u{2026}")],
+                    with: ["workspace.dialog.open"],
+                },
+            }
+            workspace_autosave_set_descriptor {
+                id: WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID = "workspace.autosave.set",
+                handler: autosave_set,
+                module: MODULE_ID,
+                input: WorkspaceAutosaveInput,
+                result: WorkspaceAutosaveResult,
+                descriptor: book_write(
+                    "Turn auto save layout changes on or off",
+                    "On, every layout edit on a tab is written into its workspace a second after it stops, and the clean tabs on that workspace follow; a tab reads as modified only while its copy is not in its workspace: a write that failed (retried each quiet second until another tab saves that workspace), a second tab on that workspace holding edits (one copy is written: of every tab there holding edits, the active tab's, else the lowest id's), or a copy a restart brought back differing. Such a tab holds its edits as with autosave off: autosave never writes it, and closing it, switching it or exiting asks. Off, a tab holds its edits, marked, until workspace.save_to, and closing it asks. Turning it on saves every tab holding edits at once, one per workspace (never one marked as above), and answers each save; when one fails the setting stays on, the setting and the saves that landed are journaled, and the call refuses with workspace.write_failed whose details name auto_save and the workspaces saved. The desk keeps the choice; the workspace snapshot reads it as auto_save. This choice controls workspace configuration only; drawing writes are controlled independently by chart.drawings.autosave.set.",
+                    "The call names the state it wants, so a repeat answers changed false and writes only a save still owed, as after a failure.",
+                ),
+                readback: journal(
+                    IdempotencyPolicy::Optional,
+                    WORKSPACE_AUTOSAVE_SET_EVENT_KIND,
+                    "payload.auto_save",
+                    "an event after the pre-call cursor carries the requested state",
+                    &[EVERY_OPTIONAL_TEST],
+                ),
+                ui: {
+                    title: "Turn auto save layout changes on or off",
+                    reach: "the capsule's workspace menu, Auto save",
+                    keys: [(MenuEntry, "Auto save layout changes")],
+                },
+            }
+            workspace_rename_descriptor {
+                id: WORKSPACE_RENAME_CAPABILITY_ID = "workspace.rename",
+                handler: rename,
+                module: MODULE_ID,
+                input: WorkspaceRenameInput,
+                result: WorkspaceRenameResult,
+                descriptor: book_write(
+                    "Rename a workspace",
+                    "Renames a workspace; the tabs on it follow. Default cannot be renamed, and an empty or taken name is refused with the reason.",
+                    "Naming the name it already has writes nothing and answers changed false.",
+                ),
+                readback: journal(
+                    IdempotencyPolicy::Optional,
+                    WORKSPACE_RENAMED_EVENT_KIND,
+                    "payload.workspace",
+                    "an event after the pre-call cursor carries the new name",
+                    &[EVERY_OPTIONAL_TEST],
+                ),
+                ui: {
+                    title: "Rename a workspace",
+                    reach: "window menu, Workspace, Rename, the capsule's workspace menu, Rename\u{2026}, or \
+                            inline in a Manage workspaces row (pencil, F2 or a double click)",
+                    keys: [(MenuEntry, "Rename workspace\u{2026}")],
+                },
+            }
+            workspace_colour_set_descriptor {
+                id: WORKSPACE_COLOUR_SET_CAPABILITY_ID = "workspace.colour.set",
+                handler: colour_set,
+                module: MODULE_ID,
+                input: WorkspaceColourSetInput,
+                result: WorkspaceColourSetResult,
+                descriptor: book_write(
+                    "Give a workspace a colour",
+                    "Gives a workspace a colour: one of the sixteen presets by name (cobalt, orchid, sky, violet, slate, fuchsia, petrol, lavender, ultramarine, mauve, denim, grape, ink, plum, ice, blossom) or a custom #RRGGBB. The open tab paints its symbol in it, the capsule its tint, border and left bar, and the workspace menu its row's and header's slot. No two workspaces hold identical colours (the same value in either theme): a colour another workspace holds is refused with workspace.colour_taken, its details listing the holders in owners and, for a single holder, the colour it would get in owner_would_get. With swap true a single holder takes this workspace's old colour, named in swapped_with and holder_colour; two or more holders, or a swap that would give the holder a colour a third workspace matches, are refused even with swap. A new workspace takes the next free colour and a deleted one frees its own. Read the colours with workspace.list or on each tab of workspace.summary. The answer's warnings list what the colour warns, none of which blocks: kind close (hard to tell from the named workspace's colour), near_buy, near_sell, or low_contrast (lost on the named theme's tab strip, dark or light). An applied custom colour becomes the palette's last custom colour (workspace.colour.palette). A name no workspace has is refused with workspace.unknown, a colour that is neither a preset nor #RRGGBB with workspace.colour_invalid.",
+                    "Default is protected against direct changes and swaps. The call names the colour it wants, so a repeat answers changed false and writes nothing.",
+                ),
+                readback: journal(
+                    IdempotencyPolicy::Optional,
+                    WORKSPACE_COLOUR_SET_EVENT_KIND,
+                    "payload.colour",
+                    "an event after the pre-call cursor gives the workspace the requested colour's word",
+                    &[EVERY_OPTIONAL_TEST],
+                ),
+                ui: {
+                    title: "Give a workspace a colour, swapping with its holder only when asked",
+                    reach: "the capsule's workspace menu, the header swatch, or a row's chip in Manage workspaces",
+                    keys: [(
+                        Authored,
+                        "the header swatch's popover is marks the workspace menu paints: each swatch, Apply and Swap is listed in the scene as toolbar.workspace_menu.colour.<key>"
+                    )],
+                },
+            }
+            workspace_list_descriptor {
+                id: WORKSPACE_LIST_CAPABILITY_ID = "workspace.list",
+                handler: list,
+                module: MODULE_ID,
+                input: WorkspaceListInput,
+                result: WorkspaceListResult,
+                descriptor: book_read(
+                    "List the workspaces",
+                    "Lists every saved workspace with a one-line summary (panes, intervals, indicator count), its colour and the open tabs using it, The immutable factory Default comes first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
+                ),
+                ui: {
+                    title: "List the workspaces and the tabs using each",
+                    reach: "window menu, Workspace, whose list names each workspace",
+                    keys: [(MenuEntry, "Workspace")],
+                },
+            }
+            tab_close_descriptor {
+                id: TAB_CLOSE_CAPABILITY_ID = "tab.close",
+                handler: close,
+                module: quantick_control_host::authority::TAB_MODULE_ID,
+                input: TabCloseInput,
+                result: TabCloseResult,
+                descriptor: book_write(
+                    "Close a market tab",
+                    "Closes one tab. With autosave on an edit on its way is written first and it closes at once; a tab whose copy autosave did not write (marked) asks as held edits do. With autosave off and edits held, a call without save refuses with workspace.unsaved_edits, naming the workspace, the tabs a save also changes and what changed, and closes nothing; save true writes the edits first, save false drops them. The window's last tab refuses with workspace.last_tab before anything is saved or written.",
+                    "A closed tab is gone, so a repeat names an unknown tab and is refused with workspace.unknown_tab; nothing else closes.",
+                ),
+                readback: journal(
+                    IdempotencyPolicy::Optional,
+                    TAB_CLOSED_EVENT_KIND,
+                    "payload.tab_id",
+                    "an event after the pre-call cursor names the closed tab",
+                    &[EVERY_OPTIONAL_TEST],
+                ),
+            }
+            workspace_delete_descriptor {
+                id: WORKSPACE_DELETE_CAPABILITY_ID = "workspace.delete",
+                handler: delete,
+                module: MODULE_ID,
+                input: WorkspaceDeleteInput,
+                result: WorkspaceDeleteResult,
+                descriptor: book_write(
+                    "Delete a workspace",
+                    "Deletes a workspace and moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •. Default cannot be deleted. For 10 seconds, until the answer's undo_until_unix_ms, workspace.delete.undo brings it back with its recipe, colour and tabs, as Manage workspaces' Undo does.",
+                    "A repeat finds no such workspace and is refused with workspace.unknown; nothing is written.",
+                ),
+                readback: journal(
+                    IdempotencyPolicy::Optional,
+                    WORKSPACE_DELETED_EVENT_KIND,
+                    "payload.workspace",
+                    "an event after the pre-call cursor names the deleted workspace",
+                    &[EVERY_OPTIONAL_TEST],
+                ),
+            }
+        }
+    };
+}
+
+workspace_book_calls!(crate::calls::declare_calls);
 
 /// Published schemas of the workspace book.
 pub fn documents() -> Vec<(&'static str, serde_json::Value)> {

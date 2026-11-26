@@ -1,0 +1,25 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "on": {
+      "description": "On paints the flow pane on the theme's lit surface; off, its dark island.",
+      "type": "boolean"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "on"
+  ],
+  "title": "SettingsLightsInput",
+  "type": "object"
+}

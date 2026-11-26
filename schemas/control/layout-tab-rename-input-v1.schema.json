@@ -1,0 +1,39 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Rename a layout tab.",
+  "properties": {
+    "layout_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The layout's id, as `observe.workspace` reports it."
+    },
+    "name": {
+      "description": "The layout's name, as the strip shows it.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "new_name": {
+      "description": "The new name.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "new_name"
+  ],
+  "title": "RenameLayoutTabInput",
+  "type": "object"
+}

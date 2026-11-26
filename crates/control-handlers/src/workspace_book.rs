@@ -25,11 +25,7 @@ use quantick_control_schema::workspace_book::{
     WorkspaceColourSetInput, WorkspaceColourSetResult, WorkspaceDeleteInput, WorkspaceDeleteResult,
     WorkspaceEntry, WorkspaceListInput, WorkspaceListResult, WorkspaceNewInput, WorkspaceNewResult,
     WorkspaceRenameInput, WorkspaceRenameResult, WorkspaceSaveAsInput, WorkspaceSaveResult,
-    WorkspaceTabInput, tab_close_descriptor, tab_workspace_set_descriptor,
-    workspace_autosave_set_descriptor, workspace_colour_set_descriptor,
-    workspace_delete_descriptor, workspace_list_descriptor, workspace_new_descriptor,
-    workspace_rename_descriptor, workspace_revert_descriptor, workspace_revert_undo_descriptor,
-    workspace_save_as_descriptor, workspace_save_to_descriptor,
+    WorkspaceTabInput,
 };
 use quantick_control_schema::workspace_colour::{
     ColourWarningDto, workspace_colour_palette_descriptor, workspace_colour_popover_descriptor,
@@ -332,6 +328,20 @@ macro_rules! through_workspaces {
     };
 }
 
+/// Registers each call `workspace_book_calls!` declares, through its handler.
+macro_rules! register_declared {
+    ([$registry:expr] $($descriptor:ident {
+        id: $ID:ident = $id:literal,
+        handler: $handler:path,
+        $($declared:tt)*
+    })*) => {
+        $($registry.register_outside_replay(
+            quantick_control_schema::workspace_book::$descriptor(),
+            through_workspaces!($handler),
+        )?;)*
+    };
+}
+
 /// Outside the replay trace: none of these changes a market, and a recorded
 /// call must not rewrite the trader's workspaces when a session re-runs. Each
 /// call reaches the book through [`WorkspaceBookHost::workspaces`].
@@ -341,27 +351,7 @@ where
     A: NotifyAccess,
     D: ActionDock<H, A>,
 {
-    registry.register_outside_replay(tab_workspace_set_descriptor(), through_workspaces!(set))?;
-    registry
-        .register_outside_replay(workspace_save_to_descriptor(), through_workspaces!(save_to))?;
-    registry
-        .register_outside_replay(workspace_save_as_descriptor(), through_workspaces!(save_as))?;
-    registry.register_outside_replay(workspace_new_descriptor(), through_workspaces!(new))?;
-    registry.register_outside_replay(
-        workspace_revert_descriptor(),
-        through_workspaces!(revert::revert),
-    )?;
-    registry.register_outside_replay(
-        workspace_revert_undo_descriptor(),
-        through_workspaces!(revert::undo),
-    )?;
-    registry.register_outside_replay(
-        workspace_autosave_set_descriptor(),
-        through_workspaces!(autosave_set),
-    )?;
-    registry.register_outside_replay(tab_close_descriptor(), through_workspaces!(close))?;
-    registry.register_outside_replay(workspace_rename_descriptor(), through_workspaces!(rename))?;
-    registry.register_outside_replay(workspace_delete_descriptor(), through_workspaces!(delete))?;
+    quantick_control_schema::workspace_book_calls!(register_declared, registry);
     registry.register_outside_replay(
         workspace_delete_undo_descriptor(),
         through_workspaces!(manage::undo_call),
@@ -371,18 +361,13 @@ where
         through_workspaces!(manage::dialog_open),
     )?;
     registry.register_outside_replay(
-        workspace_colour_set_descriptor(),
-        through_workspaces!(colour_set),
-    )?;
-    registry.register_outside_replay(
         workspace_colour_palette_descriptor(),
         through_workspaces!(colour_popover::palette_read),
     )?;
     registry.register_outside_replay(
         workspace_colour_popover_descriptor(),
         through_workspaces!(colour_popover::popover_call),
-    )?;
-    registry.register_outside_replay(workspace_list_descriptor(), through_workspaces!(list))
+    )
 }
 
 fn input<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, ControlError> {

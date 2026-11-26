@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Add a layout tab and switch to it.",
+  "properties": {
+    "name": {
+      "description": "What to call it. Omitted: the first free `Layout N`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "title": "CreateLayoutTabInput",
+  "type": "object"
+}

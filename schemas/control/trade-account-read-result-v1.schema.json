@@ -1,0 +1,90 @@
+{
+  "$defs": {
+    "AccountRowView": {
+      "description": "One row of the account list, as the panel shows it.",
+      "properties": {
+        "details": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "gesture": {
+          "description": "`click`, `hold` or `none`: what the panel's press does.",
+          "type": "string"
+        },
+        "hint": {
+          "description": "`in use`, `one click`, `hold`, or empty when the row is off.",
+          "type": "string"
+        },
+        "state": {
+          "description": "`selected`, `enabled` or `off`.",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "hint",
+        "state",
+        "gesture",
+        "details"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The route and everything the panel says about it.",
+  "properties": {
+    "accounts": {
+      "items": {
+        "$ref": "#/$defs/AccountRowView"
+      },
+      "type": "array"
+    },
+    "broker_enabled": {
+      "description": "Whether broker routes are offered at all (`[broker.metatrader]`).",
+      "type": "boolean"
+    },
+    "footer": {
+      "description": "Why the broker row is off, when it is.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "leave_pending": {
+      "description": "A leave with exposure waits for `leave`.",
+      "type": "boolean"
+    },
+    "locked": {
+      "description": "The chart's source cannot route: the selector stays on the simulator.",
+      "type": "boolean"
+    },
+    "orders_to": {
+      "description": "Where orders go, in the toolbar notice's words.",
+      "type": "string"
+    },
+    "route": {
+      "description": "`sim`, `demo` or `real`.",
+      "type": "string"
+    },
+    "title": {
+      "description": "The Trading panel's title.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "route",
+    "orders_to",
+    "title",
+    "broker_enabled",
+    "locked",
+    "accounts",
+    "leave_pending"
+  ],
+  "title": "AccountRouteResult",
+  "type": "object"
+}

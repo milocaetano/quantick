@@ -1,0 +1,36 @@
+{
+  "$defs": {
+    "LeaveChoice": {
+      "description": "How to leave a broker route that still holds a position or orders.",
+      "oneOf": [
+        {
+          "const": "flatten_first",
+          "description": "Close the position and cancel the orders at the broker first.",
+          "type": "string"
+        },
+        {
+          "const": "leave_at_broker",
+          "description": "Leave them at the broker; their plates stay on the chart.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "leave": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LeaveChoice"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Required to leave a broker route with exposure open."
+    }
+  },
+  "title": "AccountDisarmInput",
+  "type": "object"
+}

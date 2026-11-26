@@ -1,0 +1,59 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Make a new, empty workspace and put a tab on it.",
+  "properties": {
+    "charts": {
+      "description": "Number of timeframe charts, from the registered 1-8 chart presets.",
+      "format": "uint",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "colour": {
+      "description": "A preset's name or `#RRGGBB`. Left out, the next free colour.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "name": {
+      "default": "",
+      "description": "Omitted or blank chooses the next Workspace N.",
+      "type": "string"
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The tab. Left out, the one on screen."
+    },
+    "timeframe_ms": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Initial interval on every chart; omitted uses the current time interval or 5m."
+    }
+  },
+  "title": "WorkspaceNewInput",
+  "type": "object",
+  "x-idempotency-key-unless-named-by": "name"
+}

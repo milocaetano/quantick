@@ -1,12 +1,14 @@
 //! The table: one row per supported UI behaviour.
 //!
 //! Read [`super`] first for why the rows are written and the drift guard is
-//! mechanical. This file joins the data; each family file holds its own.
+//! mechanical. Each family file holds its own rows.
 //!
 //! Adding a behaviour is a row in the family it belongs to — `drawings`,
 //! `layers`, `workspace`, `replay`, `indicators`, `trading`, `chart`,
-//! `control` — and [`UI_BEHAVIOURS`] is [`FAMILIES`] joined at compile time,
-//! in the order the matrix renders. Adding a family is one line in that list.
+//! `control` — or, for a door a declared control call performs, its `ui`
+//! entry in that declaration. `quantick_control_schema::ui_behaviours` joins
+//! both at compile time with [`flatten`], in the order the matrix renders:
+//! this crate depends on nothing, so the join sits where the declarations are.
 //!
 //! The guard tells you when a row is missing — it names the registry entry
 //! nothing claims — and it will not tell you what the row should say, because
@@ -47,44 +49,20 @@ const PENDING_SURFACE: Mapping = Mapping::Excluded {
              and not change it. Tracked in issue 401",
 };
 
-mod chart;
-mod control;
-mod drawings;
-mod indicators;
-mod layers;
-mod replay;
-mod script_editor;
-mod strategy_describe;
-mod strategy_desk;
-mod trading;
-mod workspace;
-
-/// Every family's rows, in the order the matrix renders them.
-///
-/// The order here is the order a reviewer reads, which is why a family that
-/// owns rows in two places in that reading declares two slices rather than
-/// one: where a row is declared cannot move a line of the document.
-pub const FAMILIES: &[&[UiBehaviour]] = &[
-    control::WINDOW_AND_TABS,
-    replay::ROWS,
-    control::LAYOUT_TABS,
-    chart::CANVAS,
-    layers::ROWS,
-    chart::HISTORY,
-    indicators::ROWS,
-    script_editor::ROWS,
-    strategy_describe::ROWS,
-    strategy_desk::ROWS,
-    trading::ROWS,
-    control::FEED_RECOVERY,
-    drawings::TOOL_RAIL,
-    drawings::OBJECTS,
-    workspace::ROWS,
-    control::CHROME,
-];
+pub mod chart;
+pub mod control;
+pub mod drawings;
+pub mod indicators;
+pub mod layers;
+pub mod replay;
+pub mod script_editor;
+pub mod strategy_describe;
+pub mod strategy_desk;
+pub mod trading;
+pub mod workspace;
 
 /// How many rows the declared families hold between them.
-const fn total(families: &[&[UiBehaviour]]) -> usize {
+pub const fn total(families: &[&[UiBehaviour]]) -> usize {
     let mut counted = 0;
     let mut family = 0;
     while family < families.len() {
@@ -98,7 +76,7 @@ const fn total(families: &[&[UiBehaviour]]) -> usize {
 ///
 /// The seed row is the first family's first, so a family declared empty and
 /// listed first fails compilation rather than silently shortening the table.
-const fn flatten<const N: usize>(families: &[&[UiBehaviour]]) -> [UiBehaviour; N] {
+pub const fn flatten<const N: usize>(families: &[&[UiBehaviour]]) -> [UiBehaviour; N] {
     assert!(
         N == total(families),
         "the joined table is as long as the declared families, and no longer"
@@ -118,18 +96,6 @@ const fn flatten<const N: usize>(families: &[&[UiBehaviour]]) -> [UiBehaviour; N
     }
     joined
 }
-
-const TOTAL: usize = total(FAMILIES);
-// A static: the joined rows outgrew what a const array may copy.
-static JOINED: [UiBehaviour; TOTAL] = flatten(FAMILIES);
-
-/// Every supported UI behaviour, in identifier order within its group.
-///
-/// The order here is the order the matrix renders and therefore the order a
-/// reviewer reads: [`FAMILIES`] declares it once. Grouped by what the trader
-/// is doing rather than by which registry registered it, because "what can I
-/// not do without a mouse" is the question this answers.
-pub const UI_BEHAVIOURS: &[UiBehaviour] = &JOINED;
 
 /// Registry entries that are deliberately **not** behaviours.
 ///
