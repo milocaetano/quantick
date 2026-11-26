@@ -7,16 +7,21 @@ use super::*;
 use crate::drawings::StyleColor32;
 
 /// A selected rectangle with its colour popover open and laid out.
+///
+/// Settled frames, because the book worker publishes the backfill whenever
+/// its thread is scheduled and that first publication moves the bar from
+/// above the rectangle to below it: a slot read before it lands is where
+/// the bar no longer is, and the click dismisses the bar instead.
 fn rectangle_with_open_palette() -> (QuantickApp, egui::Context) {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
+    settled_frame(&mut app, &ctx);
     app.surfaces
         .toolrail
         .arm(Tool::Drawing(drawing_tool("rectangle")));
     click_chart(&mut app, &ctx, egui::pos2(500.0, 250.0));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 350.0));
-    run_frame(&mut app, &ctx);
+    settled_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().flow_pane.drawings.selected(), Some(0));
     let slot = app
         .surfaces

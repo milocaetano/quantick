@@ -309,7 +309,8 @@ fn dropping_the_lane_clears_the_samples_already_published() {
         .filter(|t| t.timestamp_ms >= partial.open_time)
         .collect();
 
-    let worker = IndicatorWorker::spawn();
+    let (worker, run_worker) =
+        IndicatorWorker::prepared_for_test(crate::worker_progress::monotonic());
     let mut views = IndicatorViews::new();
     let slot = views.allocate_slot("test.indicator");
     worker.send(IndicatorCommand::Add {
@@ -327,7 +328,14 @@ fn dropping_the_lane_clears_the_samples_already_published() {
         run,
         rungs: 8,
     });
-    worker.flush();
+    // Queued before the worker starts, so the lane update and its barrier
+    // share one batch: a Flush-only batch publishes an empty Lane.
+    let (ack_tx, ack_rx) = channel();
+    worker.send(WorkerCommand::Flush(ack_tx));
+    let thread = std::thread::spawn(run_worker);
+    worker
+        .await_reply(&ack_rx)
+        .expect("the lane batch finishes publication");
     for event in worker.drain_events() {
         views.apply(event);
     }
@@ -338,10 +346,13 @@ fn dropping_the_lane_clears_the_samples_already_published() {
         run: Vec::new(),
         rungs: 0,
     });
+    // Any batch split here ends empty, so the running worker may batch it.
     worker.flush();
     for event in worker.drain_events() {
         views.apply(event);
     }
+    drop(worker);
+    thread.join().expect("the indicator worker closes normally");
 
     let view = &views.all()[0];
     assert!(view.lane.is_empty(), "no lane, no curve");
