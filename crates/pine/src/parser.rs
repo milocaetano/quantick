@@ -17,7 +17,9 @@ use crate::lexer::{Tok, Token};
 #[path = "libraries/parse.rs"]
 mod library_parse;
 
-/// How deeply expressions may nest.
+/// How deeply expressions and blocks may nest, counted together: every
+/// recursive descent — a `(`, a unary operator, a ternary branch, an indented
+/// block — is one level.
 ///
 /// Descent costs about five stack frames per `(`, and a stack overflow
 /// aborts the process — no unwind, no `PineError`, nothing for the script
@@ -61,7 +63,8 @@ struct Parser<'a> {
     pos: usize,
     ast: Ast,
     errors: Vec<PineError>,
-    /// Current expression nesting, guarded by [`MAX_NEST_DEPTH`].
+    /// Current nesting of expressions and blocks, guarded by
+    /// [`MAX_NEST_DEPTH`].
     depth: usize,
 }
 
@@ -485,6 +488,10 @@ impl Parser<'_> {
     // ---- block expressions ---------------------------------------------
 
     fn block(&mut self) -> Option<NodeId> {
+        self.nested(Self::block_statements)
+    }
+
+    fn block_statements(&mut self) -> Option<NodeId> {
         let start = self.span();
         if !self.expect(&Tok::Indent, "an indented block") {
             return None;
@@ -671,20 +678,26 @@ impl Parser<'_> {
     // ---- expressions -----------------------------------------------------
 
     fn expression(&mut self) -> Option<NodeId> {
-        // The descent happens on the way *down*, so the guard belongs here:
-        // by the time unbalanced input would be rejected, the stack is
-        // already gone.
+        self.nested(Self::ternary)
+    }
+
+    /// Run `descend` one level deeper, or refuse past [`MAX_NEST_DEPTH`].
+    ///
+    /// The descent happens on the way *down*, so the guard belongs on every
+    /// recursive call: by the time unbalanced input would be rejected, the
+    /// stack is already gone.
+    fn nested(&mut self, descend: fn(&mut Self) -> Option<NodeId>) -> Option<NodeId> {
         if self.depth >= MAX_NEST_DEPTH {
             let span = self.span();
             self.errors.push(PineError::new(
                 ErrorCode::PineSyntax,
                 span,
-                format!("expression nests deeper than {MAX_NEST_DEPTH} levels"),
+                format!("code nests deeper than {MAX_NEST_DEPTH} levels"),
             ));
             return None;
         }
         self.depth += 1;
-        let node = self.ternary();
+        let node = descend(self);
         self.depth -= 1;
         node
     }
@@ -695,9 +708,9 @@ impl Parser<'_> {
         if !self.eat(&Tok::Question) {
             return Some(condition);
         }
-        let if_true = self.ternary()?;
+        let if_true = self.nested(Self::ternary)?;
         self.expect(&Tok::Colon, "`:` of the ternary");
-        let if_false = self.ternary()?;
+        let if_false = self.nested(Self::ternary)?;
         let span = self.spanned_from(start);
         Some(self.ast.push(
             NodeKind::Ternary {
@@ -730,7 +743,7 @@ impl Parser<'_> {
     fn unary(&mut self) -> Option<NodeId> {
         let start = self.span();
         if self.eat(&Tok::Minus) {
-            let operand = self.unary()?;
+            let operand = self.nested(Self::unary)?;
             let span = self.spanned_from(start);
             return Some(self.ast.push(
                 NodeKind::Unary {
@@ -741,7 +754,7 @@ impl Parser<'_> {
             ));
         }
         if self.eat(&Tok::KwNot) {
-            let operand = self.unary()?;
+            let operand = self.nested(Self::unary)?;
             let span = self.spanned_from(start);
             return Some(self.ast.push(
                 NodeKind::Unary {

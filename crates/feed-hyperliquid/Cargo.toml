@@ -19,5 +19,9 @@ tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
 tracing = { workspace = true }
 
+[dev-dependencies]
+# The property tests feed generated untrusted input to every decoder.
+proptest = { workspace = true }
+
 [lints]
 workspace = true

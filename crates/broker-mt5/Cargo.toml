@@ -18,5 +18,9 @@ rust_decimal = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+[dev-dependencies]
+# The property tests feed generated untrusted input to every decoder.
+proptest = { workspace = true }
+
 [lints]
 workspace = true

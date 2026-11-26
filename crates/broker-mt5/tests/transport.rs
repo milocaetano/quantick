@@ -225,3 +225,27 @@ fn a_first_line_dribbled_past_the_deadline_is_refused() {
     );
     assert_the_bridge_still_connects(&mut link);
 }
+
+/// Whatever an unproven peer sends first — under the bound or past it, with
+/// or without a newline — it is refused, and the right bridge still gets
+/// through afterwards. One listener serves every case, as one serves a run.
+#[test]
+fn any_first_bytes_but_the_secret_are_refused() {
+    use proptest::prelude::*;
+    use proptest::test_runner::TestRunner;
+
+    let link = std::cell::RefCell::new(TcpBridgeLink::listen(0, secret()).expect("bind loopback"));
+    let mut runner = TestRunner::new(ProptestConfig::with_cases(32));
+    runner
+        .run(&prop::collection::vec(any::<u8>(), 0..512), |first| {
+            assert_refused(&mut link.borrow_mut(), move |mut client| {
+                let _ = client.write_all(&first);
+                // End the stream so a line with no newline is refused at
+                // once instead of at the deadline.
+                let _ = client.shutdown(std::net::Shutdown::Write);
+            });
+            Ok(())
+        })
+        .unwrap();
+    assert_the_bridge_still_connects(&mut link.borrow_mut());
+}
