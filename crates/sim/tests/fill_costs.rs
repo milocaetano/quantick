@@ -6,7 +6,8 @@
 use quantick_engine::{Side, Trade};
 use quantick_sim::{Command, Simulator};
 use quantick_trading::{
-    Bracket, ClosedTrade, Commission, ExitPart, ExitReason, Fill, FillCosts, FillRole, VenueEvent,
+    Bracket, ClosedTrade, Commission, ExitPart, ExitReason, Fill, FillCosts, FillRole,
+    TradingVenue, VenueEvent,
 };
 use rust_decimal::Decimal;
 
@@ -259,7 +260,7 @@ fn costs_set_on_a_running_simulator_price_the_next_fill() {
         dec(1000),
         "free so far"
     );
-    sim.set_costs(costs(Commission::PerContract(dec(3)), 1, false));
+    TradingVenue::set_fill_costs(&mut sim, costs(Commission::PerContract(dec(3)), 1, false));
     sim.apply(Command::ClosePosition);
     assert_eq!(
         fills(&sim.on_trade(&print(2, 1000))),

@@ -66,11 +66,14 @@ impl CostSetup {
 
 impl FeedConfig {
     /// What a paper fill of `symbol` costs on this feed: the exact key, else
-    /// the longest family pattern, else free.
+    /// the longest family pattern, else free. The tick is the one
+    /// `symbol_widgets` declares for the costs key itself, the same lookup
+    /// [`Self::validate_costs`] proves at load, so a declared table never
+    /// degrades to free for a symbol the key matches.
     #[must_use]
     pub fn fill_costs(&self, symbol: &str) -> FillCosts {
         declared(&self.symbol_costs, symbol)
-            .and_then(|(_, setup)| setup.fill_costs(self.widget_tick(symbol)).ok())
+            .and_then(|(key, setup)| setup.fill_costs(self.widget_tick(key)).ok())
             .unwrap_or_default()
     }
 
@@ -136,13 +139,18 @@ mod tests {
              conservative_limits = true } }",
         );
         feed.validate_costs().expect("valid costs");
-        let costs = feed.fill_costs("WINZ26");
-        assert_eq!(costs.commission(), Commission::PerContract(dec("0.25")));
-        assert_eq!(costs.slippage_ticks(), 1);
-        assert_eq!(costs.tick_size(), Some(dec("5")));
-        assert!(costs.conservative_limits());
+        assert_eq!(
+            feed.fill_costs("WINZ26"),
+            FillCosts::new(
+                Commission::PerContract(dec("0.25")),
+                1,
+                Some(dec("5")),
+                true
+            )
+            .expect("valid costs")
+        );
         assert!(
-            feed.fill_costs("WDOZ26").is_free(),
+            feed.fill_costs("WDOZ26") == FillCosts::default(),
             "an undeclared asset is free"
         );
     }
@@ -155,8 +163,23 @@ mod tests {
         );
         feed.validate_costs().expect("valid costs");
         assert_eq!(
-            feed.fill_costs("WDOZ26").commission(),
-            Commission::PerNotional(dec("0.0004"))
+            feed.fill_costs("WDOZ26"),
+            FillCosts::new(Commission::PerNotional(dec("0.0004")), 0, None, false)
+                .expect("valid costs")
+        );
+    }
+
+    #[test]
+    fn a_family_key_takes_its_own_tick_even_where_an_exact_widget_entry_has_none() {
+        let feed = feed(
+            "symbol_widgets = { \"WIN*\" = { tick = \"5\" }, \"WINZ26\" = { big_trade_min = 50000 } }\n\
+             symbol_costs = { \"WIN*\" = { slippage_ticks = 1 } }",
+        );
+        feed.validate_costs().expect("valid costs");
+        assert_eq!(
+            feed.fill_costs("WINZ26"),
+            FillCosts::new(Commission::Free, 1, Some(dec("5")), false).expect("valid costs"),
+            "never silently free"
         );
     }
 

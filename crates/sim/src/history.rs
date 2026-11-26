@@ -543,8 +543,13 @@ fn parse_magic(line: &str) -> Option<u32> {
 fn parse_row(row: &str, version: u32) -> Result<ClosedTrade, String> {
     let fields: Vec<&str> = row.split(',').collect();
     // A version-2 journal takes version-3 rows appended after an upgrade,
-    // and a row's width says which it is.
-    let widths: &[usize] = if version == 1 { &[8] } else { &[12, 13] };
+    // and a row's width says which it is. A version-3 file was always
+    // written whole, so a short row there is torn, never fee-free.
+    let widths: &[usize] = match version {
+        1 => &[8],
+        2 => &[12, 13],
+        _ => &[13],
+    };
     if !widths.contains(&fields.len()) {
         let expected = widths
             .iter()
@@ -763,6 +768,16 @@ mod tests {
     }
 
     #[test]
+    fn a_version_3_row_cut_before_its_fee_is_torn_not_free() {
+        let mut text = write_header("X", SessionSource::Live);
+        let row = write_trade(&sample(Side::Buy, 5, ExitReason::Manual));
+        text.push_str(&row.replace(",6,0\n", ",6\n"));
+        let history = parse(&text).expect("the file still loads");
+        assert!(history.trades.is_empty());
+        assert!(history.problems[0].message.contains("expected 13 fields"));
+    }
+
+    #[test]
     fn a_negative_fee_is_a_reported_row() {
         let mut text = write_header("X", SessionSource::Live);
         let row = write_trade(&sample(Side::Buy, 5, ExitReason::Manual));
@@ -803,7 +818,7 @@ mod tests {
             history.problems[0].line, 6,
             "magic + symbol + source + header + row, then the tear"
         );
-        assert!(history.problems[0].message.contains("12 or 13 fields"));
+        assert!(history.problems[0].message.contains("expected 13 fields"));
     }
 
     #[test]
@@ -841,7 +856,7 @@ mod tests {
     #[test]
     fn unknown_exit_reason_is_a_problem_row() {
         let mut text = write_header("X", SessionSource::Live);
-        text.push_str("1,2,long,1,100,101,1,liquidated,,,,\n");
+        text.push_str("1,2,long,1,100,101,1,liquidated,,,,,0\n");
         let history = parse(&text).expect("file loads");
         assert!(history.trades.is_empty());
         assert!(history.problems[0].message.contains("liquidated"));

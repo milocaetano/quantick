@@ -94,32 +94,6 @@ impl FillCosts {
         })
     }
 
-    #[must_use]
-    pub fn commission(&self) -> Commission {
-        self.commission
-    }
-
-    #[must_use]
-    pub fn slippage_ticks(&self) -> u32 {
-        self.slippage_ticks
-    }
-
-    #[must_use]
-    pub fn tick_size(&self) -> Option<Decimal> {
-        self.tick_size
-    }
-
-    #[must_use]
-    pub fn conservative_limits(&self) -> bool {
-        self.conservative_limits
-    }
-
-    /// Whether these costs change nothing about a fill.
-    #[must_use]
-    pub fn is_free(&self) -> bool {
-        *self == Self::default()
-    }
-
     /// The commission one side of a trade pays: `quantity` filled at
     /// `price`.
     #[must_use]
@@ -180,7 +154,6 @@ mod tests {
     #[test]
     fn the_default_is_free_and_fills_on_a_touch() {
         let costs = FillCosts::default();
-        assert!(costs.is_free());
         assert_eq!(
             costs.round_trip_fees(dec("100"), dec("105"), dec("3")),
             Decimal::ZERO

@@ -145,15 +145,12 @@ impl Simulator {
         }
     }
 
-    /// Price fills from the next print on with `costs`. A trade already
-    /// open closes under the new costs: they apply where a fill happens.
-    pub fn set_costs(&mut self, costs: FillCosts) {
+    /// Price fills from the next print on with `costs`, for
+    /// [`TradingVenue::set_fill_costs`](quantick_trading::TradingVenue::set_fill_costs).
+    /// A trade already open closes under the new costs: they apply where a
+    /// fill happens.
+    pub(crate) fn set_costs(&mut self, costs: FillCosts) {
         self.costs = costs;
-    }
-
-    #[must_use]
-    pub fn costs(&self) -> FillCosts {
-        self.costs
     }
 
     /// Update the mark from history without ever filling against it —

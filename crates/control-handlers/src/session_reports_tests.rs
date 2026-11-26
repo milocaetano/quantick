@@ -211,7 +211,7 @@ fn day_of_trades(scratch: &crate::scratch::ScratchDir) -> Host {
         let path = SessionKey::parse(key).unwrap().path(&dir);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let text = format!(
-            "# quantick-trades 3\n# symbol=WINZ26\n# source=live\n{}\n{},{STAMP},long,1,100,105,5,manual,,,,\n",
+            "# quantick-trades 3\n# symbol=WINZ26\n# source=live\n{}\n{},{STAMP},long,1,100,105,5,manual,,,,,0\n",
             quantick_sim::history::HEADER,
             STAMP - 1000
         );

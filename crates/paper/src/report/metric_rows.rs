@@ -43,7 +43,7 @@ pub fn metric_rows(report: &PerformanceReport) -> Vec<MetricRow> {
             fmt_points(report.fees_points),
             fmt_signed_points(report.net_points)
         ),
-        "points before fees, the commission paid on both sides, and what was kept;          every other row reads trades after their fees",
+        "points before fees, the commission paid on both sides, and what was kept; every other row reads trades after their fees",
     );
     row(
         "max drawdown",
