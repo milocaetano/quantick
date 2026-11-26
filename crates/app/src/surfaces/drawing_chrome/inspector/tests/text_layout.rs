@@ -67,12 +67,14 @@ fn inspect_long_text(pinned: bool) {
                     selected_band: None,
                     tab: 1,
                     side: PaneSide::Flow,
-                    canvas: quantick_appearance::ChartSurface::Flow.into(),
                     drawing_tool_armed: false,
                     toolbox_dock: ToolboxDock::default(),
                     authored_objects: 0,
                     manager_rows: &[],
-                    presets: &NullPresetHost,
+                    presets: crate::drawings::PresetContext::new(
+                        &NullPresetHost,
+                        quantick_appearance::ChartSurface::Flow.into(),
+                    ),
                 };
                 let mut owner = crate::surfaces::drawing_chrome::new_owner();
                 let mut chrome = crate::surfaces::drawing_chrome::borrow(&mut owner);

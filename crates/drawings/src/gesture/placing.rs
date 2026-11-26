@@ -6,10 +6,7 @@ use super::{
     DRAWING_DRAG_COMPLETES_PX, FREEHAND_MAX_POINTS, FREEHAND_MIN_STEP_PX, GestureCursor, Marks,
     PaneGestures,
 };
-use crate::{
-    ChartPoint, Constrain, DrawingBand, DrawingTool, PresetHost, Px, PxRect,
-    new_drawing_from_defaults,
-};
+use crate::{ChartPoint, Constrain, DrawingBand, DrawingTool, PresetHost, Px, PxRect};
 
 /// One frame of the pointer while a drawing tool is armed, as the window read
 /// it off the placement surface ([`placement_surface`]).
@@ -305,10 +302,8 @@ impl PaneGestures {
     ) -> PlacementCompletion {
         // Only a fresh draft constructs defaults, on the canvas the pane's
         // marks follow; existing objects follow on their own.
-        let canvas = drawings.canvas();
-        if !drawings.place_with(tool, band, point, |tool| {
-            new_drawing_from_defaults(defaults.presets, canvas, tool)
-        }) {
+        let presets = drawings.preset_context(defaults.presets);
+        if !drawings.place_with(tool, band, point, |tool| presets.new_drawing(tool)) {
             return PlacementCompletion::default();
         }
         let completion = PlacementCompletion {

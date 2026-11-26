@@ -18,8 +18,8 @@ use quantick_drawings::position_edit::{
 };
 use quantick_drawings::position_text::ratio_button;
 use quantick_drawings::{
-    Drawing, DrawingId, DrawingTool, Drawings, PositionPayload, PositionSide, PresetHost,
-    has_saved_default, parse_rgb_hex, position_plan, rgb_hex,
+    Drawing, DrawingId, DrawingTool, Drawings, PositionPayload, PositionSide, PresetContext,
+    PresetHost, parse_rgb_hex, position_plan, rgb_hex,
 };
 use serde_json::Value;
 
@@ -53,8 +53,15 @@ where
     registry.register(default_descriptor(), |host, access, actor, input| {
         let input: PositionDefaultInput = serde_json::from_value(input.clone()).map_err(invalid)?;
         let marks = host.addressed_pane(input.tab_id, input.pane_id)?.marks();
-        let (drawing, canvas) = (drawing(marks, &input.drawing_id)?.clone(), marks.canvas());
-        let result = default(host.drawing_defaults(), canvas, &drawing, input.action)?;
+        let (drawing, pane) = (
+            drawing(marks, &input.drawing_id)?.clone(),
+            marks.preset_context(()),
+        );
+        let result = default(
+            &mut pane.on(host.drawing_defaults()),
+            &drawing,
+            input.action,
+        )?;
         journal(
             access,
             actor,
@@ -204,13 +211,13 @@ fn read_back(
     })
 }
 
-/// Save, reset or read the default of `drawing`'s tool on `canvas`.
+/// Save, reset or read the default of `drawing`'s tool on the pane `presets`
+/// speaks for.
 ///
 /// # Errors
 /// Another tool's drawing.
 pub fn default(
-    bank: &mut dyn PresetHost,
-    canvas: quantick_drawings::position_edit::PaneCanvas,
+    presets: &mut PresetContext<&mut dyn PresetHost>,
     drawing: &Drawing<DrawingTool>,
     action: DefaultAction,
 ) -> Result<PositionDefaultResult, ControlError> {
@@ -223,14 +230,14 @@ pub fn default(
         DefaultAction::Inspect => None,
     };
     if let Some(action) = action {
-        apply_position_default(bank, canvas, drawing, action).map_err(refused)?;
+        apply_position_default(presets, drawing, action).map_err(refused)?;
     }
-    let opening = opening_position(bank, canvas, drawing.tool)
+    let opening = opening_position(&presets.on(presets.host()), drawing.tool)
         .ok_or_else(|| invalid("the tool opens no position"))?;
     Ok(PositionDefaultResult {
         tool_id: drawing.tool.id().to_owned(),
         opening: look(&opening, opening.ratio)?,
-        saved: has_saved_default(bank, canvas, drawing.tool),
+        saved: presets.has_saved_default(drawing.tool),
     })
 }
 

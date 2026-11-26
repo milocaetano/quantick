@@ -143,14 +143,11 @@ fn a_saved_default_shapes_the_next_object_and_never_the_ones_already_drawn() {
         payload.levels[1].color = Some([0xFF, 0x00, 0x88]);
         payload.label_mode = LabelMode::RatioPrice;
     }
-    save_tool_default(
-        &mut host,
-        ChartSurface::Paper.into(),
-        &drawings.items()[0].clone(),
-    );
+    PresetContext::new(&mut host, ChartSurface::Paper.into())
+        .save_tool_default(&drawings.items()[0].clone());
 
     // The next one opens configured, with no name invented for it.
-    let fresh = new_drawing_from_defaults(&host, ChartSurface::Paper.into(), fib);
+    let fresh = PresetContext::new(&host, ChartSurface::Paper.into()).new_drawing(fib);
     assert_eq!(fresh.style, mine, "the look travels with the configuration");
     let fresh_fib = fresh
         .payload
@@ -163,13 +160,13 @@ fn a_saved_default_shapes_the_next_object_and_never_the_ones_already_drawn() {
 
     // A tool that was never taught anything still opens factory-fresh.
     let untouched =
-        new_drawing_from_defaults(&host, ChartSurface::Paper.into(), tool("fib-extension"));
+        PresetContext::new(&host, ChartSurface::Paper.into()).new_drawing(tool("fib-extension"));
     assert_eq!(untouched.style, tool("fib-extension").default_style());
 
     // Reset puts the tool back the way it shipped...
-    reset_tool_default(&mut host, ChartSurface::Paper.into(), fib);
-    assert!(!has_saved_default(&host, ChartSurface::Paper.into(), fib));
-    let after_reset = new_drawing_from_defaults(&host, ChartSurface::Paper.into(), fib);
+    PresetContext::new(&mut host, ChartSurface::Paper.into()).reset_tool_default(fib);
+    assert!(!PresetContext::new(&host, ChartSurface::Paper.into()).has_saved_default(fib));
+    let after_reset = PresetContext::new(&host, ChartSurface::Paper.into()).new_drawing(fib);
     assert_eq!(
         after_reset
             .payload
@@ -215,7 +212,7 @@ fn a_named_default_preset_outranks_the_button_saved_configuration() {
     );
     host.set_default_preset(fib.id(), Some("mine".to_owned()));
 
-    let fresh = new_drawing_from_defaults(&host, ChartSurface::Paper.into(), fib);
+    let fresh = PresetContext::new(&host, ChartSurface::Paper.into()).new_drawing(fib);
     assert_eq!(
         fresh
             .payload
@@ -2250,7 +2247,7 @@ fn a_positions_saved_default_carries_its_look_and_its_custom_ratio_per_tool() {
     let paper = ChartSurface::Paper.into();
     let long = tool("long-position");
     let short = tool("short-position");
-    let mut placed = new_drawing_from_defaults(&host, paper, long);
+    let mut placed = PresetContext::new(&host, paper).new_drawing(long);
     let mine = PositionPayload {
         ratio: 1.3,
         projected_offset: Some(13.0),
@@ -2272,8 +2269,8 @@ fn a_positions_saved_default_carries_its_look_and_its_custom_ratio_per_tool() {
             text: None,
         }),
     );
-    save_tool_default(&mut host, paper, &drawings.items()[0].clone());
-    let opened = new_drawing_from_defaults(&host, paper, long);
+    PresetContext::new(&mut host, paper).save_tool_default(&drawings.items()[0].clone());
+    let opened = PresetContext::new(&host, paper).new_drawing(long);
     let opened = opened
         .payload
         .as_any()
@@ -2287,15 +2284,15 @@ fn a_positions_saved_default_carries_its_look_and_its_custom_ratio_per_tool() {
         },
         "the look and the ratio, never one chart's pin or width"
     );
-    let other = new_drawing_from_defaults(&host, paper, short);
+    let other = PresetContext::new(&host, paper).new_drawing(short);
     let other = other
         .payload
         .as_any()
         .downcast_ref::<PositionPayload>()
         .unwrap();
     assert_eq!(*other, PositionPayload::default(), "short keeps its own");
-    reset_tool_default(&mut host, paper, long);
-    let reset = new_drawing_from_defaults(&host, paper, long);
+    PresetContext::new(&mut host, paper).reset_tool_default(long);
+    let reset = PresetContext::new(&host, paper).new_drawing(long);
     let reset = reset
         .payload
         .as_any()
@@ -2313,7 +2310,7 @@ fn a_saved_position_default_stores_the_ratio_its_prices_make() {
     let paper = ChartSurface::Paper.into();
     let long = tool("long-position");
     let mut drawings = Drawings::default();
-    let mut opening = new_drawing_from_defaults(&host, paper, long);
+    let mut opening = PresetContext::new(&host, paper).new_drawing(long);
     // Entry 100, stop 90, target pinned at 115: 1 : 1.5, while the stored
     // ratio still says 2.
     opening.payload = Box::new(PositionPayload {
@@ -2335,12 +2332,12 @@ fn a_saved_position_default_stores_the_ratio_its_prices_make() {
     );
     let drawing = drawings.items()[0].clone();
     crate::position_edit::apply_position_default(
-        &mut host,
-        paper,
+        &mut PresetContext::new(&mut host, paper),
         &drawing,
         crate::position_edit::PositionDefault::Save,
     )
     .unwrap();
-    let opened = crate::position_edit::opening_position(&host, paper, long).unwrap();
+    let opened =
+        crate::position_edit::opening_position(&PresetContext::new(&host, paper), long).unwrap();
     assert!((opened.ratio - 1.5).abs() < 1e-9, "{}", opened.ratio);
 }

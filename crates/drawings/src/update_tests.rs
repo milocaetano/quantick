@@ -158,11 +158,11 @@ fn placement(tool: DrawingTool, points: Vec<ChartPoint>) -> Placement {
         tool,
         points,
         band: DrawingBand::Price,
-        opening: crate::new_drawing_from_defaults(
+        opening: crate::PresetContext::new(
             &crate::NullPresetHost,
             quantick_appearance::ChartSurface::Paper.into(),
-            tool,
-        ),
+        )
+        .new_drawing(tool),
         author: Some(DrawingAuthor {
             actor_kind: "agent".to_owned(),
             client_name: "assistant".to_owned(),

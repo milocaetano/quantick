@@ -2,7 +2,7 @@
 //! lands on the one the trader was saving on.
 
 use super::*;
-use crate::new_drawing_from_defaults;
+use crate::PresetContext;
 
 /// The trader's complaint: a colour saved on the light time chart showed
 /// up on the dark order-flow pane beside it. Each ground keeps its own.
@@ -19,45 +19,45 @@ fn a_default_saved_on_one_ground_never_reaches_the_other() {
         .find(|tool| tool.id() == "trend-line")
         .unwrap();
     let (light, dark) = (ChartSurface::Paper.into(), ChartSurface::Flow.into());
-    let built_in_dark = new_drawing_from_defaults(&store, dark, line).style;
+    let built_in_dark = PresetContext::new(&store, dark).new_drawing(line).style;
     let mut drawings = crate::Drawings::default();
     assert!(!drawings.place(line, crate::ChartPoint::at(1.0, 100.0)));
     assert!(drawings.place(line, crate::ChartPoint::at(9.0, 200.0)));
     let mut red = drawings.items()[0].clone();
     red.style.color = quantick_appearance::PremultipliedRgba::from_rgb(220, 30, 30);
-    crate::save_tool_default(&mut store, light, &red);
+    PresetContext::new(&mut store, light).save_tool_default(&red);
 
     assert_eq!(
-        new_drawing_from_defaults(&store, light, line).style,
+        PresetContext::new(&store, light).new_drawing(line).style,
         red.style
     );
     assert_eq!(
-        new_drawing_from_defaults(&store, dark, line).style,
+        PresetContext::new(&store, dark).new_drawing(line).style,
         built_in_dark
     );
-    assert!(!crate::has_saved_default(&store, dark, line));
+    assert!(!PresetContext::new(&store, dark).has_saved_default(line));
 
     let mut blue = red.clone();
     blue.style.color = quantick_appearance::PremultipliedRgba::from_rgb(30, 90, 220);
-    crate::save_tool_default(&mut store, dark, &blue);
+    PresetContext::new(&mut store, dark).save_tool_default(&blue);
     assert_eq!(
-        new_drawing_from_defaults(&store, dark, line).style,
+        PresetContext::new(&store, dark).new_drawing(line).style,
         blue.style
     );
     assert_eq!(
-        new_drawing_from_defaults(&store, light, line).style,
+        PresetContext::new(&store, light).new_drawing(line).style,
         red.style
     );
 
-    crate::reset_tool_default(&mut store, dark, line);
+    PresetContext::new(&mut store, dark).reset_tool_default(line);
     assert_eq!(
-        new_drawing_from_defaults(&store, dark, line).style,
+        PresetContext::new(&store, dark).new_drawing(line).style,
         built_in_dark
     );
     let mut reloaded = PresetStore::load_from(&path);
     reloaded.sync_theme(&appearance);
     assert_eq!(
-        new_drawing_from_defaults(&reloaded, light, line).style,
+        PresetContext::new(&reloaded, light).new_drawing(line).style,
         red.style
     );
 }

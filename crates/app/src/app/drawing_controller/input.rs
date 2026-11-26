@@ -301,8 +301,9 @@ impl DrawingControllerAccess<'_> {
         }
         if let Some(edit) = ask.commit_edit_gesture.take() {
             if let Some(after) = host.drawing_at(edit.tab, edit.side, edit.index) {
-                let canvas = host.canvas_of(edit.tab, edit.side);
-                drawings::remember_last_style(self.presets, canvas, &edit.before, after);
+                host.presets_of(edit.tab, edit.side)
+                    .on(&mut *self.presets)
+                    .remember_last_style(&edit.before, after);
             }
             host.record(edit.tab, edit.side, edit.index, edit.before);
         }
@@ -338,11 +339,11 @@ impl DrawingControllerAccess<'_> {
             self.duplicate_selected_drawing(host, effects, alerts);
         }
         let (tab, side) = host.target();
-        let canvas = host.canvas_of(tab, side);
+        let pane = host.presets_of(tab, side);
         if ask.draw_again.is_some()
             && let Some(drawing) = host.drawings_mut().selected_mut()
         {
-            quantick_drawings::prepare_repeat(&mut *self.presets, canvas, drawing);
+            pane.on(&mut *self.presets).prepare_repeat(drawing);
         }
         effects.arm = effects.arm.or(ask.draw_again);
         if let Some(saved) = ask.saved_default {
@@ -552,9 +553,9 @@ impl DrawingControllerAccess<'_> {
         let points = operation
             .anchors
             .map(|anchor| drawings::ChartPoint::at_time(anchor.bar, anchor.price, anchor.time_ms));
-        let canvas = host.canvas_of(tab, side);
+        let presets = host.presets_of(tab, side).on(&*self.presets);
         let seeded = drawings::DrawingTool::by_id(operation.action.tool_id()).filter(|tool| {
-            let opening = drawings::new_drawing_from_defaults(self.presets, canvas, *tool);
+            let opening = presets.new_drawing(*tool);
             host.seed_draft(tab, side, *tool, &operation.band, &points, opening)
         });
         let outcome = PlacementOutcome::of(seeded.is_some());

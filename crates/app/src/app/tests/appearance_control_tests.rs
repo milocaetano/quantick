@@ -55,11 +55,11 @@ fn appearance_gateway_publishes_every_owner_atomically_and_replays_durable_retry
         palette.resolved.color(Token::ChartCanvas).to_array()
     );
     let text = crate::drawings::DrawingTool::by_id("text").unwrap();
-    let drawing = crate::drawings::new_drawing_from_defaults(
+    let drawing = crate::drawings::PresetContext::new(
         &app.drawings.presets,
         quantick_appearance::ChartSurface::Paper.into(),
-        text,
-    );
+    )
+    .new_drawing(text);
     assert_eq!(
         drawing.style.color,
         palette.resolved.color(Token::DrawingDefault)

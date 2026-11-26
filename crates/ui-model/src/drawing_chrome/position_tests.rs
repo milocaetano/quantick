@@ -1,5 +1,5 @@
 use super::*;
-use quantick_appearance::ChartSurface;
+use quantick_appearance::{ChartSurface, PaneCanvas};
 use quantick_drawings::{
     ChartPoint, DrawingBand, DrawingIntent, DrawingStyle, DrawingTool, Drawings, NewDrawing,
     Placement, PositionPayload, update,
@@ -34,26 +34,45 @@ fn the_bar_save_and_reset_write_the_tools_default_through_the_ask() {
     let path = crate::scratch::thread_dir("position-defaults").join("bank.toml");
     let _ = std::fs::remove_file(&path);
     let mut bank = quantick_drawings::presets::PresetStore::load_from(&path);
-    let canvas = ChartSurface::Paper.into();
+    let canvas: PaneCanvas = ChartSurface::Paper.into();
     let drawing = position("long-position");
     let mut ask = DrawingChromeAsk::default();
-    ask_position_default(&mut ask, &bank, canvas, &drawing, PositionDefault::Save);
+    ask_position_default(
+        &mut ask,
+        PresetContext::new(&bank, canvas),
+        &drawing,
+        PositionDefault::Save,
+    );
     assert!(matches!(ask.saved_default, Some(SavedDefault::OneTool(_))));
     assert!(!ask.presets.is_empty());
     for write in ask.presets {
         write.apply_to(&mut bank);
     }
-    let opening =
-        quantick_drawings::position_edit::opening_position(&bank, canvas, drawing.tool).unwrap();
+    let opening = quantick_drawings::position_edit::opening_position(
+        &PresetContext::new(&bank, canvas),
+        drawing.tool,
+    )
+    .unwrap();
     assert_eq!(opening.ratio, 3.0);
     let mut ask = DrawingChromeAsk::default();
-    ask_position_default(&mut ask, &bank, canvas, &drawing, PositionDefault::Reset);
-    assert!(matches!(ask.saved_default, Some(SavedDefault::Forgotten(_))));
+    ask_position_default(
+        &mut ask,
+        PresetContext::new(&bank, canvas),
+        &drawing,
+        PositionDefault::Reset,
+    );
+    assert!(matches!(
+        ask.saved_default,
+        Some(SavedDefault::Forgotten(_))
+    ));
     for write in ask.presets {
         write.apply_to(&mut bank);
     }
-    let opening =
-        quantick_drawings::position_edit::opening_position(&bank, canvas, drawing.tool).unwrap();
+    let opening = quantick_drawings::position_edit::opening_position(
+        &PresetContext::new(&bank, canvas),
+        drawing.tool,
+    )
+    .unwrap();
     assert_eq!(opening, PositionPayload::default());
     let _ = std::fs::remove_file(bank.path());
 }
@@ -66,8 +85,7 @@ fn another_tool_asks_nothing() {
     let mut ask = DrawingChromeAsk::default();
     ask_position_default(
         &mut ask,
-        &bank,
-        ChartSurface::Paper.into(),
+        PresetContext::new(&bank, ChartSurface::Paper.into()),
         &line,
         PositionDefault::Save,
     );

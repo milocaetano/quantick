@@ -228,23 +228,23 @@ fn another_tool_is_refused() {
 fn the_default_call_saves_resets_and_reads_per_tool() {
     let mut bank = MemoryBank::default();
     let (marks, _) = marks();
-    let canvas = marks.canvas();
+    let mut presets = marks.preset_context::<&mut dyn PresetHost>(&mut bank);
     let drawing = marks.items()[0].clone();
-    let fresh = default(&mut bank, canvas, &drawing, DefaultAction::Inspect).unwrap();
+    let fresh = default(&mut presets, &drawing, DefaultAction::Inspect).unwrap();
     assert!(!fresh.saved);
     assert_eq!(
         fresh.opening.ratio_text, "R/R 1:1",
         "factory risk 1 : reward 1"
     );
-    let saved = default(&mut bank, canvas, &drawing, DefaultAction::Save).unwrap();
+    let saved = default(&mut presets, &drawing, DefaultAction::Save).unwrap();
     assert!(saved.saved);
     assert_eq!(saved.tool_id, "long-position");
     assert_eq!(saved.opening.ratio_text, "R/R 1:2");
     let mut short = drawing.clone();
     short.tool = DrawingTool::by_id("short-position").unwrap();
-    let other = default(&mut bank, canvas, &short, DefaultAction::Inspect).unwrap();
+    let other = default(&mut presets, &short, DefaultAction::Inspect).unwrap();
     assert!(!other.saved, "short keeps its own default");
-    let reset = default(&mut bank, canvas, &drawing, DefaultAction::Reset).unwrap();
+    let reset = default(&mut presets, &drawing, DefaultAction::Reset).unwrap();
     assert!(!reset.saved);
     assert_eq!(reset.opening.target_color, "#2EA064");
     assert_eq!(reset.opening.ratio_text, "R/R 1:1");

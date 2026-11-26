@@ -1,9 +1,8 @@
 //! A position's floating bar asking for its per-tool default: the writes
 //! go to the preset bank through the frame's ask, and the trader is owed
 //! the same line the inspector's buttons give.
-use quantick_appearance::PaneCanvas;
-use quantick_drawings::PresetHost;
 use quantick_drawings::position_edit::{PositionDefault, apply_position_default};
+use quantick_drawings::{PresetContext, PresetHost};
 
 use super::{Drawing, DrawingChromeAsk, RecordingPresetHost, SavedDefault};
 
@@ -11,14 +10,13 @@ use super::{Drawing, DrawingChromeAsk, RecordingPresetHost, SavedDefault};
 /// tool asks nothing.
 pub fn ask_position_default(
     ask: &mut DrawingChromeAsk,
-    bank: &dyn PresetHost,
-    canvas: PaneCanvas,
+    presets: PresetContext<&dyn PresetHost>,
     drawing: &Drawing,
     action: PositionDefault,
 ) {
-    let ground = quantick_drawings::defaults_ground(bank, canvas);
-    let mut recorder = RecordingPresetHost::new(bank);
-    if apply_position_default(&mut recorder, canvas, drawing, action).is_err() {
+    let ground = presets.ground();
+    let mut recorder = RecordingPresetHost::new(presets.host());
+    if apply_position_default(&mut presets.on(&mut recorder), drawing, action).is_err() {
         return;
     }
     ask.presets.extend(recorder.into_writes());

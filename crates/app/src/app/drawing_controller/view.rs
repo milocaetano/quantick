@@ -89,12 +89,11 @@ fn drawing_env<'a>(
         selected_band: read.selected_band,
         tab: facts.tab,
         side: facts.side,
-        canvas: facts.canvas,
         drawing_tool_armed: matches!(toolrail.tool(), Tool::Drawing(_)),
         toolbox_dock: toolrail.dock(),
         authored_objects: read.authored_objects,
         manager_rows: read.manager_rows,
-        presets,
+        presets: store.preset_context(presets),
     }
 }
 
@@ -287,8 +286,10 @@ impl DrawingControllerAccess<'_> {
         // and on the same pane every drawing surface reads, so the index the
         // editor opens on is the object this just placed.
         let (tab, side) = host.target();
-        let fresh =
-            drawings::new_drawing_from_defaults(self.presets, host.canvas_of(tab, side), tool);
+        let fresh = host
+            .presets_of(tab, side)
+            .on(&*self.presets)
+            .new_drawing(tool);
         let placed =
             host.drawings_mut()
                 .place_with(tool, &drawings::DrawingBand::Price, point, |_| fresh);

@@ -34,7 +34,7 @@ use eframe::egui;
 use quantick_ui_model::drawing_chrome::Intent;
 
 use crate::bands::BandLabel;
-use crate::drawings::{Drawing, PresetHost};
+use crate::drawings::{Drawing, PresetContext, PresetHost};
 use crate::pane::PaneSide;
 use crate::toolrail::ToolboxDock;
 
@@ -174,9 +174,6 @@ pub(crate) struct DrawingEnv<'a> {
     /// whatever now sits at its index.
     pub tab: u64,
     pub side: PaneSide,
-    /// The canvas that pane paints: it picks which ground's saved
-    /// defaults the inspector saves and resets.
-    pub canvas: quantick_appearance::PaneCanvas,
     /// Whether a drawing tool is armed. The trader is drawing, not editing:
     /// the context bar stands down so it cannot eat the click that places the
     /// next object.
@@ -188,9 +185,10 @@ pub(crate) struct DrawingEnv<'a> {
     pub authored_objects: usize,
     /// Every object, as rows — empty unless the manager is open.
     pub manager_rows: &'a [ManagerRow],
-    /// The saved tool defaults and named presets. Read-only here; the writes
-    /// go back through [`DrawingChromeAsk::presets`].
-    pub presets: &'a dyn PresetHost,
+    /// The saved tool defaults and named presets, on the ground of the
+    /// canvas that pane paints. Read-only here; the writes go back through
+    /// [`DrawingChromeAsk::presets`].
+    pub presets: PresetContext<&'a dyn PresetHost>,
 }
 
 impl DrawingEnv<'_> {
