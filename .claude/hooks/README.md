@@ -313,10 +313,13 @@ into the statements the shell would run, outside quotes, on `&&`, `||`, `;`,
 control-flow keywords (`if`, `then`, `else`, `elif`, `do`, `while`, `until`),
 `{`, `!`, `function NAME`, `coproc`, leading redirects, the wrappers `time`,
 `nohup`, `winpty`, `exec`, `command`, `builtin`, `sudo`, `env`, `timeout`,
-`nice` and `stdbuf` with their short and long options, option arguments and
-duration, and `VAR=value` words. It reduces a command word spelled with
-quotes, `$'…'`, a path or `.exe` to its lower-case name, moves `gh`'s flags
-behind its subcommand, reads `gh pr new` as `gh pr create`, and unwraps
+`nice`, `stdbuf` and `xargs` with their short and long options, option
+arguments and duration, and `VAR=value` words. It joins line continuations,
+inside quotes too, reduces a command word spelled with quotes, `$'…'`, a path
+or `.exe` to its lower-case name, moves `gh`'s flags (before `pr` or between
+`pr` and `merge`) behind its subcommand, reads `gh pr new` as
+`gh pr create`, marks a `gh` run by `xargs` as unknown (its subcommand may
+come from stdin), and unwraps
 `bash -c` / `sh -lc` (any shell, any option cluster holding `c`, `--` and
 option arguments allowed), `env -S`, `cmd /c`, `pwsh -c` and `eval`,
 splitting their script the same way. `runs_command` and `gh_statement` match

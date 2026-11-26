@@ -309,11 +309,11 @@ shell_statements() {
             return rest
         }
         # Print statement `t` from its command word, or split what it unwraps.
-        function emit(t, depth,    nw, k, w, b, o, cmd, j, j0, rest, opts, assign) {
+        function emit(t, depth,    nw, k, w, b, o, cmd, j, rest, opts, assign, sub_n, via_xargs) {
             t = trim(t)
             if (t == "") return
             nw = words_of(t)
-            k = 1; assign = 0
+            k = 1; assign = 0; via_xargs = 0
             while (k <= nw) {
                 w = unquote(words[k]); b = base(w)
                 if (w ~ /^(\{|!|if|then|else|elif|do|while|until|coproc)$/) { k++; continue }
@@ -324,7 +324,8 @@ shell_statements() {
                     continue
                 }
                 if (w ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { if (names_marker(w)) assign = 1; k++; continue }
-                if (b ~ /^(time|nohup|winpty|exec|command|builtin|sudo|env|timeout|nice|stdbuf)$/) {
+                if (b ~ /^(time|nohup|winpty|exec|command|builtin|sudo|env|timeout|nice|stdbuf|xargs)$/) {
+                    if (b == "xargs") via_xargs = 1
                     k++
                     while (k <= nw && words[k] ~ /^-/) {
                         o = words[k]; k++
@@ -335,8 +336,9 @@ shell_statements() {
                             if (depth < 8) split_all(rest tail_from(k, nw), depth + 1)
                             return
                         }
-                        if (o ~ /^--[a-z-]+$/ && o ~ /^--(unset|chdir|signal|kill-after|user|group|adjustment|input|output|error|prompt|other-user|close-from|host)$/) k++
-                        else if ((b == "env" && o ~ /^-[uCP]$/) || (b == "exec" && o == "-a") ||
+                        if (o ~ /^--(unset|chdir|signal|kill-after|user|group|adjustment|input|output|error|prompt|other-user|close-from|host|max-args|max-lines|max-procs|max-chars|delimiter|arg-file|replace|eof)$/) k++
+                        else if ((b == "xargs" && o ~ /^-[InLPsdEa]$/) ||
+                            (b == "env" && o ~ /^-[uCP]$/) || (b == "exec" && o == "-a") ||
                             (b == "sudo" && o ~ /^-[ugCDhprtU]$/) || (b == "timeout" && o ~ /^-[sk]$/) ||
                             (b == "nice" && o == "-n") || (b == "stdbuf" && o ~ /^-[ioe]$/)) k++
                     }
@@ -376,25 +378,30 @@ shell_statements() {
             }
             # `gh -R o/r pr merge` runs `gh pr merge`: its flags move behind
             # the subcommand, kept, so a pinned form still sees them.
-            j0 = k + 1; opts = ""
-            if (cmd == "gh")
-                while (j0 <= nw && words[j0] ~ /^-/) {
-                    opts = opts " " words[j0]
-                    if (words[j0] ~ /^(-R|--repo|--hostname)$/ && j0 < nw) opts = opts " " words[++j0]
-                    j0++
+            # So do flags between `pr` and `merge`: gh reads `gh pr -R o/r merge`
+            # the same way. The subcommand words are unquoted, so `gh "pr"
+            # merge` reads as what it runs; every other argument stays as
+            # written, quotes kept.
+            rest = cmd; opts = ""; j = k + 1
+            for (sub_n = 0; sub_n < 2 && j <= nw; sub_n++) {
+                # `gh api` has no subcommand: its flags stay where they are.
+                while (cmd == "gh" && rest != "gh api" && j <= nw && words[j] ~ /^-/) {
+                    opts = opts " " words[j]
+                    if (words[j] ~ /^(-R|--repo|--hostname)$/ && j < nw) opts = opts " " words[++j]
+                    j++
                 }
-            # The subcommand words unquoted, so `gh "pr" merge` reads as what
-            # it runs; every argument after them stays as written, quotes kept.
-            rest = cmd
-            for (j = j0; j <= nw && j <= j0 + 1; j++) {
-                w = words[j]
+                if (j > nw) break
+                w = words[j++]
                 if (unquote(w) !~ /[ \t]/) w = unquote(w)
                 # gh'"'"'s own alias for `gh pr create`.
-                if (cmd == "gh" && j == j0 + 1 && w == "new" && rest == "gh pr") w = "create"
+                if (cmd == "gh" && sub_n == 1 && w == "new" && rest == "gh pr") w = "create"
                 rest = rest " " w
             }
             rest = rest opts
-            for (j = j0 + 2; j <= nw; j++) rest = rest " " words[j]
+            for (; j <= nw; j++) rest = rest " " words[j]
+            # `xargs gh pr` takes its subcommand from stdin, which no reading
+            # of the command can see.
+            if (via_xargs && cmd == "gh") print "#unknown"
             print rest
         }
         # Record a heredoc opened at `s[i]` by the statement `owner`; return
@@ -467,6 +474,8 @@ shell_statements() {
                     cur = cur (c == "\n" ? " " : c); continue
                 }
                 if (q == "\"") {
+                    # A line continuation joins, inside quotes as outside.
+                    if (c == "\\" && substr(s, i + 1, 1) == "\n") { i++; continue }
                     if (c == "\\" && i < n) { cur = cur c substr(s, ++i, 1); continue }
                     # `"$(cat <<EOF ...)"`: the body is the message, never
                     # quotes. Only inside an open `$(`: a quoted `a << b` is text.
@@ -478,7 +487,7 @@ shell_statements() {
                     cur = cur (c == "\n" ? " " : c); continue
                 }
                 if (c == "\\" && i < n) {
-                    if (substr(s, i + 1, 1) == "\n") { i++; cur = cur " "; continue }
+                    if (substr(s, i + 1, 1) == "\n") { i++; continue }
                     cur = cur c substr(s, ++i, 1); uq = uq " "; continue
                 }
                 if (c == "$" && substr(s, i + 1, 1) == "\047") { q = "$"; cur = cur c "\047"; uq = uq " "; i++; continue }
@@ -801,6 +810,8 @@ writes_marker() {
 # be a program and is rescanned), still spell a gated call or a marker write
 # once flattened. See its use in `pr_gate`.
 unknown_gated() {
+    # `#unknown`: the splitter met a `gh` whose subcommand comes from stdin.
+    printf '%s\n' "$1" | grep -qx '#unknown' && return 0
     printf '%s\n' "$1" |
         grep -vE '^(git( |$)|#data (git|gh (pr|issue|release|gist)) |#writes-marker$|gh pr (merge|ready|create)( |$)|gh api( |$))' |
         tr -d "'\"\\\\\$\`{}," | tr 'A-Z\t' 'a-z ' |
@@ -867,18 +878,12 @@ draft_flag() {
     # six — so `--draft=f`, `--draft=F` and `--draft=False` are all *false*,
     # and a gate that reads them as a draft opens a real, un-reviewed PR. Only
     # `false` and `0` were excluded before, which left the other four spellings
-    # of the same instruction wide open.
-    case " $draft_words " in
-        *' --draft=1 '* | *' --draft=t '* | *' --draft=T '* | \
-        *' --draft=true '* | *' --draft=TRUE '* | *' --draft=True '*) return 0 ;;
-        # Any other explicit value: not a draft, whatever it says.
-        *' --draft='*) return 1 ;;
-    esac
-
-    case " $draft_words " in
-        *' --draft '* | *' -d '*) return 0 ;;
-    esac
-    return 1
+    # of the same instruction wide open. `-d=<value>` is the same flag, and gh
+    # keeps the last value given, so `--draft -d=false` is not a draft.
+    printf '%s\n' "$draft_words" | tr -s ' \t' '\n\n' | awk '
+        /^(--draft|-d)$/ { draft = 1; next }
+        /^(--draft|-d)=/ { v = $0; sub(/^[^=]*=/, "", v); draft = (v ~ /^(1|t|T|true|TRUE|True)$/) }
+        END { exit !draft }'
 }
 
 # The PR number the statement names, or nothing.

@@ -825,6 +825,27 @@ gh pr merge 42 --admin' \
         pr-gate "$(json_cmd "$root/wt" "$spelling")" deny "reserved exclusively"
 done
 
+# Found by the independent test agent: gh keeps a flag's last value, takes
+# flags between `pr` and its subcommand, and `xargs` hides the subcommand; a
+# line continuation joins a name inside quotes too.
+for spelling in 'gh pr create --fill --draft -d=false' 'gh pr create --fill -d --draft=0'; do
+    run "the last draft value wins: $spelling" \
+        pr-gate "$(json_cmd "$root/wt" "$spelling")" deny "code-review-ok"
+done
+run "a later bare -d makes it a draft again" \
+    pr-gate "$(json_cmd "$root/wt" 'gh pr create --fill --draft=false -d')" silent
+for spelling in 'gh pr -R o/r merge 42 --squash' 'gh pr --repo=o/r merge 42 --squash'; do
+    run "flags before the subcommand: $spelling" \
+        pr-gate "$(json_cmd "$root/wt" "$spelling")" deny "reserved exclusively"
+done
+run "xargs hides the gh subcommand, so the gate asks" \
+    pr-gate "$(json_cmd "$root/wt" 'echo merge 42 --squash | xargs gh pr')" ask "cannot tell"
+run "xargs beside a gated statement is refused" \
+    pr-gate "$(json_cmd "$root/wt" 'echo 42 | xargs -I{} gh pr merge {} --squash')" deny "Run the gated command alone"
+run "a quoted line continuation joins the marker name" \
+    pr-gate "$(json_cmd "$root/wt" "echo x > \"$wt_git_dir/code-review-\\
+ok\"")" deny "An agent never writes it"
+
 run "gh pr new is gh pr create" \
     pr-gate "$(json_cmd "$root/wt" 'gh pr new --title x --body y')" deny "code-review-ok"
 
