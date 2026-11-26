@@ -200,7 +200,14 @@ fn trade_call<C: TradeCall, H: PaperHost + ?Sized, A: JournalAccess>(
     let call: C = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let command = call.command().map_err(ControlError::invalid_request)?;
-    run(&mut *owner, access, actor, command, C::EVENT_KIND, input.clone())
+    run(
+        &mut *owner,
+        access,
+        actor,
+        command,
+        C::EVENT_KIND,
+        input.clone(),
+    )
 }
 
 /// Run `command` on the active desk, refuse what the tab refused, and

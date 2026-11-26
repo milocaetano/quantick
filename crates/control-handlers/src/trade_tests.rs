@@ -59,9 +59,15 @@ fn every_trade_call_docks_decodes_refuses_and_journals_through_one_adapter() {
     assert!(action(CANCEL_CAPABILITY_ID).descriptor.risk_reducing);
     let place = action(PLACE_CAPABILITY_ID);
     let priced = json!({ "side": "buy", "kind": "limit", "quantity": "1", "price": 95.5 });
-    assert!(place.input.validate(&priced).is_err(), "a price is a decimal string");
+    assert!(
+        place.input.validate(&priced).is_err(),
+        "a price is a decimal string"
+    );
     let no_quantity = json!({ "side": "buy", "kind": "limit" });
-    assert!(place.input.validate(&no_quantity).is_err(), "quantity is required");
+    assert!(
+        place.input.validate(&no_quantity).is_err(),
+        "quantity is required"
+    );
 
     let trader = FakeWindow::trader();
     let mut access = FakeAccess::with_budget(0);
@@ -70,7 +76,10 @@ fn every_trade_call_docks_decodes_refuses_and_journals_through_one_adapter() {
         let action = action(id);
         let answer = (action.handler)(window, access, &trader, &input);
         if let Ok(value) = &answer {
-            action.output.validate(value).expect("the answer is the published result");
+            action
+                .output
+                .validate(value)
+                .expect("the answer is the published result");
         }
         answer
     };
@@ -86,7 +95,13 @@ fn every_trade_call_docks_decodes_refuses_and_journals_through_one_adapter() {
         notice: None,
     }));
     let market = json!({ "side": "buy", "kind": "market", "quantity": "1" });
-    let paused = run(&mut window, &mut access, PLACE_CAPABILITY_ID, market.clone()).unwrap_err();
+    let paused = run(
+        &mut window,
+        &mut access,
+        PLACE_CAPABILITY_ID,
+        market.clone(),
+    )
+    .unwrap_err();
     assert_eq!(
         paused.code.as_str(),
         quantick_control::error::codes::CAPABILITY_UNAVAILABLE
