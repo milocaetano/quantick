@@ -4,7 +4,7 @@ use crate::tabs::TabDirectory;
 use crate::test_support::{FakeAccess, FakeTab, FakeWindow};
 use quantick_chart::state::{ChartState, SpecSelector};
 use quantick_engine::BarSpec;
-use quantick_session::script_strategies::{ScriptArm, ScriptPlacement};
+use quantick_session::script_strategies::{ScriptArm, ScriptPlacement, SignalAction};
 use quantick_session::strategies::TabStrategies;
 use serde_json::json;
 
@@ -90,6 +90,7 @@ fn arm_steady(window: &mut Window, pane_id: u64) {
         source: STEADY,
         side: Side::Buy,
         place: ScriptPlacement::Anywhere,
+        action: SignalAction::Alarm,
     };
     let armed = window.strategies.arm_script(request, |_| Vec::new());
     armed.expect("the fixture arms");
@@ -219,7 +220,8 @@ fn an_ended_script_is_armed_again_through_its_call() {
     };
     let mut access = FakeAccess::default();
     arm_steady(&mut window, FLOW);
-    window.strategies.pane_mut(FLOW).scripts[0].halt(quantick_session::strategies::DRAWING_REMOVED);
+    let _ = window.strategies.pane_mut(FLOW).scripts[0]
+        .halt(quantick_session::strategies::DRAWING_REMOVED);
 
     let armed = call(
         arm::<Window, FakeAccess>,
@@ -252,4 +254,92 @@ fn a_replaying_tab_groups_under_the_recordings_symbol() {
         "a replay's desk names the recording, not the live feed beneath it"
     );
     assert_eq!(window.desk_symbol(2), None, "a closed tab has no symbol");
+}
+
+#[test]
+fn script_action_set_reads_back_through_list() {
+    let scratch = crate::scratch::ScratchDir::new("script-action");
+    let mut window = Window {
+        library: scratch.path().display().to_string(),
+        strategies: TabStrategies::default(),
+        panes: vec![Pane::new(FLOW, BarSpec::Tick(4))],
+    };
+    let mut access = FakeAccess::default();
+    arm_steady(&mut window, FLOW);
+    let (window, access) = (&mut window, &mut access);
+    let set = action_set::<Window, FakeAccess>;
+    let list = crate::script_strategy::list::<Window, FakeAccess>;
+
+    let order =
+        json!({"id": "1", "action": "order", "quantity": "2", "stop": "100", "gain": "200"});
+    let answer = call(set, window, access, order);
+    assert_eq!(answer["capability"], wire::ACTION_SET_CAPABILITY_ID);
+    assert_eq!(answer["changed"], 1);
+    let journaled = access.events.iter().map(|event| event.kind.to_string());
+    assert_eq!(journaled.collect::<Vec<_>>(), [CHANGED_EVENT_KIND]);
+
+    let armed = &call(list, window, access, json!({}))["armed"][0];
+    assert_eq!(armed["action"], "order");
+    assert_eq!(armed["alarm_only"], false);
+    assert_eq!(
+        (&armed["quantity"], &armed["stop"], &armed["gain"]),
+        (&json!("2"), &json!("100"), &json!("200"))
+    );
+    let input = json!({"tab_id": "31", "instance": script("1")});
+    let detail = call(detail::<Window, FakeAccess>, window, access, input);
+    assert_eq!(detail["strategy"]["action"], "order");
+    assert_eq!(
+        (&detail["quantity"], &detail["gain"]),
+        (&json!("2"), &json!("200"))
+    );
+
+    let again = json!({"id": "1", "action": "order", "quantity": "Ticket"});
+    assert_eq!(call(set, window, access, again)["changed"], 1);
+    let armed = &call(list, window, access, json!({}))["armed"][0];
+    assert_eq!(
+        (&armed["quantity"], &armed["stop"]),
+        (&json!("ticket"), &json!("0"))
+    );
+
+    let alarm = json!({"id": "1", "action": "alarm"});
+    assert_eq!(call(set, window, access, alarm.clone())["changed"], 1);
+    assert_eq!(
+        call(set, window, access, alarm)["changed"],
+        0,
+        "already ringing"
+    );
+    let armed = &call(list, window, access, json!({}))["armed"][0];
+    assert_eq!(
+        (&armed["action"], &armed["quantity"]),
+        (&json!("alarm"), &Value::Null)
+    );
+
+    let actor = FakeWindow::assistant();
+    for (input, says) in [
+        (
+            json!({"id": "1", "action": "alarm", "stop": "5"}),
+            "an alarm takes none",
+        ),
+        (json!({"id": "1", "action": "order"}), "needs a quantity"),
+        (
+            json!({"id": "1", "action": "order", "quantity": "two"}),
+            "`two`",
+        ),
+        (
+            json!({"id": "1", "action": "order", "quantity": "0"}),
+            "above zero",
+        ),
+        (
+            json!({"id": "1", "action": "order", "quantity": "1", "stop": "-1"}),
+            "never below",
+        ),
+        (json!({"id": "9", "action": "alarm"}), "no armed strategy"),
+    ] {
+        let refused = set(window, access, &actor, &input).expect_err("refused");
+        assert!(
+            refused.message.contains(says),
+            "{input}: {}",
+            refused.message
+        );
+    }
 }

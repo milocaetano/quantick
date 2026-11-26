@@ -57,6 +57,7 @@ pub mod layers;
 pub mod replay;
 pub mod script_editor;
 pub mod strategy_describe;
+pub mod strategy_desk;
 pub mod trading;
 pub mod workspace;
 

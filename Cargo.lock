@@ -3004,6 +3004,7 @@ dependencies = [
  "quantick-paper",
  "quantick-pine",
  "quantick-replay",
+ "quantick-script-trigger",
  "quantick-sim",
  "quantick-strategy",
  "rust_decimal",
@@ -3350,6 +3351,7 @@ dependencies = [
  "quantick-engine",
  "quantick-indicators",
  "quantick-pine",
+ "quantick-sim",
  "quantick-strategy",
  "rust_decimal",
 ]

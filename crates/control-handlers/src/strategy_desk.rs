@@ -1,5 +1,6 @@
 //! `strategy.desk.*`: the strategy desk over every open tab's drawn and
-//! scripted instances.
+//! scripted instances, and `strategy.script.action.set`, the trade tier's
+//! desk command.
 //!
 //! The tab's strategies decide (`quantick_session::strategy_desk`): the
 //! grouping, what each command changes, the detail and its history markers.
@@ -15,12 +16,13 @@ use quantick_control::wire::{ActorContext, WireU64};
 use quantick_control_host::authority::STRATEGY_MODULE_ID;
 use quantick_control_host::journal::NewEvent;
 use quantick_control_schema::strategy_desk::{
-    self as wire, AssetInput, CHANGED_EVENT_KIND, CommandResult, DeclaredInput, DetailResult,
-    FireAction, InstanceId, InstanceInput, Link, ListInput, ListResult, SaveAsInput,
+    self as wire, ActionSetInput, AssetInput, CHANGED_EVENT_KIND, CommandResult, DeclaredInput,
+    DetailResult, FireAction, InstanceId, InstanceInput, Link, ListInput, ListResult, SaveAsInput,
 };
 use quantick_control_schema::trade::ActionSide;
 use quantick_drawings::{DrawingId, DrawingTool, Drawings};
 use quantick_engine::{Bar, Side};
+use quantick_session::script_strategies::SignalAction;
 use quantick_session::strategy_desk::{
     Asset, DeskAction, DeskGroup, DeskLink, DeskOutcome, DeskRow, DeskState, DeskTab, InstanceRef,
     StrategyDeskCommand, StrategyDeskView, StrategyDetail,
@@ -28,6 +30,7 @@ use quantick_session::strategy_desk::{
 use quantick_stores::script_library::ScriptLibrary;
 use rust_decimal::Decimal;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::JournalAccess;
@@ -35,7 +38,8 @@ use crate::dock::ActionDock;
 use crate::invalid;
 use crate::market_tab::MarketTabHost;
 use crate::script_strategy::{
-    DEFAULT_LIBRARY, ScriptPane, ScriptStrategyHost, ScriptTab, footprint_warmup, placement,
+    DEFAULT_LIBRARY, ScriptPane, ScriptStrategyHost, ScriptTab, action_words, footprint_warmup,
+    placement, signal_action,
 };
 use crate::session::SessionTab;
 use crate::tabs::{tab_closed, tab_index};
@@ -88,7 +92,7 @@ where
     for (descriptor, handler) in wire::command_descriptors().into_iter().zip(handlers) {
         registry.register(descriptor, handler)?;
     }
-    Ok(())
+    registry.register(wire::action_set_descriptor(), action_set::<H, A>)
 }
 
 /// Each chart of a lent tab with its bar type.
@@ -166,6 +170,24 @@ pub fn groups<H: StrategyDeskHost + ?Sized>(host: &mut H) -> Vec<DeskGroup<Drawi
     view.groups()
 }
 
+/// What each open tab's scripts do when they fire, by tab and script id:
+/// the order settings a desk row leaves out.
+pub fn script_actions<H: StrategyDeskHost + ?Sized>(
+    host: &mut H,
+) -> BTreeMap<(u64, u64), SignalAction> {
+    let mut actions = BTreeMap::new();
+    for index in 0..host.desk_tab_count() {
+        let tab_id = host.tab_id_at(index);
+        let Some(tab) = host.script_tab(index) else {
+            continue;
+        };
+        for reading in tab.strategies.script_readings() {
+            actions.insert((tab_id, reading.id), reading.action);
+        }
+    }
+    actions
+}
+
 fn detail<H: StrategyDeskHost + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
@@ -174,6 +196,13 @@ fn detail<H: StrategyDeskHost + ?Sized, A>(
 ) -> Result<Value, ControlError> {
     let input: InstanceInput = serde_json::from_value(input.clone()).map_err(invalid)?;
     let detail = instance_detail(host, input.tab_id.get(), instance_ref(input.instance))?;
+    let action = match input.instance {
+        InstanceId::Script { id } => script_actions(host)
+            .get(&(input.tab_id.get(), id.get()))
+            .copied(),
+        InstanceId::Drawing { .. } => None,
+    };
+    let (_, quantity, stop, gain) = action_words(action.unwrap_or_default());
     let result = DetailResult {
         strategy: row(&detail.row),
         description: detail.description,
@@ -186,6 +215,9 @@ fn detail<H: StrategyDeskHost + ?Sized, A>(
             .map(|(name, value)| DeclaredInput { name, value })
             .collect(),
         fires_today: detail.fires_today,
+        quantity,
+        stop,
+        gain,
         code: detail.code,
         history_slots: (detail.history.into_iter())
             .map(|slot| u64::try_from(slot).unwrap_or(u64::MAX))
@@ -289,6 +321,31 @@ macro_rules! asset_command {
 asset_command!(asset_pause, PauseAsset);
 asset_command!(asset_resume, ResumeAsset);
 
+/// The trade tier's call, so it may turn a script into one that places
+/// paper orders.
+fn action_set<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
+    host: &mut H,
+    access: &mut A,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let input: ActionSetInput = serde_json::from_value(input.clone()).map_err(invalid)?;
+    let action = signal_action(
+        input.action,
+        input.quantity.as_deref(),
+        input.stop.as_deref(),
+        input.gain.as_deref(),
+    )?;
+    let tab_id = host.tab_id_at(tab_index(host, input.tab_id)?);
+    let id = InstanceRef::Script(input.id.get());
+    let command = StrategyDeskCommand::SetAction { id, action };
+    let result = send(host, tab_id, command, TRADE_TIER_MAY_START_ORDERS)?;
+    journaled(access, actor, &result)
+}
+
+/// `strategy.script.action.set` sits in the trade tier: the trader's own.
+const TRADE_TIER_MAY_START_ORDERS: bool = true;
+
 /// The call that carries `command`.
 const fn capability(command: &StrategyDeskCommand<DrawingId>) -> &'static str {
     match command {
@@ -300,6 +357,7 @@ const fn capability(command: &StrategyDeskCommand<DrawingId>) -> &'static str {
         StrategyDeskCommand::Arm(_) => wire::ARM_CAPABILITY_ID,
         StrategyDeskCommand::SaveAs { .. } => wire::SAVE_AS_CAPABILITY_ID,
         StrategyDeskCommand::Duplicate(_) => wire::DUPLICATE_CAPABILITY_ID,
+        StrategyDeskCommand::SetAction { .. } => wire::ACTION_SET_CAPABILITY_ID,
     }
 }
 

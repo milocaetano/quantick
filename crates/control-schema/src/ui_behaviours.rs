@@ -8,7 +8,7 @@
 use quantick_operability::UiBehaviour;
 use quantick_operability::registry::{
     chart, control, drawings, flatten, indicators, layers, replay, script_editor,
-    strategy_describe, total, trading, workspace,
+    strategy_describe, strategy_desk, total, trading, workspace,
 };
 
 /// Every family's rows, in the order the matrix renders them.
@@ -25,6 +25,7 @@ pub const FAMILIES: &[&[UiBehaviour]] = &[
     indicators::ROWS,
     script_editor::ROWS,
     strategy_describe::ROWS,
+    strategy_desk::ROWS,
     trading::ROWS,
     control::FEED_RECOVERY,
     drawings::TOOL_RAIL,

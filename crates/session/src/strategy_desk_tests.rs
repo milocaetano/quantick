@@ -5,7 +5,9 @@ use quantick_engine::{Bar, Side};
 use quantick_strategy::{ArmedState, Region};
 use rust_decimal::Decimal;
 
-use crate::script_strategies::{ScriptArm, ScriptPlacement};
+use crate::script_strategies::{
+    OrderQuantity, ScriptArm, ScriptPlacement, SignalAction, SignalOrder,
+};
 use crate::strategies::{Print, TabStrategies};
 use crate::strategies_tests::{DrawingId, RecordingPort, instance};
 use crate::strategy_desk::{
@@ -76,6 +78,7 @@ fn arm_script(
         source,
         side: Side::Buy,
         place,
+        action: SignalAction::Alarm,
     };
     let armed = strategies.arm_script(request, |_| Vec::new());
     armed.expect("the fixture arms").id
@@ -567,6 +570,69 @@ fn a_caller_without_the_trade_tier_cannot_restart_an_order_strategy() {
         agent(StrategyDeskCommand::ResumeAsset(asset("tick(4)"))),
         Ok(DeskOutcome::Changed(1)),
         "the script resumes, the order strategy stays paused"
+    );
+}
+
+#[test]
+fn only_the_trader_turns_a_script_into_an_order_strategy() {
+    let mut strategies = TabStrategies::default();
+    let script = InstanceRef::Script(arm_script(
+        &mut strategies,
+        TICK,
+        ALWAYS_RINGS,
+        ScriptPlacement::Anywhere,
+    ));
+    let order = SignalAction::Order(SignalOrder {
+        quantity: OrderQuantity::Fixed(Decimal::ONE),
+        stop: Decimal::TEN,
+        gain: Decimal::TEN,
+    });
+    let set = |action| StrategyDeskCommand::SetAction { id: script, action };
+    let panes = panes();
+    let refused = strategies.execute_desk(
+        &tab(&panes),
+        set(order),
+        false,
+        |_, _| Ok(()),
+        |_, _| Vec::new(),
+    );
+    assert!(refused.is_err(), "an agent cannot start orders");
+    assert_eq!(view(&strategies)[0].rows[0].action, DeskAction::Alarm);
+
+    assert_eq!(
+        command(&mut strategies, set(order)),
+        Ok(DeskOutcome::Changed(1))
+    );
+    assert_eq!(
+        command(&mut strategies, set(order)),
+        Ok(DeskOutcome::Changed(0))
+    );
+    assert_eq!(view(&strategies)[0].rows[0].action, DeskAction::Order);
+    assert_eq!(strategies.script_readings()[0].action, order);
+
+    command(&mut strategies, StrategyDeskCommand::Pause(script)).expect("pauses");
+    let mut agent = |command| {
+        strategies.execute_desk(
+            &tab(&panes),
+            command,
+            false,
+            |_, _| Ok(()),
+            |_, _| Vec::new(),
+        )
+    };
+    assert!(agent(StrategyDeskCommand::Resume(script)).is_err());
+    assert_eq!(
+        agent(StrategyDeskCommand::ResumeAsset(asset("tick(4)"))),
+        Ok(DeskOutcome::Changed(0)),
+        "an order script stays paused for an agent"
+    );
+    assert_eq!(
+        agent(StrategyDeskCommand::SetAction {
+            id: script,
+            action: SignalAction::Alarm
+        }),
+        Ok(DeskOutcome::Changed(1)),
+        "back to an alarm is always allowed"
     );
 }
 

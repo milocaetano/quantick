@@ -48,22 +48,15 @@ impl super::View<Model> for View {
         let Some(env) = env else {
             return;
         };
-        if session.state().popup().is_some_and(|popup| {
-            popup.tab != env.active_tab
-                || session.state().shares_available != env.counted_bar_sides.contains(&popup.side)
-        }) || session.state().alert_failure.as_deref() != env.alert_failure
-        {
-            session.update(Intent::Observe {
-                active_tab: env.active_tab,
-                counted_bar_sides: env.counted_bar_sides.to_vec(),
-                alert_failure: env.alert_failure.map(str::to_owned),
-            });
+        let seen = (env.active_tab, env.counted_bar_sides, env.alert_failure);
+        if let Some(observe) = session.state().observe(seen) {
+            session.update(observe);
         }
         if !session.state().is_open() {
             return;
         }
         if !self.initialized {
-            session.update(Intent::BankSnapshot(presets::snapshot(&self.bank)));
+            session.update(Intent::BankSnapshot(self.bank.rows()));
             self.initialized = true;
         }
         session.with_local_effects(
@@ -71,7 +64,7 @@ impl super::View<Model> for View {
                 let receipt = effects
                     .bank
                     .take()
-                    .map(|effect| presets::apply(&mut self.bank, effect));
+                    .map(|effect| effect.apply(&mut self.bank));
                 (effects, receipt)
             },
             |session| paint_popup(session, target.context()),

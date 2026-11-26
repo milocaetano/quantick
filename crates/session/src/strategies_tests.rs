@@ -66,6 +66,7 @@ pub(crate) fn instance(drawing: DrawingId) -> AnchoredInstance<DrawingId> {
                 rearm: Rearm::OneShot,
                 on_break: BreakPolicy::Ignore,
                 execution: Execution::Paper,
+                bracket: None,
             },
             Box::new(ForceTrigger::new(ForceParams {
                 window: 3,

@@ -74,6 +74,7 @@ mod region;
 pub mod runner;
 #[cfg(test)]
 mod scratch;
+mod signal_action;
 pub mod sound;
 mod trigger;
 
@@ -85,4 +86,5 @@ pub use armed::{
 pub use force::{BarVerdict, ForceBar, ForceParams, ForceWindow};
 pub use placement::{Anywhere, CrossDirection, FixedRange, LineCross, Placement, Reach};
 pub use region::{BodyCut, Region};
+pub use signal_action::{OrderQuantity, PriceBracket, SignalAction, SignalOrder};
 pub use trigger::{ForceTrigger, Signal, Trigger, TriggerContext};
