@@ -846,6 +846,38 @@ run "a quoted line continuation joins the marker name" \
     pr-gate "$(json_cmd "$root/wt" "echo x > \"$wt_git_dir/code-review-\\
 ok\"")" deny "An agent never writes it"
 
+# Second test-agent round: the denylists became allowlists. A gh group gh
+# does not ship is an alias or extension and asks; any program naming the
+# marker writes it unless it is a known reader; ref and merge API writes ship.
+run "a gh alias defined and run in one command asks" \
+    pr-gate "$(json_cmd "$root/wt" "gh alias set mm 'pr merge' && gh mm 42")" ask "cannot tell"
+run "a gh alias imported from a heredoc asks" \
+    pr-gate "$(json_cmd "$root/wt" "gh alias import - <<'EOF'
+mm: pr merge
+EOF
+gh mm 42")" ask "cannot tell"
+run "gh with only its own flags stays silent" \
+    pr-gate "$(json_cmd "$root/wt" 'gh --version')" silent
+for write in \
+    "git diff --output=$wt_git_dir/code-review-ok" \
+    "uniq a.txt $wt_git_dir/code-review-ok" \
+    "ex -sc 'w $wt_git_dir/code-review-ok|q' a.txt"; do
+    run "an unknown program naming the marker writes it: $write" \
+        pr-gate "$(json_cmd "$root/wt" "$write")" deny "An agent never writes it"
+done
+run "a commit message may name the marker" \
+    pr-gate "$(json_cmd "$root/wt" 'git commit -m "record code-review-ok later"')" silent
+run "grep reads the marker" \
+    pr-gate "$(json_cmd "$root/wt" "grep x $wt_git_dir/code-review-ok")" silent
+for api in \
+    'gh api -X PATCH repos/o/r/git/refs/heads/main -f sha=abc' \
+    'gh api repos/o/r/merges -f base=main -f head=x'; do
+    run "gh api cannot move a branch: $api" \
+        pr-gate "$(json_cmd "$root/wt" "$api")" deny "gh api"
+done
+run "gh api reads a ref" \
+    pr-gate "$(json_cmd "$root/wt" 'gh api repos/o/r/git/refs/heads/main')" silent
+
 run "gh pr new is gh pr create" \
     pr-gate "$(json_cmd "$root/wt" 'gh pr new --title x --body y')" deny "code-review-ok"
 

@@ -285,7 +285,7 @@ shell_statements() {
         }
         function is_redirect(w) { return w ~ /^[0-9]*(&?>>?|>[|&]|<&?|<>|&>>?)/ }
         # True when words[k..nw] write the marker.
-        function writes_marker(k, nw,    j, w, u, p, tgt, b, tool, inplace) {
+        function writes_marker(k, nw,    j, w, u, p, tgt, b, text, inplace) {
             for (j = k; j <= nw; j++) {
                 w = words[j]
                 gsub("\"[^\"]*\"|\047[^\047]*\047", "", w)
@@ -295,11 +295,15 @@ shell_statements() {
                 if (tgt == "" && j < nw) tgt = words[j + 1]
                 if (names_marker(tgt)) return 1
             }
+            # Any program naming the marker may write it, unless it is a known
+            # reader. `git` and `gh pr|issue|release|gist` carry messages, so
+            # for them only an option value (`--output=...`, `-o ...`) counts.
             b = base(unquote(words[k]))
-            tool = b ~ /^(tee|cp|mv|install|ln|touch|dd|truncate|rsync|curl|wget|sort|tar|unzip|cpio|python|python3|py|perl|ruby|node|pwsh|powershell|cmd)$/
             for (j = k + 1; j <= nw; j++) if (b == "sed" && words[j] ~ /^(-[a-z]*i|--in-place)/) inplace = 1
-            if (!tool && !inplace) return 0
-            for (j = k + 1; j <= nw; j++) if (names_marker(words[j])) return 1
+            if (!inplace && b ~ /^(cat|head|tail|less|more|ls|stat|wc|grep|egrep|fgrep|rg|test|\[|file|md5sum|sha1sum|sha256sum|rm|diff|cmp|echo|printf|sed)$/) return 0
+            text = b == "git" || (b == "gh" && tolower(unquote(words[k + 1])) ~ /^(pr|issue|release|gist)$/)
+            for (j = k + 1; j <= nw; j++)
+                if (names_marker(words[j]) && (!text || words[j] ~ /^-/ || words[j - 1] ~ /^(-o|--output)$/)) return 1
             return 0
         }
         # The words after words[j] as one script, for an unwrapped wrapper.
@@ -402,6 +406,11 @@ shell_statements() {
             # `xargs gh pr` takes its subcommand from stdin, which no reading
             # of the command can see.
             if (via_xargs && cmd == "gh") print "#unknown"
+            # A gh group gh does not ship is an alias or an extension, either
+            # of which may run `pr merge`; `gh alias` and `gh extension`
+            # define them. None can be read here.
+            if (cmd == "gh" && rest !~ /^gh( --?[a-z]|$)/ && (rest !~ /^gh (auth|browse|codespace|gist|issue|org|pr|project|release|repo|cache|run|workflow|label|secret|variable|ssh-key|gpg-key|api|search|status|config|completion|help|version|ruleset|attestation)( |$)/))
+                print "#unknown"
             print rest
         }
         # Record a heredoc opened at `s[i]` by the statement `owner`; return
@@ -834,6 +843,9 @@ api_ships_pr() {
             if (s ~ /pulls\/[^\/ \t]+\/merge/ && s ~ /(-x|--method)[= ]?["\047]?put/) hit = 1
             if (pull && s ~ /(-f|--field|--raw-field)[= ]?["\047]?draft=/) hit = 1
             if (pull && s ~ /--input/ && s ~ /(-x|--method)[= ]?["\047]?patch/) hit = 1
+            # Moving a branch ref or merging branches server-side ships code
+            # past every PR check: any write to `git/refs` or `merges`.
+            if (s ~ /(git\/refs|\/merges)([\/ \t?]|$)/ && s ~ /(-x|--method)[= ]?(post|put|patch|delete)|(^| )(-f|--field|--raw-field|--input)( |=|$)/) hit = 1
         }
         END { exit !hit }'
 }

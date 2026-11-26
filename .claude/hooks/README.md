@@ -333,20 +333,23 @@ it no longer unbalances anything), unless a shell or `source` named unquoted
 on the same line could read it as a script.
 
 An agent's write of `code-review-ok` is denied: a redirect of any descriptor
-to it, a file-writing tool or interpreter naming it (`tee`, `cp`, `mv`,
-`install`, `ln`, `touch`, `dd`, `truncate`, `rsync`, `curl`, `wget`, `sort`,
-`tar`, `unzip`, `cpio`, `sed -i`, `python`, `perl`, `ruby`, `node`, `pwsh`,
-`cmd`), or an assignment naming it. The name is compared unquoted, without
-braces and case-insensitively (NTFS ignores case), and a glob on the
-`code-review` stem counts. Reading it, `2>/dev/null` included, and removing it
-stay allowed.
+to it, an assignment naming it, or any program naming it that is not a known
+reader (`cat`, `head`, `tail`, `less`, `more`, `ls`, `stat`, `wc`, `grep`,
+`rg`, `test`, `[`, `file`, the `*sum` tools, `rm`, `diff`, `cmp`, `echo`,
+`printf`, `sed` without `-i`). `git` and `gh pr|issue|release|gist` carry
+messages, so for them only an option value (`--output=…`, `-o …`) naming it
+counts. The name is compared unquoted, without braces and case-insensitively
+(NTFS ignores case), and a glob on the `code-review` stem counts.
 
 `gh api` reaches the same endpoints with none of the flags the gate reads, so
 it is denied outright for a PUT to `pulls/<n>/merge`, a `draft=` field or a
-PATCH with `--input` on `pulls/<n>`, and a GraphQL call (`graphql`,
-`/graphql` or a URL) naming the merge, auto-merge, enqueue or ready-for-review
-mutations, quotes removed, or taking its query from `--input`, `query=@file`
-or an expansion. Reads stay ungated.
+PATCH with `--input` on `pulls/<n>`, a write to `git/refs` or `merges`, and a
+GraphQL call (`graphql`, `/graphql` or a URL) naming the merge, auto-merge,
+enqueue or ready-for-review mutations, quotes removed, or taking its query
+from `--input`, `query=@file` or an expansion. Reads stay ungated. A `gh`
+group gh does not ship is an alias or an extension, and `gh alias` /
+`gh extension` define them; either may run `pr merge`, so it is unknown and
+the gate asks.
 
 Recognition is not proof, so the parser does not get the last word. The text
 it did not read as a gated statement, flattened (quotes, escapes, `$`,
