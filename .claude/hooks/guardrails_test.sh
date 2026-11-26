@@ -861,6 +861,13 @@ run "an unrecognised marker write asks" \
     pr-gate "$(json_cmd "$root/wt" 'echo "touch code-review-ok" | xargs -I{} sh -c {}')" ask "cannot tell"
 run "an unrecognised gated call beside a gated statement is refused" \
     pr-gate "$(json_cmd "$root/wt" 'gh pr create --draft --fill; echo "gh pr ready 42"')" deny "Run the gated command alone"
+set_marker code-review-ok "$wt_key"
+run "a PR body read from a heredoc is the PR's text" \
+    pr-gate "$(json_cmd "$root/wt" "gh pr create --draft --body \"\$(cat <<'EOF'
+Then gh pr merge 42; record code-review-ok with tee.
+EOF
+)\"")" silent
+set_marker code-review-ok ""
 run "a git statement's own text is a commit message" \
     pr-gate "$(json_cmd "$root/wt" 'git commit -m "mentions gh pr merge 42 and code-review-ok > x"')" silent
 

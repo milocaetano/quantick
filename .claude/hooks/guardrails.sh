@@ -793,11 +793,12 @@ writes_marker() {
 }
 
 # True when statements `$1`, outside those already judged and outside `git`
-# statements and their heredocs, still spell a gated call or a marker write
+# statements and the heredocs `git` or `gh` reads (a commit message, a PR
+# body; `gh api` heredoc input is judged by `api_ships_pr`), still spell a gated call or a marker write
 # once flattened. See its use in `pr_gate`.
 unknown_gated() {
     printf '%s\n' "$1" |
-        grep -vE '^(git( |$)|#data git |#writes-marker$|gh pr (merge|ready|create)( |$)|gh api( |$))' |
+        grep -vE '^(git( |$)|#data (git|gh) |#writes-marker$|gh pr (merge|ready|create)( |$)|gh api( |$))' |
         tr -d "'\"\\\\\$\`{}," | tr 'A-Z\t' 'a-z ' |
         sed 's/[0-9]*>>* *\/dev\/null//g; s/[0-9]*>&[0-9]//g' |
         grep -qE 'gh +pr +(merge|ready|create|new)|gh +api.*(/merge|graphql|draft)|code-review-ok.*(>|(^| )(tee|cp|mv|install|ln|touch|dd|truncate|rsync|curl|wget|sort|tar|unzip|cpio|python3?|py|perl|ruby|node|pwsh|powershell|cmd|exec)( |$)|sed .*-i)|((>|(^| )(tee|cp|mv|install|ln|touch|dd|truncate|rsync|curl|wget|sort|tar|unzip|cpio|python3?|py|perl|ruby|node|pwsh|powershell|cmd|exec) ).*code-review-ok)'
