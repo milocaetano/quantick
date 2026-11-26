@@ -1,17 +1,6 @@
-//! Every bar builder's per-trade work, counted and held to a budget.
-//!
-//! Chart, backtest and bot all feed trades through
-//! [`BarBuilder::push_into`]; this binary pushes one deterministic burst (the
-//! shape `benches/hot_path.rs` times) through each builder and counts the heap
-//! work of the pushes alone with [`work_meter`]: allocations, bytes allocated
-//! and bytes a reallocation may copy, per trade, after a warm-up. Counts do
-//! not move with the host's load, so the budgets hold in the ordinary
-//! `cargo test`; a push that starts cloning a buffer, or rebuilding one per
-//! trade, crosses them. A slowdown that allocates nothing is invisible here:
-//! that stays with the bench.
-//!
-//! The budgets are declared first, each with the calibration it was set
-//! from, and never read back from a measurement.
+//! Every bar builder's per-trade heap work, counted with [`work_meter`] over one deterministic burst
+//! through [`BarBuilder::push_into`] after a warm-up, and held to declared budgets. Counts do not
+//! move with host load; a slowdown that allocates nothing is the bench's job.
 
 use quantick_engine::work_meter::{self, Counting, Tally};
 use quantick_engine::{
@@ -23,11 +12,8 @@ use rust_decimal::Decimal;
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
 
-// ---------------------------------------------------------------------------
-// Budgets: heap work per trade pushed. Declared at no more than twice the
-// calibration: every builder measured zero, so every budget is zero — a
-// steady-state push allocates nothing, and the first one that does fails.
-// ---------------------------------------------------------------------------
+// Budgets: heap work per trade pushed, at most twice the calibration. Every builder
+// measured zero, so every budget is zero.
 
 /// Per-trade ceilings of one builder's push.
 #[derive(Clone, Copy, Debug)]
@@ -128,8 +114,7 @@ const MEASURED_TRADES: usize = 20_000;
 /// second of this tape.
 const TRADES_PER_READING: usize = 1_000;
 
-/// A deterministic burst of `n` trades around a 36000 base price: the
-/// generator of `benches/hot_path.rs` (a bench cannot be imported).
+/// A deterministic burst of `n` trades around 36000: the generator of `benches/hot_path.rs`.
 fn make_trades(n: usize) -> Vec<Trade> {
     let base = Decimal::from(36_000);
     let mut trades = Vec::with_capacity(n);
@@ -169,8 +154,7 @@ fn holds_to_budget(budget: Budget, mut builder: Box<dyn BarBuilder>) {
     let mut closed: Vec<Bar> = Vec::with_capacity(4);
     let mut bars = 0_usize;
     let mut work = Tally::default();
-    // The first counted push that did any heap work, and what it did, so a
-    // red run names the trade.
+    // The first counted push that did heap work, so a red run names the trade.
     let mut first_moved: Option<(usize, Tally)> = None;
     for (index, trade) in trades.iter().enumerate() {
         if index % TRADES_PER_READING == 0

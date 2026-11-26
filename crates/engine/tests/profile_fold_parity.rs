@@ -1,22 +1,6 @@
-//! A candle folded as a *range* must equal the same candle folded as rows.
-//!
-//! [`ProfileFold`] exists because materialising one approximated ladder per
-//! venue candle costs more than a chart has to spend: read as an
-//! `ApproxSpread`, a candle is three map
-//! touches instead of up to two thousand rows. Speed bought with a different
-//! answer is not speed, so this file pins the two readings together — same
-//! grouping, same rows, same POC and value area — over the cases that make
-//! them diverge if anything is wrong.
-//!
-//! The oracle is deliberately the *other* implementation:
-//! `BarFootprint::approximated` writes the spread out row by row, and
-//! [`VolumeProfile::merge`] folds those rows. (The merge itself is written on
-//! top of `ProfileFold`, so it is the spread — not the accumulator — that
-//! these tests hold to account. The accumulator's own contract is proved by
-//! the engine's unit tests, which the merge runs through unchanged.)
-//!
-//! Every fixture is deterministic and written out here rather than generated
-//! at random: a parity failure must be reproducible from the file alone.
+//! A candle folded as a range must equal the same candle folded as rows.
+//! Oracle: `BarFootprint::approximated` writes the spread row by row and [`VolumeProfile::merge`]
+//! folds it, against [`ProfileFold`]. Fixtures are deterministic, written out here, not random.
 
 use std::str::FromStr as _;
 
@@ -59,9 +43,7 @@ fn ladder(group: Decimal, prints: &[(&str, &str, Side)]) -> BarFootprint {
     builder.close().expect("the prints built a ladder")
 }
 
-/// Assert the two folds returned the same profile — not "close enough": the
-/// same grouping, the same honesty flag, the same rows in the same order, and
-/// the same reads on top of them.
+/// Assert the two folds returned the same profile: grouping, honesty flag, rows in order and reads.
 #[track_caller]
 fn assert_same(label: &str, merged: Option<&VolumeProfile>, folded: Option<&VolumeProfile>) {
     match (merged, folded) {
@@ -151,8 +133,7 @@ fn overlapping_candles_sum_the_way_the_merge_sums_them() {
 
 #[test]
 fn candles_that_share_no_price_leave_the_gap_unprinted() {
-    // Two clusters far apart: the rows between them were never traded and
-    // must not appear — the fold prints coverage, not the span it crosses.
+    // Two far clusters: rows between them were never traded and must not appear.
     let candles = [
         candle(0, "100", "102", "101", "1", "1", 5),
         candle(1, "980", "984", "982", "2", "3", 9),
@@ -212,9 +193,8 @@ fn a_sub_unit_grouping_matches_too() {
 
 #[test]
 fn a_range_too_wide_for_the_cap_coarsens_after_the_fold() {
-    // Each candle fits the cap on its own; together they span far more rows
-    // than the cap allows, so the *profile* coarsens. Both folds must land on
-    // the same grouping — the one that fits, not one doubling more or less.
+    // Each candle fits the cap alone but together exceed it, so both folds must coarsen to the
+    // same grouping, not one doubling more or less.
     let candles: Vec<Bar> = (0..40)
         .map(|i| {
             let low = 1000 + i * 100;
@@ -251,11 +231,8 @@ fn an_empty_fold_has_no_profile_either_way() {
     );
 }
 
-/// A ladder on a foreign grouping never aligned with the fold's buckets, so
-/// it is refused — and the refusal is *reported*, not remembered. The merge
-/// has no honest answer over a set that disagrees and says `None`; a fold
-/// keeps the bars that do align, because the caller who can say "profile from
-/// N of M bars" is better served by N than by nothing.
+/// A ladder on a foreign grouping is refused, and the refusal is reported. The merge answers
+/// `None` over a disagreeing set; a fold keeps the bars that align.
 #[test]
 fn a_ladder_on_a_foreign_grouping_is_refused_and_adds_nothing() {
     let foreign = ladder(dec("2"), &[("100", "1", Side::Buy)]);
@@ -279,8 +256,7 @@ fn a_ladder_on_a_foreign_grouping_is_refused_and_adds_nothing() {
 
 #[test]
 fn the_batch_boundary_is_not_a_seam() {
-    // More candles than one pending batch holds, so the fold collapses
-    // mid-range. Where it collapsed must not be visible in the result.
+    // More candles than one pending batch holds: where the fold collapsed must not show.
     let candles: Vec<Bar> = (0..(ProfileFold::SPREAD_BATCH as i64 * 2 + 7))
         .map(|i| {
             let low = 500 + (i % 37);
@@ -300,8 +276,7 @@ fn the_batch_boundary_is_not_a_seam() {
 
 #[test]
 fn interleaving_candles_and_ladders_changes_nothing() {
-    // The merge sums; sums do not care about arrival order, and neither may
-    // the fold — a chart folds a range in whatever order it walks the slots.
+    // The merge sums, so arrival order must not matter to the fold either.
     let candles = [
         candle(0, "100", "108", "104", "1.5", "2.5", 20),
         candle(1, "102", "112", "110", "0.25", "0.75", 8),
@@ -332,9 +307,7 @@ fn interleaving_candles_and_ladders_changes_nothing() {
     );
 }
 
-/// A partial read is a *prefix* of the fold, not a preview of the end: what it
-/// shows is exactly the profile of the bars folded so far. That is what makes
-/// painting one honest.
+/// A partial read is a prefix of the fold: exactly the profile of the bars folded so far.
 #[test]
 fn a_partial_read_is_the_profile_of_what_was_folded_so_far() {
     let candles = [
@@ -357,11 +330,8 @@ fn a_partial_read_is_the_profile_of_what_was_folded_so_far() {
     }
 }
 
-/// The bound that keeps the app on its feet: a fold of a long venue history
-/// holds rows for the *profile*, never rows per bar. Twenty-five thousand
-/// candles at a chart grouping used to materialise tens of millions of ladder
-/// entries before the first pixel; here the whole fold stays under one capped
-/// ladder plus one pending batch, whatever the range's length.
+/// A fold of a long venue history holds rows for the profile, never rows per bar: it stays
+/// under one capped ladder plus one pending batch, whatever the range's length.
 #[test]
 fn a_long_range_never_holds_more_than_a_capped_ladder_and_a_batch() {
     let bound = DEFAULT_LEVEL_CAP + ProfileFold::SPREAD_BATCH;

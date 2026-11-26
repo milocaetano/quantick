@@ -1,8 +1,6 @@
-//! A typed number read as every registered bar at that size — ProfitChart's
-//! quick period switch. The registry, not a fixed list, decides what is offered.
-//! A letter after the number narrows the list to the kinds declaring it (`2000t`
-//! lists ticks, then trades); a unit after it (`5m`, `1w`, `1mo`) to the time bars
-//! in that unit. A letter that is both (`1d`) lists the time bar first.
+//! A typed number read as every registered bar at that size (ProfitChart's quick period switch).
+//! A letter after it narrows to kinds declaring it (`2000t`); a unit (`5m`, `1w`, `1mo`) to time
+//! bars in that unit; a letter that is both (`1d`) lists the time bar first.
 use super::{BarConfiguration, BarDefinition, BarRegistry, NumberKind, interval_unit_ms};
 use rust_decimal::Decimal;
 
@@ -38,14 +36,9 @@ const DURATION_NOUNS: [(&str, &str); 6] = [
 /// other suffix is a single letter, so `m` stays minutes.
 const MONTH_SUFFIX: &str = "mo";
 
-/// What the switch keeps of typed text: its digits, at most nine, then the
-/// last letter typed — a second letter replaces the first rather than
-/// spelling a word no kind declares. The one exception is `mo`, kept whole
-/// when it ends the text, so typing `1m` then `o` reads as a month.
-///
-/// This is the switch's only length limit. A field capping its own length
-/// would refuse the letter typed after a full query, which has to reach this
-/// to replace the letter there.
+/// What the switch keeps of typed text: up to nine digits, then the last letter typed (a second
+/// letter replaces the first), except `mo` kept whole when it ends the text. This is the only
+/// length limit; a field capping itself would refuse the letter that must replace it.
 #[must_use]
 pub fn quick_query_text(typed: &str) -> String {
     let mut query: String = typed
@@ -81,14 +74,9 @@ impl BarRegistry {
             .collect()
     }
 
-    /// Every configuration typed text can mean: the number alone reads as
-    /// every kind ([`Self::quick_candidates`]); a letter after it, in either
-    /// case, keeps the kinds whose [`QuickAlias`] declares that letter, and a
-    /// duration unit (`s`, `m`, `h`, `d`, `w`, `mo`) keeps the duration kinds
-    /// read in that unit — `1d`, `1w` and `1mo` are the daily, weekly and
-    /// monthly time bars. Duration readings come first, so `1d` offers the
-    /// daily bar before one dollar. Anything else — no number, two letters —
-    /// means nothing.
+    /// Every configuration typed text can mean: the number alone reads as every kind
+    /// ([`Self::quick_candidates`]); a letter keeps kinds declaring it, a duration unit keeps
+    /// duration kinds read in that unit, listed first. No number or two letters means nothing.
     #[must_use]
     pub fn quick_matches(&self, query: &str) -> Vec<BarConfiguration> {
         let digits = query.trim_end_matches(|c: char| c.is_ascii_alphabetic());
@@ -123,10 +111,8 @@ impl BarRegistry {
 }
 
 impl BarConfiguration {
-    /// The row the quick switch lists this configuration as: the number, the
-    /// noun of its unit or kind, and its choice where it has one (`15 Minutes`,
-    /// `1 Tick`, `20 Imbalance (Volume)`). A rule with no noun to read — a kind
-    /// without an alias, an interval in no named unit — shows its summary.
+    /// The row the quick switch lists this configuration as (`15 Minutes`, `1 Tick`,
+    /// `20 Imbalance (Volume)`); a rule with no noun to read shows its summary.
     #[must_use]
     pub fn quick_label(self) -> String {
         let definition = self.definition();

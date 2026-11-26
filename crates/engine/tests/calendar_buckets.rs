@@ -1,9 +1,6 @@
 //! Day, week and calendar-month time bars: the one bucket law in UTC.
-//!
-//! Days start at 00:00 UTC, weeks on Monday 00:00 UTC, and a month is the
-//! calendar month — never a fixed number of milliseconds. The live builder and
-//! the venue-candle fold both read [`time_bucket_start`], so these goldens pin
-//! the law for both.
+//! Days start 00:00 UTC, weeks Monday 00:00 UTC, months on the calendar. The live builder and the
+//! candle fold both read [`time_bucket_start`], so these goldens pin both.
 
 use quantick_engine::time_bucket::{
     CALENDAR_MONTH_MS, DAY_MS, MAX_CALENDAR_MONTHS, WEEK_MS, calendar_months, time_bucket_end,
@@ -25,8 +22,7 @@ const DAY_EXPECTED: &str = include_str!("fixtures/calendar_day_expected.csv");
 /// 2024-01-01T00:00:00Z, a Monday.
 const JAN_2024: i64 = 1_704_067_200_000;
 
-/// The epoch millisecond of 00:00 UTC on `year-month-01`, counted the slow way
-/// so the law under test is not also the oracle.
+/// The epoch millisecond of 00:00 UTC on `year-month-01`, counted the slow way (not the oracle).
 fn month_start(year: i64, month: i64) -> i64 {
     let leap = |y: i64| (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
     let days_in = |y: i64, m: i64| match m {
@@ -155,8 +151,7 @@ fn several_months_group_from_january() {
 
 #[test]
 fn weeks_start_on_monday_utc() {
-    // 2024-01-01 is a Monday: the whole week up to Sunday's last millisecond
-    // shares its bucket, and the next Monday opens a new one.
+    // 2024-01-01 is a Monday: the week to Sunday's last millisecond shares a bucket.
     for offset in [0, DAY_MS, 6 * DAY_MS, WEEK_MS - 1] {
         assert_eq!(time_bucket_start(JAN_2024 + offset, WEEK_MS), JAN_2024);
     }
@@ -182,7 +177,7 @@ fn days_start_at_midnight_utc() {
     assert_eq!(time_bucket_start(leap_day + DAY_MS - 1, DAY_MS), leap_day);
     assert_eq!(time_bucket_start(leap_day, DAY_MS), leap_day);
     assert_eq!(time_bucket_end(leap_day, DAY_MS), leap_day + DAY_MS);
-    // Several days stay epoch-aligned, as every fixed interval always has.
+    // Several days stay epoch-aligned.
     assert_eq!(time_bucket_start(3 * DAY_MS + 5, 2 * DAY_MS), 2 * DAY_MS);
 }
 
@@ -202,7 +197,7 @@ fn timestamps_before_the_epoch_floor_into_the_bucket_below() {
     assert_eq!(time_bucket_end(month_start(1969, 12), CALENDAR_MONTH_MS), 0);
 }
 
-/// Sub-day intervals keep the epoch-aligned floor they always had.
+/// Sub-day intervals keep the epoch-aligned floor.
 #[test]
 fn intraday_intervals_are_unchanged() {
     assert_eq!(time_bucket_start(1_999, 1_000), 1_000);
@@ -259,8 +254,7 @@ fn day_week_and_month_intervals_parse_and_round_trip() {
         assert_eq!(fmt_time_interval(ms), text);
         assert_eq!(BarSpec::Time(ms).to_config_string(), format!("time:{text}"));
     }
-    // Older spellings of the same values still read, and write back in the
-    // largest unit that holds them exactly.
+    // Older spellings still read, and write back in the largest unit that holds them exactly.
     assert_eq!(BarSpec::parse("time:24h"), Ok(BarSpec::Time(DAY_MS)));
     assert_eq!(BarSpec::parse("time:7d"), Ok(BarSpec::Time(WEEK_MS)));
     assert_eq!(BarSpec::parse("time:86400000"), Ok(BarSpec::Time(DAY_MS)));

@@ -1,7 +1,5 @@
 //! Immutable bar definitions resolved once, before a builder sees any trades.
-//!
-//! Consumers render parameter descriptors, hold configurations and call `build`.
-//! Neither the registry nor a legacy enum participates in per-trade dispatch.
+//! Consumers hold configurations and call `build`; per-trade dispatch never touches the registry.
 pub mod definitions;
 mod parameters;
 mod quick_switch;
@@ -26,12 +24,9 @@ pub struct BarDefinition {
     pub fixed_time_interval: bool,
     /// The quick switch's own name for this kind, if it has one.
     pub quick_alias: Option<QuickAlias>,
-    /// Where a bar closes depends on the price path since the series began —
-    /// a Renko brick on the levels every brick before it set — so older
-    /// history can re-cut the first bars into a different number of them,
-    /// and an index moved by the net count added no longer names the same
-    /// market time. Consumers re-place what they anchored to a bar by its
-    /// market time instead; for every other rule they shift it by that count.
+    /// Where a bar closes depends on the price path since the series began (a Renko brick), so older
+    /// history can re-cut the first bars and a net-count shift no longer names the same market time.
+    /// Consumers re-place anchors by market time; for every other rule they shift by the count.
     pub path_dependent: bool,
     pub factory: fn(Decimal, Option<&str>) -> Box<dyn BarBuilder>,
 }

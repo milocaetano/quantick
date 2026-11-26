@@ -1,14 +1,6 @@
 //! Hot-path benchmark: how fast can each builder ingest trades?
-//!
-//! Tick charts update at high frequency, so the engine must keep up with live
-//! trade bursts. This benchmark pushes a large, deterministic synthetic burst
-//! through every builder and reports per-trade throughput. It is intentionally
-//! dependency-free (no criterion) to keep the engine's dep tree small and CI
-//! compile fast; run it with `cargo bench -p quantick-engine`.
-//!
-//! The workload is fully deterministic (derived from the trade index, no rng or
-//! wall clock affects its *shape*), so throughput is comparable across commits.
-//! A meaningful drop between runs is a regression to investigate as a bug.
+//! Pushes a deterministic synthetic burst through every builder and reports per-trade throughput.
+//! Dependency-free (no criterion); run with `cargo bench -p quantick-engine`. A drop is a regression.
 
 use std::hint::black_box;
 use std::time::Instant;
@@ -19,10 +11,7 @@ use quantick_engine::{
 };
 use rust_decimal::Decimal;
 
-/// Build a deterministic burst of `n` trades around a 36000 base price.
-///
-/// Generation happens outside the timed region, so only the push loop — the
-/// real hot path — is measured.
+/// Build a deterministic burst of `n` trades around a 36000 base price (untimed).
 fn make_trades(n: usize) -> Vec<Trade> {
     let base = Decimal::from(36_000);
     let mut trades = Vec::with_capacity(n);
