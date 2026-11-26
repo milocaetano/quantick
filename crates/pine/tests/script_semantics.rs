@@ -210,7 +210,9 @@ fn nested_loops_share_one_budget_per_bar() {
     // iterations, which a per-loop budget would let through.
     let source = "//@version=5\nindicator(\"t\")\nn = 0\nfor i = 1 to 200\n    for j = 1 to 100\n        n := n + 1\nplot(n)\n";
     let mut h = Harness::load(source);
-    let error = h.close(&bar(0, 1.0)).expect_err("must hit the shared budget");
+    let error = h
+        .close(&bar(0, 1.0))
+        .expect_err("must hit the shared budget");
     assert!(
         error.message.contains("PINE_LOOP_BUDGET"),
         "{}",
