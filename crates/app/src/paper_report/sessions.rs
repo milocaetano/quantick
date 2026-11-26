@@ -102,17 +102,14 @@ impl Paint<'_, '_> {
             &button,
             egui::PopupCloseBehavior::CloseOnClickOutside,
             |ui| {
-                let selection = calendar.selection;
-                let picked = |day| selection.contains(day);
-                let fallback = today(tz);
                 if let Some(day) = draw_month(
                     ui,
                     days,
                     &mut calendar.month,
-                    &picked,
+                    &|day| calendar.selection.contains(day),
                     DayFace::Trades,
                     PICKER_CELL_PX,
-                    fallback,
+                    today(tz),
                 ) {
                     calendar.selection = calendar.selection.click(day);
                 }

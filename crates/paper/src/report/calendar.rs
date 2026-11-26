@@ -38,6 +38,30 @@ pub struct DayStat {
     pub net: Decimal,
 }
 
+/// What a day cell says under its number, and how a picked day is filled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DayFace {
+    /// The ledger's Dates picker: the day's trade count, picked days tinted.
+    Trades,
+    /// The report's popover: the day's compact net, picked days filled solid.
+    Net,
+}
+
+impl DayFace {
+    /// The figure printed under the day number.
+    pub fn figure(self, stat: &DayStat) -> String {
+        match self {
+            Self::Trades => stat.trades.to_string(),
+            Self::Net => crate::format::fmt_compact_signed_points(stat.net),
+        }
+    }
+
+    /// Whether a picked day is filled solid rather than tinted.
+    pub fn fills_pick(self) -> bool {
+        self == Self::Net
+    }
+}
+
 /// Which civil days hold trades, and what each one did. Built once per
 /// history load and per timezone — never per frame: a calendar repainting
 /// at 60 fps must not walk months of history to decide a cell's colour.
@@ -801,5 +825,18 @@ mod tests {
         ] {
             assert_eq!(parse_days(refused), None, "{refused:?} must be refused");
         }
+    }
+
+    #[test]
+    fn the_ledger_face_counts_trades_and_the_report_face_fills_a_compact_net() {
+        let stat = DayStat {
+            trades: 3,
+            wins: 2,
+            net: Decimal::new(123_456, 1),
+        };
+        assert_eq!(DayFace::Trades.figure(&stat), "3");
+        assert_eq!(DayFace::Net.figure(&stat), "+12k");
+        assert!(!DayFace::Trades.fills_pick());
+        assert!(DayFace::Net.fills_pick());
     }
 }

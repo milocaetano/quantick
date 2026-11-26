@@ -327,13 +327,12 @@ impl Paint<'_, '_> {
                             }
                         }
                     });
-                    let picked = self.picked_days().clone();
                     let mut month = self.calendar().month;
                     let day = draw_month(
                         ui,
                         self.report_days(),
                         &mut month,
-                        &|day| picked.contains(day),
+                        &|day| self.picked_days().contains(day),
                         DayFace::Net,
                         egui::vec2(CALENDAR_CELL_W_PX, CALENDAR_CELL_H_PX),
                         today,

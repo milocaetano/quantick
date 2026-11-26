@@ -21,7 +21,6 @@ use egui_phosphor::regular as icons;
 use crate::paper_chrome::{fmt_signed_points, points_color};
 use crate::theme;
 use crate::timezone::TzOffset;
-use quantick_paper::format::fmt_compact_signed_points;
 
 // Re-export the shared civil-date types and formatting for app consumers.
 // Selection parsing lives with the calendar policy in `quantick-paper`.
@@ -44,16 +43,7 @@ pub(crate) fn today(tz: TzOffset) -> CivilDate {
     CivilDate::from_ms(now_ms, tz)
 }
 
-pub(crate) use quantick_paper::report::calendar::{DayIndex, month_name};
-
-/// What a day cell says under its number, and how a picked day is filled.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DayFace {
-    /// The ledger's Dates picker: the day's trade count, picked days tinted.
-    Trades,
-    /// The report's popover: the day's net, picked days filled solid.
-    Net,
-}
+pub(crate) use quantick_paper::report::calendar::{DayFace, DayIndex, month_name};
 
 /// Paint the month and return the clicked civil day. `month` is the month
 /// on screen, paged here; `picked` says which days to fill.
@@ -172,48 +162,33 @@ fn draw_day_cell(
     let in_month = date.same_month(month_anchor);
     let stat = index.stat(date);
     let body = rect.shrink(1.0);
-    let solid = picked && face == DayFace::Net;
-
-    if picked {
-        let fill = if solid {
-            palette.accent()
-        } else {
-            theme::active_tint(palette.accent())
-        };
-        ui.painter()
-            .rect_filled(body, egui::Rounding::same(3.0), fill);
+    let solid = picked && face.fills_pick();
+    let accent = palette.accent();
+    let (fill, edge) = if solid {
+        (Some(accent), Some(accent))
+    } else if picked {
+        (Some(theme::active_tint(accent)), Some(accent))
     } else if let Some(stat) = stat {
         // Tinted by the day's outcome: a month's shape is readable before
         // a single number is. A day that netted exactly zero is neither —
         // the same verdict `points_color` gives it everywhere else, and
         // painting a scratch green would be the optimistic lie.
-        ui.painter().rect_filled(
-            body,
-            egui::Rounding::same(3.0),
-            day_tint(&palette, stat.net),
-        );
-    } else if response.hovered() {
-        ui.painter()
-            .rect_filled(body, egui::Rounding::same(3.0), palette.control());
+        (Some(day_tint(&palette, stat.net)), Some(palette.border()))
+    } else {
+        (response.hovered().then(|| palette.control()), None)
+    };
+    let rounding = egui::Rounding::same(3.0);
+    if let Some(fill) = fill {
+        ui.painter().rect_filled(body, rounding, fill);
     }
-    if picked || stat.is_some() {
-        ui.painter().rect_stroke(
-            body,
-            egui::Rounding::same(3.0),
-            egui::Stroke::new(
-                1.0_f32,
-                if picked {
-                    palette.accent()
-                } else {
-                    palette.border()
-                },
-            ),
-        );
+    if let Some(edge) = edge {
+        ui.painter()
+            .rect_stroke(body, rounding, egui::Stroke::new(1.0_f32, edge));
     }
 
     let (_, _, day) = date.ymd();
     let ink = if solid {
-        palette.ink_on(palette.accent())
+        palette.ink_on(accent)
     } else if picked || (in_month && stat.is_some()) {
         palette.text_primary()
     } else if in_month {
@@ -232,16 +207,10 @@ fn draw_day_cell(
         ink,
     );
     if let Some(stat) = stat {
-        let (text, color) = match face {
-            DayFace::Trades => (format!("{}", stat.trades), palette.text_faint()),
-            DayFace::Net if solid => (
-                fmt_compact_signed_points(stat.net),
-                palette.ink_on(palette.accent()),
-            ),
-            DayFace::Net => (
-                fmt_compact_signed_points(stat.net),
-                points_color(&palette, stat.net),
-            ),
+        let color = match face {
+            _ if solid => ink,
+            DayFace::Trades => palette.text_faint(),
+            DayFace::Net => points_color(&palette, stat.net),
         };
         // Clipped to the cell: a wide figure never prints into its neighbour.
         ui.painter().with_clip_rect(body).text(
@@ -250,7 +219,7 @@ fn draw_day_cell(
                 body.bottom() - palette.layout(DAY_COUNT_BASELINE_PX),
             ),
             egui::Align2::CENTER_CENTER,
-            text,
+            face.figure(&stat),
             palette.mono_font(8.0),
             color,
         );
