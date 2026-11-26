@@ -170,6 +170,18 @@ pub struct FeedConfig {
     /// optional. Absent, those defaults.
     #[serde(default)]
     pub sync: quantick_sources::sync::SyncLimits,
+    /// Seconds a websocket venue's trade stream may deliver no frame at all
+    /// before it is dropped and reconnected: `idle_timeout_secs = 30`.
+    /// Absent, [`DEFAULT_IDLE_TIMEOUT_SECS`].
+    /// Read once at launch; MetaTrader feeds ignore it.
+    #[serde(default = "default_idle_timeout_secs")]
+    pub idle_timeout_secs: u64,
+}
+
+pub use quantick_sources::reconnect::DEFAULT_IDLE_TIMEOUT_SECS;
+
+fn default_idle_timeout_secs() -> u64 {
+    DEFAULT_IDLE_TIMEOUT_SECS
 }
 
 /// The most characters a venue code made of a name's initials takes.
@@ -224,6 +236,12 @@ fn declared<'a, V>(table: &'a BTreeMap<String, V>, symbol: &str) -> Option<(&'a 
 }
 
 impl FeedConfig {
+    /// [`Self::idle_timeout_secs`] as a duration.
+    #[must_use]
+    pub fn idle_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.idle_timeout_secs)
+    }
+
     /// The asset `symbol` belongs to on this feed: its [mode](AssetMode)'s
     /// when the config switches one on, else the exact key naming it, else
     /// the longest family pattern matching it, else the symbol alone on the
@@ -839,6 +857,12 @@ impl AppConfig {
             feed.validate_costs()?;
             feed.validate_icons()?;
             feed.sync.validate(&feed.id)?;
+            if feed.idle_timeout_secs == 0 {
+                return Err(format!(
+                    "feed '{}' sets idle_timeout_secs to 0 - a stream would reconnect                      before its first frame",
+                    feed.id
+                ));
+            }
             for (symbol, preset) in &feed.symbol_bubble_presets {
                 if !feed
                     .symbols

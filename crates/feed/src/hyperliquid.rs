@@ -16,10 +16,11 @@ use tracing::{info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_hyperliquid::{
-    Backoff, CANDLE_INTERVAL_1D, HYPERLIQUID_WS_URL, TradeMapper,
+    CANDLE_INTERVAL_1D, HYPERLIQUID_WS_URL, TradeMapper,
     depth::{DepthEvent, HYPERLIQUID_LEVELS_PER_SIDE, run_depth_with_reconnect},
     fetch_candle_history, run_trades_with_reconnect,
 };
+use quantick_sources::reconnect::Backoff;
 
 use super::{FeedCommand, FeedEvent, FeedHandle, FeedNotice, connection_notice};
 use crate::config::ProviderKind;
@@ -92,6 +93,7 @@ async fn feed_task(
             &connected_tx,
             mapper,
             trade_backoff,
+            crate::idle_timeout::idle_timeout(ProviderKind::Hyperliquid),
         )
         .await;
     });

@@ -2,10 +2,9 @@
 
 use std::time::Duration;
 
+use quantick_sources::reconnect::Backoff;
 use tokio::sync::mpsc::Sender;
 use tracing::{info, warn};
-
-use crate::reconnect::Backoff;
 
 use super::snapshot::DepthSnapshotSource;
 use super::stream::{

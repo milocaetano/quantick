@@ -27,6 +27,7 @@ async fn all_seeded_markets_stream_trades_and_l2() {
                 &trade_tx,
                 &connected_tx,
                 &mut mapper,
+                quantick_sources::reconnect::DEFAULT_IDLE_TIMEOUT,
             )
             .await
         });

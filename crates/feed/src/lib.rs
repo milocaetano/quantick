@@ -37,6 +37,7 @@ pub use quantick_sources::history_reach;
 pub use quantick_sources::history_run;
 pub mod hooks;
 pub mod hyperliquid;
+mod idle_timeout;
 pub mod link;
 pub mod log_sink;
 pub mod metatrader;
@@ -51,6 +52,8 @@ mod scratch;
 pub mod stall;
 pub mod sync;
 mod venue_loop;
+
+pub use idle_timeout::configure_idle_timeouts;
 
 use std::path::PathBuf;
 

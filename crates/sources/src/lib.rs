@@ -4,7 +4,8 @@
 //! backend streams a feed, what it can report, how the MetaTrader listener is
 //! addressed. [`history_reach`] is how far one press of *load older* reaches,
 //! as a campaign told what the chart holds. [`recovery`] names the two ways
-//! an operator revives a stalled feed, and [`sync`] why new entries pause
+//! an operator revives a stalled feed, [`reconnect`] when a venue websocket
+//! retries, and [`sync`] why new entries pause
 //! while the chart is out of sync with it. [`ohlcv`], [`candles`] and
 //! [`candle_base`] are the venue-candle vocabulary: the bases a chart folds
 //! from, the folds themselves, and which base a chart is after. All are headless — no runtime,
@@ -21,6 +22,7 @@ pub mod history_reach;
 pub mod history_run;
 pub mod ohlcv;
 pub mod perpetual;
+pub mod reconnect;
 pub mod recovery;
 pub mod sync;
 pub mod timing;

@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use futures_util::SinkExt as _;
 use quantick_engine::Side;
-use quantick_feed_binance::{Backoff, BinanceHttp, BinanceMarket};
+use quantick_feed_binance::{BinanceHttp, BinanceMarket};
+use quantick_sources::reconnect::{Backoff, DEFAULT_IDLE_TIMEOUT};
 use rust_decimal::Decimal;
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
@@ -82,6 +83,7 @@ async fn backfill_seeded_spot_and_perpetual_reconnects_keep_unique_quantity_and_
                 http: BinanceHttp::with_market_base(market, rest_url),
                 url,
                 backoff: Backoff::new(Duration::from_millis(1), Duration::from_millis(1), 7),
+                idle_timeout: DEFAULT_IDLE_TIMEOUT,
             },
         ));
         let (prints, integrity) = tokio::time::timeout(Duration::from_secs(5), async {

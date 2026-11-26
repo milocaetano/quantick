@@ -63,11 +63,12 @@ async fn binance_automatic_reconnect_reports_loss_on_the_host_channel() {
         crate::binance::BinanceSource {
             http: quantick_feed_binance::BinanceHttp::with_base_url(rest_url),
             url,
-            backoff: quantick_feed_binance::Backoff::new(
+            backoff: quantick_sources::reconnect::Backoff::new(
                 Duration::from_millis(1),
                 Duration::from_millis(1),
                 7,
             ),
+            idle_timeout: quantick_sources::reconnect::DEFAULT_IDLE_TIMEOUT,
         },
     ));
     // Bound the whole production host run, including its initial REST boundary.

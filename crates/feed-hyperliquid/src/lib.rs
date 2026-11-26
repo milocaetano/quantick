@@ -23,7 +23,6 @@
 
 pub mod candles;
 pub mod depth;
-pub mod reconnect;
 pub mod stream;
 pub mod wire;
 
@@ -31,7 +30,6 @@ pub use candles::{
     CANDLE_INTERVAL_1D, CANDLE_INTERVAL_1M, Candle, CandleError, CandleHistory, ONE_MINUTE_MS,
     candle_interval_for, fetch_history as fetch_candle_history,
 };
-pub use reconnect::Backoff;
 pub use stream::{
     HYPERLIQUID_WS_URL, TradeSessionError, run_trade_session, run_trades_with_reconnect,
 };

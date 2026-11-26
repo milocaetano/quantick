@@ -28,5 +28,5 @@ pub use klines::{
     ONE_MINUTE_MS, fetch_history, kline_interval_for,
 };
 pub use market::BinanceMarket;
-pub use reconnect::{Backoff, run_with_reconnect};
+pub use reconnect::run_with_reconnect;
 pub use stream::{BINANCE_WS_BASE, agg_trade_url, run_agg_trade_stream};

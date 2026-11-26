@@ -138,6 +138,11 @@ key_env = "OPENAI_API_KEY"
 #                   arrived; max_connecting_ms is how long a connect or
 #                   reconnect may run first. An offline link always pauses;
 #                   a replay never does.
+#   idle_timeout_secs — optional, websocket venues: seconds the trade stream may
+#                   deliver no frame at all (not even a pong) before it is
+#                   dropped and reconnected with the usual backoff; default 30,
+#                   read once at launch. Feeds on one provider share the
+#                   shortest value any of them sets.
 [[feeds]]
 id = "binance"
 name = "Binance"
