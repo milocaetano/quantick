@@ -665,13 +665,13 @@ fn the_plan_plate_stays_on_the_pane() {
     let plan = scene
         .shapes
         .iter()
-        .filter_map(|shape| match shape {
+        .rev()
+        .find_map(|shape| match shape {
             crate::MarkShape::Rect {
                 rect, rounding_px, ..
             } if *rounding_px > 0.0 => Some(*rect),
             _ => None,
         })
-        .last()
         .unwrap();
     assert!(plan.right <= 150.0 && plan.left >= 0.0, "{plan:?}");
 }
