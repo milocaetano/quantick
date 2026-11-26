@@ -1,6 +1,6 @@
 [package]
 name = "quantick-script-trigger"
-description = "Pine alertconditions as a strategy trigger: a script armed alarm-only on any placement"
+description = "Pine alertconditions as a strategy trigger: a script armed on any placement, ringing or placing paper orders"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,7 +12,9 @@ quantick-engine = { path = "../engine" }
 quantick-indicators = { path = "../indicators" }
 # The compiler, the alert titles it reads and the runtime fault it keeps.
 quantick-pine = { path = "../pine" }
-# The trigger port, the placements and the alarm-only state machine.
+# The cleanup an order-placing instance owes the account.
+quantick-sim = { path = "../sim" }
+# The trigger port, the placements and the armed state machine.
 quantick-strategy = { path = "../strategy" }
 rust_decimal = { workspace = true }
 

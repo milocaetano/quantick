@@ -1,0 +1,78 @@
+{
+  "$defs": {
+    "FireAction": {
+      "description": "What a firing does.",
+      "oneOf": [
+        {
+          "enum": [
+            "alarm"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "order",
+          "description": "A paper market order.",
+          "type": "string"
+        }
+      ]
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What one armed script does when it fires, from its next close.",
+  "properties": {
+    "action": {
+      "$ref": "#/$defs/FireAction"
+    },
+    "gain": {
+      "default": null,
+      "description": "An order's target distance from the entry, in price; absent or `0`\nplaces none, never below zero. Refused for an alarm.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The id `strategy.script.arm` answered."
+    },
+    "quantity": {
+      "default": null,
+      "description": "An order's size above zero, in the instrument's units (contracts on\na future), or `ticket` for the ticket's quantity when the bar closes. Required for an order, refused\nfor an alarm.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "stop": {
+      "default": null,
+      "description": "An order's stop distance from the entry, in price; absent or `0`\nplaces none, never below zero. Refused for an alarm.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The tab; absent for the one on screen."
+    }
+  },
+  "required": [
+    "id",
+    "action"
+  ],
+  "title": "ActionSetInput",
+  "type": "object"
+}

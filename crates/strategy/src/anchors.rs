@@ -484,6 +484,7 @@ mod tests {
                     rearm: Rearm::OneShot,
                     on_break: crate::BreakPolicy::Ignore,
                     execution: Execution::Paper,
+                    bracket: None,
                 },
                 Box::new(ForceTrigger::new(ForceParams::default_band())),
             ),
@@ -709,6 +710,7 @@ mod tests {
                 rearm: Rearm::Auto,
                 on_break: crate::BreakPolicy::Ignore,
                 execution: Execution::Paper,
+                bracket: None,
             },
             Box::new(ForceTrigger::new(ForceParams {
                 window: 3,

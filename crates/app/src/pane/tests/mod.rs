@@ -2237,6 +2237,7 @@ fn a_paused_regions_badge_says_the_specific_thing_and_not_the_general_one() {
                 rearm: quantick_strategy::Rearm::OneShot,
                 on_break: quantick_strategy::BreakPolicy::Ignore,
                 execution: quantick_strategy::Execution::Paper,
+                bracket: None,
             },
             Box::new(quantick_strategy::ForceTrigger::new(
                 quantick_strategy::ForceParams::default_band(),
@@ -2318,6 +2319,7 @@ fn the_badge_names_the_rulers_own_refusal_and_not_only_an_older_bars() {
                 rearm: quantick_strategy::Rearm::Auto,
                 on_break: quantick_strategy::BreakPolicy::Ignore,
                 execution: quantick_strategy::Execution::Paper,
+                bracket: None,
             },
             Box::new(quantick_strategy::ForceTrigger::new(
                 quantick_strategy::ForceParams {
@@ -2442,6 +2444,7 @@ fn g6_badge_pane() -> (ChartPane, crate::strategy_anchors::StrategyAnchors) {
                 rearm: quantick_strategy::Rearm::OneShot,
                 on_break: quantick_strategy::BreakPolicy::Ignore,
                 execution: quantick_strategy::Execution::Paper,
+                bracket: None,
             },
             Box::new(quantick_strategy::ForceTrigger::new(
                 quantick_strategy::ForceParams::default_band(),

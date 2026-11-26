@@ -403,4 +403,15 @@ impl<A: BorrowMut<PaperAccount>> quantick_strategy::runner::StrategyPort for Tab
     fn is_flat(&self) -> bool {
         self.core().is_flat()
     }
+
+    /// The quantity typed on the ticket, while fixed risk is off. With it
+    /// on, the ticket sizes by its own stop, which a script's order does not
+    /// carry, so there is no size to lend and the script's entry holds.
+    fn ticket_quantity(&self) -> Option<Decimal> {
+        let (risk, _) = self.desk.risk_report(self.core());
+        if !matches!(risk, RiskState::Off) {
+            return None;
+        }
+        self.desk.ticket.quantity_preview()
+    }
 }
