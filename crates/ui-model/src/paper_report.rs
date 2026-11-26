@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use quantick_civil::{CivilDate, TzOffset};
-use quantick_paper::pnl::{PnlKey, PnlReader};
+use quantick_paper::pnl::{PnlKey, PnlPrimary, PnlReader};
 use quantick_paper::report::calendar::{
     CalendarState, DayIndex, DayPick, DaySelection, DaySet, MonthPicker,
 };
@@ -148,6 +148,9 @@ pub struct Effects {
     pub start_import: bool,
     pub toast: Option<String>,
     pub ledger: Option<LedgerAction>,
+    /// The figure the trader picked on the report's P&L switch; the host
+    /// applies it app-wide, as the ticket's switch does.
+    pub pnl_primary: Option<PnlPrimary>,
 }
 impl Effects {
     /// Collect outputs after the local handler has completed synchronous loads.
@@ -158,6 +161,9 @@ impl Effects {
         }
         if effects.ledger.is_some() {
             self.ledger = effects.ledger;
+        }
+        if effects.pnl_primary.is_some() {
+            self.pnl_primary = effects.pnl_primary;
         }
     }
 }
@@ -227,6 +233,7 @@ pub enum Intent {
     ListOpen(bool),
     ClearFilters(String),
     Import,
+    PnlPrimary(PnlPrimary),
     Toast(String),
     DrainToast,
     Ledger(LedgerIntent),
@@ -785,6 +792,12 @@ impl crate::Model for Model {
             Intent::Import => {
                 return Effects {
                     start_import: true,
+                    ..Default::default()
+                };
+            }
+            Intent::PnlPrimary(primary) => {
+                return Effects {
+                    pnl_primary: Some(primary),
                     ..Default::default()
                 };
             }

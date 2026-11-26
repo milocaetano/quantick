@@ -231,11 +231,16 @@ impl Desk {
         self.armed.take().is_some() || self.gesture.drop_drag()
     }
 
-    /// Whether a chart click flipped the P&L switch since the last ask: the
-    /// host persists and fans it out, as it does a pick on the ticket's own
-    /// switch.
+    /// Whether a chart click or the report's switch moved the P&L figure
+    /// since the last ask: the host persists and fans it out, as it does a
+    /// pick on the ticket's own switch.
     pub fn take_pnl_flip(&mut self) -> bool {
         std::mem::take(&mut self.pnl_flipped)
+    }
+
+    /// The report's switch picked a figure; see [`Self::take_pnl_flip`].
+    pub fn note_pnl_pick(&mut self) {
+        self.pnl_flipped = true;
     }
 
     /// The source rebuilt its timeline: nothing armed, nothing in the hand.

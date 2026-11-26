@@ -278,7 +278,11 @@ fn a_period_pick_widens_a_whole_session_report_to_its_origin() {
         (2, Decimal::from(5)),
         "the week's trades of the origin, not the one session"
     );
-    assert_eq!(state.report_source(), origin, "the origin's source stays picked");
+    assert_eq!(
+        state.report_source(),
+        origin,
+        "the origin's source stays picked"
+    );
 
     Model::update(&mut state, Intent::Period(ReportPeriod::Today));
     state.ensure_report_view(tz, PnlReader::plain());

@@ -139,6 +139,7 @@ fn delivered_effects_keep_import_and_latest_present_outputs_after_local_loads() 
         start_import: true,
         toast: Some("first".to_owned()),
         ledger: Some(LedgerAction::OpenTicket),
+        pnl_primary: Some(quantick_paper::pnl::PnlPrimary::Money),
     });
     output.append_delivered(Effects::default());
     assert_eq!(
@@ -147,6 +148,7 @@ fn delivered_effects_keep_import_and_latest_present_outputs_after_local_loads() 
             start_import: true,
             toast: Some("first".to_owned()),
             ledger: Some(LedgerAction::OpenTicket),
+            pnl_primary: Some(quantick_paper::pnl::PnlPrimary::Money),
             ..Default::default()
         }
     );
@@ -161,6 +163,7 @@ fn delivered_effects_keep_import_and_latest_present_outputs_after_local_loads() 
             start_import: true,
             toast: Some("latest".to_owned()),
             ledger: Some(LedgerAction::Navigate(10, 20)),
+            pnl_primary: Some(quantick_paper::pnl::PnlPrimary::Money),
             ..Default::default()
         }
     );
@@ -1111,5 +1114,18 @@ fn paper_ledger_folds_selection_and_session_edits_delegate_to_domain() {
             trade: reference,
             tags: vec!["#new".to_owned()]
         }))
+    );
+}
+
+/// The report's P&L switch asks the host for the figure, the same choice the
+/// ticket's switch and `session.pnl_display.set` make; the report keeps no
+/// copy of it.
+#[test]
+fn the_report_switch_asks_the_host_for_the_figure() {
+    let mut state = State::default();
+    let primary = quantick_paper::pnl::PnlPrimary::PointsPerContract;
+    assert_eq!(
+        Model::update(&mut state, Intent::PnlPrimary(primary)).pnl_primary,
+        Some(primary)
     );
 }

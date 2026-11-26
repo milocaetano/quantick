@@ -182,7 +182,10 @@ fn source_edits_leave_context_and_all_readouts_follow_the_union_across_reloads()
                 let view = state.report_view().as_ref().unwrap();
                 assert_eq!(view.rows.len(), count);
                 assert_eq!(view.report.net_points, Decimal::from(net));
-                assert_eq!(view.equity.points.last(), Some(&Decimal::from(net)));
+                assert_eq!(
+                    view.equity.walks()[0].points.last(),
+                    Some(&Decimal::from(net))
+                );
                 assert_eq!(
                     state.report_days().stat(day).map_or(0, |stat| stat.trades),
                     count
@@ -341,7 +344,10 @@ fn picked_days_replace_session_context_and_keep_tags_through_period_changes() {
             assert_eq!(view.days.len(), 3);
             assert_eq!(view.rows.len(), count);
             assert_eq!(view.report.net_points, Decimal::from(count));
-            assert_eq!(view.equity.points.last(), Some(&view.report.net_points));
+            assert_eq!(
+                view.equity.walks()[0].points.last(),
+                Some(&view.report.net_points)
+            );
             assert_eq!(state.report_scope().is_none(), widened);
         }
         Model::update(&mut state, Intent::CustomText("2h".to_owned()));

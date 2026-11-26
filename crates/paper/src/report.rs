@@ -32,7 +32,7 @@ pub mod sessions;
 pub mod snapshot;
 pub mod sources;
 
-pub use readout::EquityWalk;
+pub use readout::{EquityWalk, EquityWalks};
 pub use sources::SourceSelection;
 
 use sessions::{SessionInfo, SessionKey};
@@ -418,7 +418,7 @@ pub struct ReportView {
     pub rows: Vec<HistoryRow>,
     /// The realized-equity walk over `rows`, cut with the view rather than
     /// re-walked on every frame.
-    pub equity: EquityWalk,
+    pub equity: EquityWalks,
     pub report: PerformanceReport,
     /// Each row worded by [`Self::with_pnl`]; empty on a bare cut.
     pnl_rows: Vec<String>,
@@ -498,7 +498,7 @@ impl ReportView {
         let hidden_outside = in_scope.len().saturating_sub(rows.len());
         let trades: Vec<ClosedTrade> = rows.iter().map(|row| row.trade.clone()).collect();
         let report = PerformanceReport::from_trades(&trades);
-        let equity = EquityWalk::of(&rows);
+        let equity = EquityWalks::single(EquityWalk::of(&rows));
         Self {
             period,
             source,
@@ -560,5 +560,6 @@ impl ReportView {
 mod tests;
 
 pub mod calendar;
+pub mod curve_shape;
 pub mod ledger_rows;
 pub mod metric_rows;

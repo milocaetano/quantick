@@ -51,6 +51,33 @@ pub(crate) fn caption(palette: &crate::theme::Palette, text: &str) -> egui::Rich
 }
 
 /// A pill-shaped toggle chip: accent fill while on, quiet control while off.
+/// The P&L switch: which figure leads every readout, right-aligned in
+/// its row. The ticket and the report paint the same one; answers a pick
+/// of another figure.
+pub(crate) fn pnl_mode_switch(
+    ui: &mut egui::Ui,
+    current: quantick_paper::pnl::PnlPrimary,
+    modes: [(quantick_paper::pnl::PnlPrimary, String); 3],
+) -> Option<quantick_paper::pnl::PnlPrimary> {
+    let mut picked = None;
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        for (primary, label) in modes.into_iter().rev() {
+            let hover = format!(
+                "lead P&L with {label} - the other figure stays beside it (session.pnl_display.set)"
+            );
+            if ui
+                .selectable_label(primary == current, egui::RichText::new(label).small())
+                .on_hover_text(hover)
+                .clicked()
+                && primary != current
+            {
+                picked = Some(primary);
+            }
+        }
+    });
+    picked
+}
+
 pub(crate) fn pill_toggle(ui: &mut egui::Ui, label: &str, on: bool, hover: &str) -> egui::Response {
     let palette = theme::get(ui.ctx());
     let (fill, ink, stroke) = if on {
