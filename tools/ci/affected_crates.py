@@ -28,6 +28,7 @@ PR can be made ready; see .claude/hooks/README.md.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -170,32 +171,34 @@ def changed_paths(root, base, head):
     ).split("\0") if p]
 
 
-# The characters a path segment is spelled with, for `hits`.
 SEGMENT = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 
-# A Rust line that starts with one of these is documentation, which names a
-# path without reading it.
-DOC_COMMENTS = ("//!", "///")
+# A Rust doc comment names a path without reading it, unless it is doctest
+# code that embeds the file. `////` is a plain comment.
+DOC_COMMENT = re.compile(r"\s*(//!|///)(?!/)")
+EMBEDS = ("include_str!", "include_bytes!")
 
 
 def hits(referrer, text, wanted):
     """The needles in `wanted` (a set) that line `text` of file `referrer`
     names in a way that can make its crate read the path.
 
-    A Rust doc comment never counts. An occurrence that the line continues as
-    a longer path, `/` and more segments, counts only when that whole path is
-    wanted too: every needle is a changed path or one of its ancestors, so a
-    longer path that is neither lies in a sibling subtree, as
+    A Rust doc comment does not count. An occurrence that the line continues
+    as a longer path, `/` and more segments, counts only when that path starts
+    some wanted one: every needle is a changed path or one of its ancestors,
+    so a longer path that starts none lies in a sibling subtree, as
     `.claude/skills/ui-harness/` is no reader of `.claude/skills/implement/`.
-    Anything else after a needle counts.
+    A prefix still counts, for a glob or format string that stops mid-name
+    (`tests/test_*.py`). Anything else after a needle counts.
     """
-    if referrer.endswith(".rs") and text.lstrip().startswith(DOC_COMMENTS):
+    if referrer.endswith(".rs") and DOC_COMMENT.match(text) and not any(e in text for e in EMBEDS):
         return []
     found = []
     for needle in wanted:
         start = text.find(needle)
         while start != -1:
-            if spelled(text, start, start + len(needle)) in wanted:
+            path = spelled(text, start, start + len(needle))
+            if path in wanted or any(w.startswith(path) for w in wanted):
                 found.append(needle)
                 break
             start = text.find(needle, start + 1)

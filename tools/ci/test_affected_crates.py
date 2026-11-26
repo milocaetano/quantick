@@ -117,6 +117,12 @@ class Hits(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(self.hits([".claude/skills/implement/SKILL.md"], text), [])
 
+    def test_a_plain_comment_or_a_doctest_that_embeds_the_file_counts(self):
+        for text in ("//// .claude/skills/implement/SKILL.md",
+                     '/// let s = include_str!("../../.claude/skills/implement/SKILL.md");'):
+            with self.subTest(text=text):
+                self.assertIn(".claude/skills/implement/SKILL.md", self.hits([".claude/skills/implement/SKILL.md"], text))
+
     def test_the_same_line_outside_rust_still_counts(self):
         text = "/// .claude/skills/implement/SKILL.md"
         self.assertEqual(self.hits([".claude/skills/implement/SKILL.md"], text, "crates/app/fixtures/notes.txt"),
@@ -139,6 +145,12 @@ class Hits(unittest.TestCase):
         text = 'walk("bridge/mt5/tests/test_paging.py")'
         self.assertEqual(self.hits(["bridge/mt5/tests/test_paging.py"], text),
                          ["bridge/mt5", "bridge/mt5/tests", "bridge/mt5/tests/test_paging.py"])
+
+    def test_a_pattern_that_stops_inside_the_changed_name_counts(self):
+        for text in ('glob("bridge/mt5/tests/test_*.py")', 'format!("bridge/mt5/tests/test_{name}.py")',
+                     'path.starts_with("bridge/mt5/tests/test_")'):
+            with self.subTest(text=text):
+                self.assertIn("bridge/mt5/tests", self.hits(["bridge/mt5/tests/test_paging.py"], text))
 
     def test_an_ancestor_a_test_walks_counts(self):
         for text in ('walk("bridge/mt5/tests")', 'walk("bridge/mt5/tests/")',
