@@ -187,7 +187,6 @@ pub fn project_retained_tape_frame(
         view,
         sizing,
         &style.bubbles,
-        &style.live_lane,
         opening_bursts,
     ))
 }

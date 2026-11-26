@@ -144,18 +144,17 @@ fn assert_current_coordinates(mark: &AggressionPrimitive, view: &TapeDotView) {
     assert!((mark.y - expected_y).abs() < 1e-12);
 }
 
-fn assert_proportional_clearance(frame: &TapeDotFrame, geometry: TapeDotGeometry) {
+/// One area scale at the configured radius: no close pair caps every disc,
+/// so neighbours may overlap as they do in Bookmap.
+fn assert_one_full_area_scale(frame: &TapeDotFrame) {
     let full = frame.marks.iter().map(|mark| mark.quantity).max().unwrap();
     let radius = |mark: &AggressionPrimitive| {
         f64::from(frame.max_radius) * (mark.quantity / full).to_f64().unwrap().sqrt()
     };
-    assert!(frame.max_radius > 0.0 && frame.max_radius <= 15.0);
+    assert_eq!(frame.max_radius, 15.0);
     for (index, a) in frame.marks.iter().enumerate() {
         for b in &frame.marks[index + 1..] {
             let (ra, rb) = (radius(a), radius(b));
-            let distance = ((a.x - b.x) * f64::from(geometry.width_px))
-                .hypot((a.y - b.y) * f64::from(geometry.height_px));
-            assert!(distance + 1e-5 >= ra + rb - 0.1 * ra.min(rb));
             let area_ratio = (ra / rb).powi(2);
             let quantity_ratio = (a.quantity / b.quantity).to_f64().unwrap();
             assert!((area_ratio - quantity_ratio).abs() < 1e-9);
@@ -186,17 +185,12 @@ fn a_real_new_win_maximum_cannot_split_a_closed_historical_dot() {
     let old = represented(&next, &[64_198, 64_206]);
     assert_eq!(source_facts(old), original);
     assert_current_coordinates(old, &next_view);
-    assert_proportional_clearance(&next, next_view.geometry);
-    assert!(
-        next.max_radius >= 12.0,
-        "this ordinary recorded three-print sample must retain readable largest dots"
-    );
+    assert_one_full_area_scale(&next);
 }
 
 /// #11: the window re-resolving (Auto following the bars), the lane being
 /// resized and the chart growing are view changes. A closed group keeps its
-/// membership and facts and is drawn at the new view's coordinates; only an
-/// explicit zoom, which the pane answers by clearing the memory, regroups.
+/// membership and facts and is drawn at the new view's coordinates.
 #[test]
 fn a_window_re_resolve_or_a_lane_resize_keeps_closed_membership() {
     type Change = fn(&mut TapeDotView);
@@ -225,6 +219,56 @@ fn a_window_re_resolve_or_a_lane_resize_keeps_closed_membership() {
         assert_eq!(source_facts(old), original, "{change}");
         assert_current_coordinates(old, &changed);
     }
+}
+
+/// One wheel notch out and back on a native tape without a stable size: the
+/// pane keeps the groups, the memory only reshapes them, and the pair the
+/// notch out squeezes together shrinks no disc.
+#[test]
+fn a_wheel_notch_out_and_back_reshapes_native_groups_at_full_size() {
+    let mut config = tape_config();
+    config.live_lane.window = crate::LaneWindow::Fixed { ms: WINDOW_MS };
+    assert!(config.native_tape() && !config.live_lane.stable_size);
+    let mut out = config.clone();
+    out.zoom_lane_window(1.0 / 1.12);
+    let mut back = out.clone();
+    back.zoom_lane_window(1.12);
+    assert!(
+        out.same_tape_grouping(&config),
+        "a notch out keeps the groups"
+    );
+    assert!(
+        back.same_tape_grouping(&out),
+        "a notch back keeps the groups"
+    );
+    let windows = [&config, &out, &back].map(|config| config.lane_window_ms(0));
+    assert_eq!(windows, [WINDOW_MS, 33_600, WINDOW_MS]);
+
+    // 640 px over 30 s: the small pair stands 10 px apart, clear of each
+    // other at W and overlapping once the notch out squeezes it to 8.9 px.
+    let prints = [
+        mark(1, WIN_TIME_MS - 12_000, 187_530, 9),
+        mark(2, WIN_TIME_MS - 4_000, 187_500, 1),
+        mark(3, WIN_TIME_MS - 3_531, 187_500, 1),
+    ];
+    let mut memory = TapeDotMemory::default();
+    let frames = windows.map(|window_ms| {
+        let mut at = view(WIN_TIME_MS + 2_000, "187450", "187550");
+        at.window_ms = window_ms;
+        draw(&mut memory, &prints, at)
+    });
+    let membership = |frame: &TapeDotFrame| {
+        let mut groups: Vec<_> = frame.marks.iter().map(source_facts).collect();
+        groups.sort();
+        groups
+    };
+    assert_eq!(frames[0].marks.len(), 3, "the pair is apart at W");
+    for frame in &frames {
+        assert_eq!(membership(frame), membership(&frames[0]));
+        assert_eq!(frame.full_quantity, Decimal::from(9));
+        assert_one_full_area_scale(frame);
+    }
+    assert_eq!(frames[2].marks, frames[0].marks, "the round trip is exact");
 }
 
 #[test]
@@ -261,11 +305,7 @@ fn an_expiring_maximum_does_not_merge_previously_separate_closed_dots() {
     assert_eq!(next.marks.len(), 2);
     assert_eq!(source_facts(represented(&next, &[64_198])), a);
     assert_eq!(source_facts(represented(&next, &[64_206])), b);
-    assert!(
-        next.max_radius < 15.0,
-        "one shared cap prevents new occlusion"
-    );
-    assert_proportional_clearance(&next, next_view.geometry);
+    assert_one_full_area_scale(&next);
 }
 
 #[test]
@@ -324,7 +364,7 @@ fn an_expired_whole_group_cannot_return_as_its_later_native_constituent() {
 }
 
 #[test]
-fn automatic_price_transforms_preserve_membership_and_use_one_area_scale() {
+fn automatic_price_transforms_preserve_membership_and_the_full_radius() {
     let mut memory = TapeDotMemory::default();
     let prints = [
         mark(1, 1_011, 100, 1),
@@ -346,8 +386,8 @@ fn automatic_price_transforms_preserve_membership_and_use_one_area_scale() {
         assert_eq!(source_facts(mark), original);
         assert_current_coordinates(mark, &changed_view);
     }
-    assert!(changed.max_radius < first.max_radius);
-    assert_proportional_clearance(&changed, changed_view.geometry);
+    assert_eq!(changed.max_radius, first.max_radius);
+    assert_one_full_area_scale(&changed);
 }
 
 #[test]
@@ -578,5 +618,5 @@ fn an_exactly_coincident_late_execution_joins_facts_without_collapsing_every_rad
             .sum::<Decimal>(),
         Decimal::from(6)
     );
-    assert_proportional_clearance(&after, current_view.geometry);
+    assert_one_full_area_scale(&after);
 }
