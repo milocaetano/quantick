@@ -313,7 +313,6 @@ fn picked_days_replace_session_context_and_keep_tags_through_period_changes() {
             row
         });
         let mut state = State::default();
-        let day_context = request.day().is_some();
         let widened = matches!(request, ReportRequest::Session { .. });
         Model::update(
             &mut state,
@@ -358,7 +357,8 @@ fn picked_days_replace_session_context_and_keep_tags_through_period_changes() {
         );
         Model::update(&mut state, Intent::Days(DaySet::default()));
         assert_eq!(state.report_period(), ReportPeriod::Custom(7_200_000));
-        assert_eq!(state.report_scope().is_none(), day_context);
+        // The period gave a session's context way to its origin; a tag's stays.
+        assert_eq!(state.report_scope().is_none(), widened);
         assert_eq!(state.report_source(), SourceFilter::Simulator.into());
     }
 }

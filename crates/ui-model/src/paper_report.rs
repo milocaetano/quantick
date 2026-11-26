@@ -358,6 +358,18 @@ impl State {
         self.filter.days = pick;
     }
     fn set_period(&mut self, period: ReportPeriod) {
+        // A period asks about days, as picked dates do: a session or day
+        // report gives way to its origin, which the source pills already
+        // hold. A tag report stays, cut to the period.
+        if self
+            .filter
+            .scope
+            .as_ref()
+            .is_some_and(|scope| !matches!(scope.request, ReportRequest::Tag { .. }))
+        {
+            self.filter.scope = None;
+            self.report_days_key = None;
+        }
         self.set_days(DayPick::default());
         self.filter.period = period;
         self.filter.custom_edited = false;
