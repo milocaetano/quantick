@@ -52,8 +52,8 @@ use crate::Finding;
 /// appear is `backtest → app`, and this entry is what fails the build if one
 /// is ever added.
 ///
-/// This table is the single source of the graph. `AGENTS.md`'s map lists each
-/// crate and what it owns and points here for edges; this is the copy a
+/// This table is the single source of the graph. `AGENTS.md`'s map lists crates
+/// and what they own and points here for edges; this is the copy a
 /// review cites, because it is the copy that can fail.
 pub const ALLOWED: &[(&str, &[&str])] = &[
     (
