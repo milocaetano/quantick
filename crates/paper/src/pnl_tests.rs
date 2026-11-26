@@ -242,6 +242,7 @@ fn closed(pnl_points: &str, quantity: &str) -> quantick_trading::ClosedTrade {
         exit_agg_id: None,
         mae_points: None,
         mfe_points: None,
+        fees_points: Decimal::ZERO,
     }
 }
 

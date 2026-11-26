@@ -385,6 +385,7 @@ fn the_export_csv_carries_readable_stamps_and_running_equity() {
         exit_agg_id: mae.map(|_| 2),
         mae_points: mae.map(Decimal::from),
         mfe_points: mae.map(Decimal::from),
+        fees_points: Decimal::ZERO,
     };
     let rows = vec![
         HistoryRow {
@@ -462,6 +463,7 @@ fn the_export_csv_adds_per_contract_points_and_money() {
         exit_agg_id: None,
         mae_points: None,
         mfe_points: None,
+        fees_points: Decimal::ZERO,
     };
     let row = |symbol: &str, trade: ClosedTrade| HistoryRow {
         symbol: symbol.to_owned(),
@@ -989,6 +991,7 @@ fn take_profit_close() -> quantick_trading::ClosedTrade {
         exit_agg_id: None,
         mae_points: None,
         mfe_points: None,
+        fees_points: Decimal::ZERO,
     }
 }
 
@@ -1204,6 +1207,7 @@ fn a_saved_trade_prices_identically_from_any_tab() {
         exit_agg_id: None,
         mae_points: None,
         mfe_points: None,
+        fees_points: Decimal::ZERO,
     };
     let rows = vec![HistoryRow {
         symbol: "WINV26".to_owned(),

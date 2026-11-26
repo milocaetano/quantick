@@ -16,6 +16,7 @@ fn trade(open_s: i64, close_s: i64, pnl: i64) -> ClosedTrade {
         exit_agg_id: Some(2),
         mae_points: Some(Decimal::ZERO),
         mfe_points: Some(Decimal::from(pnl.max(0))),
+        fees_points: Decimal::ZERO,
     }
 }
 

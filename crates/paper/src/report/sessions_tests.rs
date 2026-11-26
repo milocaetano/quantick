@@ -39,6 +39,7 @@ fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
         exit_agg_id: None,
         mae_points: None,
         mfe_points: None,
+        fees_points: Decimal::ZERO,
     }
 }
 

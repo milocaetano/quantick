@@ -27,6 +27,7 @@ fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
         exit_agg_id: None,
         mae_points: None,
         mfe_points: None,
+        fees_points: Decimal::ZERO,
     }
 }
 
@@ -532,6 +533,7 @@ fn golden_history() -> LoadedHistory {
         exit_agg_id: None,
         mae_points: excursions.map(|(mae, _)| Decimal::from(mae)),
         mfe_points: excursions.map(|(_, mfe)| Decimal::from(mfe)),
+        fees_points: Decimal::ZERO,
     };
     use quantick_trading::ExitReason::{Manual, StopLoss, TakeProfit};
     LoadedHistory {

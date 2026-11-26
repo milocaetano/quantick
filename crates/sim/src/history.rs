@@ -8,11 +8,11 @@
 //! silently dropping.
 //!
 //! ```text
-//! # quantick-trades 2
+//! # quantick-trades 3
 //! # symbol=BTCUSDT
 //! # source=live
-//! opened_ms,closed_ms,side,quantity,entry_price,exit_price,pnl_points,exit_reason,entry_agg_id,exit_agg_id,mae_points,mfe_points
-//! 1700000000000,1700000060000,long,2,100.5,103.25,5.5,take_profit,41,57,1.5,6.0
+//! opened_ms,closed_ms,side,quantity,entry_price,exit_price,pnl_points,exit_reason,entry_agg_id,exit_agg_id,mae_points,mfe_points,fees_points
+//! 1700000000000,1700000060000,long,2,100.5,103.25,5.5,take_profit,41,57,1.5,6.0,0.4
 //! ```
 //!
 //! `# source=` records where the whole session's trades came from (a
@@ -32,7 +32,12 @@
 //!
 //! Version 1 files (the first 8 columns only) still load: the missing
 //! fields come back as `None`, and writing such a row emits empty fields —
-//! unknown is not zero.
+//! unknown is not zero. `fees_points` (version 3) is the commission the
+//! round trip paid; `pnl_points` stays gross of it. A version-2 row has no
+//! fees column and reads as fee-free, which it was: fees did not exist when
+//! it was written. A journal begun as version 2 keeps taking appended
+//! version-3 rows, so a row's own width, not the file's header, says which
+//! it is.
 //!
 //! The trader's own words about a session ride the same file as append-only
 //! comment lines, so the CSV columns never change and a reader that skips
@@ -61,12 +66,14 @@ use quantick_trading::{ClosedTrade, ExitReason, TradeMode};
 pub const FORMAT_NAME: &str = "quantick-trades";
 /// Version written. Version 1 is still read; anything newer than
 /// [`FORMAT_VERSION`] is an error, never a guess.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 /// Extension the app uses for history files.
 pub const FILE_EXTENSION: &str = "csv";
-/// The version-2 column header, fixed order. The first eight columns are
-/// exactly the version-1 header, so a version bump only ever appends.
-pub const HEADER: &str = "opened_ms,closed_ms,side,quantity,entry_price,exit_price,pnl_points,exit_reason,entry_agg_id,exit_agg_id,mae_points,mfe_points";
+/// The version-3 column header, fixed order. Each version's header is a
+/// prefix of the next one's, so a version bump only ever appends.
+pub const HEADER: &str = "opened_ms,closed_ms,side,quantity,entry_price,exit_price,pnl_points,exit_reason,entry_agg_id,exit_agg_id,mae_points,mfe_points,fees_points";
+/// The version-2 column header, still accepted on read.
+const HEADER_V2: &str = "opened_ms,closed_ms,side,quantity,entry_price,exit_price,pnl_points,exit_reason,entry_agg_id,exit_agg_id,mae_points,mfe_points";
 /// The version-1 column header, still accepted on read.
 const HEADER_V1: &str =
     "opened_ms,closed_ms,side,quantity,entry_price,exit_price,pnl_points,exit_reason";
@@ -259,7 +266,7 @@ pub fn write_trade(trade: &ClosedTrade) -> String {
         Side::Sell => "short",
     };
     format!(
-        "{},{},{},{},{},{},{},{},{},{},{},{}\n",
+        "{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
         trade.opened_ms,
         trade.closed_ms,
         side,
@@ -272,6 +279,7 @@ pub fn write_trade(trade: &ClosedTrade) -> String {
         opt_u64(trade.exit_agg_id),
         opt_decimal(trade.mae_points),
         opt_decimal(trade.mfe_points),
+        trade.fees_points,
     )
 }
 
@@ -405,12 +413,13 @@ pub fn parse(text: &str) -> Result<TradeHistory, HistoryError> {
     let version = parse_magic(magic.trim()).ok_or(HistoryError {
         line: magic_line + 1,
         message: format!(
-            "not a {FORMAT_NAME} version 1 or {FORMAT_VERSION} file - first line is `{}`",
+            "not a {FORMAT_NAME} version 1 to {FORMAT_VERSION} file - first line is `{}`",
             magic.trim()
         ),
     })?;
     let expected_header = match version {
         1 => HEADER_V1,
+        2 => HEADER_V2,
         _ => HEADER,
     };
 
@@ -533,8 +542,15 @@ fn parse_magic(line: &str) -> Option<u32> {
 
 fn parse_row(row: &str, version: u32) -> Result<ClosedTrade, String> {
     let fields: Vec<&str> = row.split(',').collect();
-    let expected = if version == 1 { 8 } else { 12 };
-    if fields.len() != expected {
+    // A version-2 journal takes version-3 rows appended after an upgrade,
+    // and a row's width says which it is.
+    let widths: &[usize] = if version == 1 { &[8] } else { &[12, 13] };
+    if !widths.contains(&fields.len()) {
+        let expected = widths
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(" or ");
         return Err(format!(
             "expected {expected} fields, found {}",
             fields.len()
@@ -563,6 +579,15 @@ fn parse_row(row: &str, version: u32) -> Result<ClosedTrade, String> {
             parse_opt_decimal(fields[11], "mfe_points")?,
         )
     };
+    let fees_points = match fields.get(12) {
+        Some(field) => parse_decimal(field, "fees_points")?,
+        None => Decimal::ZERO,
+    };
+    if fees_points < Decimal::ZERO {
+        return Err(format!(
+            "fees_points must not be negative, found `{fees_points}`"
+        ));
+    }
     Ok(ClosedTrade {
         side,
         quantity,
@@ -576,6 +601,7 @@ fn parse_row(row: &str, version: u32) -> Result<ClosedTrade, String> {
         exit_agg_id,
         mae_points,
         mfe_points,
+        fees_points,
     })
 }
 
@@ -631,14 +657,17 @@ mod tests {
             exit_agg_id: Some(57),
             mae_points: Some(Decimal::new(15, 1)),
             mfe_points: Some(Decimal::from(6)),
+            fees_points: Decimal::ZERO,
         }
     }
 
     #[test]
     fn write_then_parse_round_trips_exactly() {
+        let mut paid = sample(Side::Sell, -3, ExitReason::StopLoss);
+        paid.fees_points = Decimal::new(125, 2);
         let trades = [
             sample(Side::Buy, 5, ExitReason::TakeProfit),
-            sample(Side::Sell, -3, ExitReason::StopLoss),
+            paid,
             sample(Side::Buy, 0, ExitReason::Reset),
         ];
         let mut text = write_header("BTCUSDT", SessionSource::Live);
@@ -687,7 +716,7 @@ mod tests {
         assert_eq!(history.source, Some(SessionSource::Replay));
 
         // A file from before `# source=` existed: unrecorded, not "live".
-        let legacy = format!("# quantick-trades 2\n# symbol=X\n{HEADER}\n");
+        let legacy = format!("# quantick-trades 3\n# symbol=X\n{HEADER}\n");
         let history = parse(&legacy).expect("legacy files still parse");
         assert_eq!(history.source, None, "unrecorded is not guessed");
         assert!(history.problems.is_empty());
@@ -695,7 +724,7 @@ mod tests {
 
     #[test]
     fn an_unknown_source_token_is_reported_and_stays_unrecorded() {
-        let text = format!("# quantick-trades 2\n# symbol=X\n# source=backtest\n{HEADER}\n");
+        let text = format!("# quantick-trades 3\n# symbol=X\n# source=backtest\n{HEADER}\n");
         let history = parse(&text).expect("the file still loads");
         assert_eq!(history.source, None);
         assert_eq!(history.problems.len(), 1);
@@ -719,6 +748,31 @@ mod tests {
     }
 
     #[test]
+    fn a_version_2_journal_reads_fee_free_and_takes_appended_version_3_rows() {
+        let mut paid = sample(Side::Buy, 5, ExitReason::Manual);
+        paid.fees_points = Decimal::new(5, 1);
+        let text = format!(
+            "# quantick-trades 2\n# symbol=WINQ26\n{HEADER_V2}\n\
+             1700000000000,1700000060000,long,2,100.5,103.25,5,manual,41,57,1.5,6\n{}",
+            write_trade(&paid)
+        );
+        let history = parse(&text).expect("a version-2 journal still parses");
+        assert!(history.problems.is_empty(), "{:?}", history.problems);
+        assert_eq!(history.trades[0].fees_points, Decimal::ZERO);
+        assert_eq!(history.trades[1], paid);
+    }
+
+    #[test]
+    fn a_negative_fee_is_a_reported_row() {
+        let mut text = write_header("X", SessionSource::Live);
+        let row = write_trade(&sample(Side::Buy, 5, ExitReason::Manual));
+        text.push_str(&row.replace(",6,0\n", ",6,-1\n"));
+        let history = parse(&text).expect("the file still loads");
+        assert!(history.trades.is_empty());
+        assert!(history.problems[0].message.contains("fees_points"));
+    }
+
+    #[test]
     fn a_v1_row_re_exports_with_empty_fields_not_invented_values() {
         let mut trade = sample(Side::Buy, 5, ExitReason::Manual);
         trade.entry_agg_id = None;
@@ -727,7 +781,7 @@ mod tests {
         trade.mfe_points = None;
         let line = write_trade(&trade);
         assert!(
-            line.trim_end().ends_with("manual,,,,"),
+            line.trim_end().ends_with("manual,,,,,0"),
             "unknown fields stay empty: {line}"
         );
         let mut text = write_header("X", SessionSource::Live);
@@ -749,7 +803,7 @@ mod tests {
             history.problems[0].line, 6,
             "magic + symbol + source + header + row, then the tear"
         );
-        assert!(history.problems[0].message.contains("12 fields"));
+        assert!(history.problems[0].message.contains("12 or 13 fields"));
     }
 
     #[test]
@@ -763,11 +817,11 @@ mod tests {
     #[test]
     fn unknown_version_is_fatal_not_guessed() {
         let error =
-            parse("# quantick-trades 3\nopened_ms\n").expect_err("future versions are refused");
+            parse("# quantick-trades 4\nopened_ms\n").expect_err("future versions are refused");
         assert!(
             error
                 .message
-                .contains("not a quantick-trades version 1 or 2 file")
+                .contains("not a quantick-trades version 1 to 3 file")
         );
     }
 

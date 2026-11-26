@@ -4,8 +4,8 @@ use quantick_engine::{Side, Trade};
 use rust_decimal::Decimal;
 
 use quantick_trading::{
-    Bracket, CancelReason, ClosedTrade, EntryKind, ExitPart, ExitReason, Fill, FillRole, OcoId,
-    Order, OrderId, OrderRole, Position, RejectReason, VenueEvent, signed_points,
+    Bracket, CancelReason, ClosedTrade, EntryKind, ExitPart, ExitReason, Fill, FillCosts, FillRole,
+    OcoId, Order, OrderId, OrderRole, Position, RejectReason, VenueEvent, signed_points,
 };
 
 /// A user command, applied between prints. Commands and prints interleave
@@ -126,12 +126,34 @@ pub struct Simulator {
     position: Option<Position>,
     closed: Vec<ClosedTrade>,
     realized_points: Decimal,
+    /// What each fill costs beyond its print; free by default.
+    costs: FillCosts,
 }
 
 impl Simulator {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A simulator whose fills pay `costs`.
+    #[must_use]
+    pub fn with_costs(costs: FillCosts) -> Self {
+        Self {
+            costs,
+            ..Self::default()
+        }
+    }
+
+    /// Price fills from the next print on with `costs`. A trade already
+    /// open closes under the new costs: they apply where a fill happens.
+    pub fn set_costs(&mut self, costs: FillCosts) {
+        self.costs = costs;
+    }
+
+    #[must_use]
+    pub fn costs(&self) -> FillCosts {
+        self.costs
     }
 
     /// Update the mark from history without ever filling against it —
@@ -181,7 +203,7 @@ impl Simulator {
         &self.closed
     }
 
-    /// Sum of closed-trade profits, in points.
+    /// Sum of closed-trade profits after fees, in points.
     #[must_use]
     pub fn realized_points(&self) -> Decimal {
         self.realized_points
@@ -212,15 +234,15 @@ impl Simulator {
                 Side::Buy => price <= level,
                 Side::Sell => price >= level,
             });
-            let target = position.take_profit.filter(|level| match position.side {
-                Side::Buy => price >= *level,
-                Side::Sell => price <= *level,
-            });
+            let exit_side = opposite(position.side);
+            let target = position
+                .take_profit
+                .filter(|level| self.costs.limit_reached(exit_side, *level, price));
             if stop_hit {
                 // A stop is a market order once touched: it fills at the
                 // print, so a gap fills honestly worse than the trigger.
                 self.exit_position(
-                    price,
+                    self.costs.slipped(exit_side, price),
                     trade,
                     ExitReason::StopLoss,
                     FillRole::StopLoss,
@@ -249,12 +271,13 @@ impl Simulator {
         for action in std::mem::take(&mut self.queue) {
             match action {
                 QueuedAction::Entry(order) => {
-                    self.fill_entry_at(&order, price, trade, &mut events);
+                    let at = self.costs.slipped(order.side, price);
+                    self.fill_entry_at(&order, at, trade, &mut events);
                 }
                 QueuedAction::Close => {
-                    if self.position.is_some() {
+                    if let Some(side) = self.position.as_ref().map(|open| opposite(open.side)) {
                         self.exit_position(
-                            price,
+                            self.costs.slipped(side, price),
                             trade,
                             ExitReason::Manual,
                             FillRole::Close,
@@ -263,7 +286,10 @@ impl Simulator {
                     }
                 }
                 QueuedAction::ClosePartial { quantity } => {
-                    self.close_partial_at(quantity, price, trade, &mut events);
+                    if let Some(side) = self.position.as_ref().map(|open| opposite(open.side)) {
+                        let at = self.costs.slipped(side, price);
+                        self.close_partial_at(quantity, at, trade, &mut events);
+                    }
                 }
             }
         }
@@ -299,10 +325,15 @@ impl Simulator {
                 continue;
             }
             let fill_at = match (order.kind, order.side) {
-                (EntryKind::Limit, Side::Buy) if price <= level => Some(level),
-                (EntryKind::Limit, Side::Sell) if price >= level => Some(level),
-                (EntryKind::Stop, Side::Buy) if price >= level => Some(price),
-                (EntryKind::Stop, Side::Sell) if price <= level => Some(price),
+                (EntryKind::Limit, side) if self.costs.limit_reached(side, level, price) => {
+                    Some(level)
+                }
+                (EntryKind::Stop, Side::Buy) if price >= level => {
+                    Some(self.costs.slipped(Side::Buy, price))
+                }
+                (EntryKind::Stop, Side::Sell) if price <= level => {
+                    Some(self.costs.slipped(Side::Sell, price))
+                }
                 _ => None,
             };
             match fill_at {
@@ -368,18 +399,20 @@ impl Simulator {
         // A position can only exist after a print, so the mark is present
         // whenever the position is.
         if let (Some(position), Some(mark)) = (self.position.take(), self.mark) {
+            // A forced flatten is a market close like any other.
+            let at = self.costs.slipped(opposite(position.side), mark.price);
             events.push(VenueEvent::Filled(Fill {
                 timestamp_ms: mark.timestamp_ms,
                 agg_id: mark.agg_id,
                 side: opposite(position.side),
-                price: mark.price,
+                price: at,
                 quantity: position.quantity,
                 role: FillRole::Reset,
             }));
             self.record_close(
                 &position,
                 position.quantity,
-                mark.price,
+                at,
                 mark.timestamp_ms,
                 mark.agg_id,
                 ExitReason::Reset,
@@ -732,9 +765,9 @@ impl Simulator {
         while self.position.is_some() {
             let Some(index) = self.resting.iter().position(|order| {
                 order.is_protective()
-                    && order
-                        .price
-                        .is_some_and(|level| leg_reached(order.role, order.side, level, price))
+                    && order.price.is_some_and(|level| {
+                        leg_reached(&self.costs, order.role, order.side, level, price)
+                    })
             }) else {
                 return;
             };
@@ -744,7 +777,11 @@ impl Simulator {
             // is a resting limit and fills at its own level.
             let level = leg.price.unwrap_or(price);
             let (at, reason, role) = match leg.role {
-                OrderRole::StopLoss => (price, ExitReason::StopLoss, FillRole::StopLoss),
+                OrderRole::StopLoss => (
+                    self.costs.slipped(leg.side, price),
+                    ExitReason::StopLoss,
+                    FillRole::StopLoss,
+                ),
                 _ => (level, ExitReason::TakeProfit, FillRole::TakeProfit),
             };
             self.close_quantity_at(leg.quantity, at, print, reason, role, events);
@@ -1088,8 +1125,11 @@ impl Simulator {
             exit_agg_id: Some(exit_agg_id),
             mae_points: Some(adverse.saturating_mul(close_quantity)),
             mfe_points: Some(favorable.saturating_mul(close_quantity)),
+            fees_points: self
+                .costs
+                .round_trip_fees(position.avg_price, at, close_quantity),
         };
-        self.realized_points = self.realized_points.saturating_add(closed.pnl_points);
+        self.realized_points = self.realized_points.saturating_add(closed.net_points());
         events.push(VenueEvent::Closed {
             trade: closed.clone(),
             broker_account: None,
@@ -1159,13 +1199,19 @@ fn fitted_parts(bracket: Bracket, total: Decimal) -> Vec<ExitPart> {
 ///
 /// The leg's own side is the reducing one - a sell protects a long - so the
 /// direction a stop is reached from is the opposite of the direction a take
-/// profit is reached from.
-fn leg_reached(role: OrderRole, side: Side, level: Decimal, price: Decimal) -> bool {
+/// profit is reached from. A take profit is a resting limit, so the limit
+/// rule in `costs` decides it.
+fn leg_reached(
+    costs: &FillCosts,
+    role: OrderRole,
+    side: Side,
+    level: Decimal,
+    price: Decimal,
+) -> bool {
     match (role, side) {
         (OrderRole::StopLoss, Side::Sell) => price <= level,
         (OrderRole::StopLoss, Side::Buy) => price >= level,
-        (OrderRole::TakeProfit, Side::Sell) => price >= level,
-        (OrderRole::TakeProfit, Side::Buy) => price <= level,
+        (OrderRole::TakeProfit, side) => costs.limit_reached(side, level, price),
         (OrderRole::Entry, _) => false,
     }
 }

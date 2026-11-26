@@ -121,4 +121,16 @@ pub struct ClosedTrade {
     pub mae_points: Option<Decimal>,
     /// Maximum favorable excursion in points (≥ 0); see `mae_points`.
     pub mfe_points: Option<Decimal>,
+    /// Commission both sides of this round trip paid, in points (≥ 0).
+    /// `pnl_points` is gross of it; see [`ClosedTrade::net_points`]. Zero
+    /// for a free fill model and for rows journaled before fees existed.
+    pub fees_points: Decimal,
+}
+
+impl ClosedTrade {
+    /// The trade's points after its fees: what the account kept.
+    #[must_use]
+    pub fn net_points(&self) -> Decimal {
+        self.pnl_points.saturating_sub(self.fees_points)
+    }
 }

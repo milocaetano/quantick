@@ -390,6 +390,7 @@ mod tests {
             exit_agg_id: Some(2),
             mae_points: None,
             mfe_points: None,
+            fees_points: Decimal::ZERO,
         }
     }
 

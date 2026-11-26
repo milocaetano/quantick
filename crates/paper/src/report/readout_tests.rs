@@ -51,6 +51,7 @@ fn row(symbol: &str, closed_ms: i64, pnl_points: &str, quantity: &str) -> Histor
         exit_agg_id: None,
         mae_points: None,
         mfe_points: None,
+        fees_points: Decimal::ZERO,
     };
     HistoryRow {
         symbol: symbol.to_owned(),

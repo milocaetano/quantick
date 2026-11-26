@@ -623,6 +623,7 @@ impl BrokerCore {
             exit_agg_id: None,
             mae_points: Some(adverse.saturating_mul(quantity)),
             mfe_points: Some(favorable.saturating_mul(quantity)),
+            fees_points: Decimal::ZERO,
         };
         self.ledger.realized = self.ledger.realized.saturating_add(pnl);
         self.ledger.closed.push(trade.clone());

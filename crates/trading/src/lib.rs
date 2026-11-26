@@ -28,6 +28,7 @@
 //! [`Trade`](quantick_engine::Trade), and on nothing else in the workspace.
 
 pub mod broker;
+mod costs;
 mod events;
 mod intent;
 mod money;
@@ -38,6 +39,7 @@ mod venue;
 pub mod fake;
 
 pub use broker::{AccountFacts, BrokerConnector, BrokerVenue, LinkState, MarginMode, TradeMode};
+pub use costs::{Commission, CostsError, FillCosts};
 pub use events::{
     CancelReason, ExitReason, Fill, FillRole, RejectReason, VENUE_TEXT_BYTES, VenueEvent,
     VenueNotice, VenueRequest, VenueText,

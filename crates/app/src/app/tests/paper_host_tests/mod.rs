@@ -803,6 +803,7 @@ fn the_ledger_cache_excludes_the_live_session_file() {
         exit_agg_id: Some(2),
         mae_points: Some(Decimal::ZERO),
         mfe_points: Some(Decimal::from(5)),
+        fees_points: Decimal::ZERO,
     };
     let mut text = history::write_header("LEDGX", history::SessionSource::Live);
     text.push_str(&history::write_trade(&trade));

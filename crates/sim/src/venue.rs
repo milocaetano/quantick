@@ -19,8 +19,8 @@ use quantick_engine::Trade;
 use rust_decimal::Decimal;
 
 use quantick_trading::{
-    Bracket, BracketTarget, CloseAmount, ClosedTrade, EntryKind, Order, OrderId, OrderIntent,
-    Position, RejectReason, TradingVenue, VenueEvent,
+    Bracket, BracketTarget, CloseAmount, ClosedTrade, EntryKind, FillCosts, Order, OrderId,
+    OrderIntent, Position, RejectReason, TradingVenue, VenueEvent,
 };
 
 use crate::simulator::{Command, QueuedAction, Simulator};
@@ -83,6 +83,10 @@ impl Command {
 }
 
 impl TradingVenue for Simulator {
+    fn set_fill_costs(&mut self, costs: FillCosts) {
+        self.set_costs(costs);
+    }
+
     fn submit(&mut self, intent: OrderIntent) -> Vec<VenueEvent> {
         let command = match (intent.kind, intent.price) {
             (EntryKind::Market, _) => Command::PlaceMarket {

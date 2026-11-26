@@ -48,6 +48,19 @@
 //! between it is dropped and reported ([`VenueEvent::BracketDropped`]) —
 //! kept, it would exit on the next print wearing a lying label.
 //!
+//! # Fill costs
+//!
+//! A simulator built [`Simulator::with_costs`] (or told
+//! [`TradingVenue::set_fill_costs`]) prices its fills with a
+//! [`FillCosts`](quantick_trading::FillCosts): market-style fills (market and stop entries, stop exits,
+//! hand closes, flattens and resets) land `slippage_ticks` against the
+//! trader; with conservative limits on, a resting limit (an entry or a take
+//! profit) fills only on a print one tick through its price; and each
+//! [`ClosedTrade`] carries the commission both its sides paid in
+//! `fees_points`, charged at its entry average and its exit price. Its
+//! `pnl_points` stays gross. The default costs are free and change nothing
+//! above.
+//!
 //! # Processing order within one print
 //!
 //! Deterministic and fixed: (1) position brackets — stop loss, then take
