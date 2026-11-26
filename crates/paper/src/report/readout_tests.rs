@@ -463,3 +463,42 @@ fn sim_and_broker_trades_of_one_market_share_one_walk() {
         assert_eq!(walks.ends_text(), end);
     }
 }
+
+/// Units that never add up: the NET tile leads with each walk's end, the
+/// other figure behind it, coloured only where every end agrees.
+#[test]
+fn a_view_over_units_that_never_add_up_leads_with_each_end() {
+    let history = LoadedHistory {
+        rows: vec![
+            row("WINZ26", 1_000, "400", "2"),
+            row("BTCUSDT", 2_000, "-60", "0.5"),
+        ],
+        files: 1,
+        unreadable_files: 0,
+        problem_rows: 0,
+        sessions: BTreeMap::new(),
+    };
+    let cut = || {
+        ReportView::cut(
+            &history,
+            ReportPeriod::All,
+            SourceFilter::All,
+            &Default::default(),
+            TzOffset::new(0),
+        )
+    };
+    let money = cut().with_pnl(World::new(Some(PnlPrimary::Money)).reader());
+    assert_eq!(money.net_text.0, "+80.00 BRL / -60.00 USDT");
+    assert_eq!(
+        money.net_tint,
+        Decimal::ZERO,
+        "a gain and a loss: no colour"
+    );
+    let points = World::new(Some(PnlPrimary::PointsTimesQty));
+    let view = cut().with_pnl(points.reader());
+    assert!(view.net_text.0.starts_with("+400 pts WIN* / "));
+    assert_eq!(
+        view.net_text.1, "+80.00 BRL / -60.00 USDT",
+        "money behind the points"
+    );
+}

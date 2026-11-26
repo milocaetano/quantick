@@ -50,7 +50,6 @@ pub(crate) fn caption(palette: &crate::theme::Palette, text: &str) -> egui::Rich
         .color(palette.text_faint())
 }
 
-/// A pill-shaped toggle chip: accent fill while on, quiet control while off.
 /// The P&L switch: which figure leads every readout, right-aligned in
 /// its row. The ticket and the report paint the same one; answers a pick
 /// of another figure.
@@ -78,6 +77,7 @@ pub(crate) fn pnl_mode_switch(
     picked
 }
 
+/// A pill-shaped toggle chip: accent fill while on, quiet control while off.
 pub(crate) fn pill_toggle(ui: &mut egui::Ui, label: &str, on: bool, hover: &str) -> egui::Response {
     let palette = theme::get(ui.ctx());
     let (fill, ink, stroke) = if on {

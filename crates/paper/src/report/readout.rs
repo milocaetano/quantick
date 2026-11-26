@@ -184,6 +184,19 @@ impl EquityWalks {
         self.walk_at(k).points.get(k).copied().unwrap_or_default()
     }
 
+    /// The sign every walk ends on, or zero where they disagree.
+    #[must_use]
+    pub fn ends_tint(&self) -> Decimal {
+        let ends = || self.walks.iter().filter_map(|walk| walk.points.last());
+        if ends().all(|end| *end > Decimal::ZERO) {
+            Decimal::ONE
+        } else if ends().all(|end| *end < Decimal::ZERO) {
+            Decimal::NEGATIVE_ONE
+        } else {
+            Decimal::ZERO
+        }
+    }
+
     /// Each walk's end side by side: the net of units that never add up.
     #[must_use]
     pub fn ends_text(&self) -> String {
@@ -307,11 +320,19 @@ impl ReportView {
             .iter()
             .map(|row| pnl.trade(&row.symbol, row.trade.net_points(), row.trade.quantity))
             .collect();
-        self.net_text = pnl.word_split(&total);
         if self.equity.walks().len() > 1 {
-            self.net_text.0 = self.equity.ends_text();
+            // Units that never add up: the net is each walk's end, the
+            // other figure behind it, and the colour only where all agree.
+            let other = match self.equity.walks()[0].primary {
+                PnlPrimary::Money => PnlPrimary::PointsPerContract,
+                _ => PnlPrimary::Money,
+            };
+            self.net_text = (self.equity.ends_text(), total.fmt(other));
+            self.net_tint = self.equity.ends_tint();
+        } else {
+            self.net_text = pnl.word_split(&total);
+            self.net_tint = pnl.tint(&total);
         }
-        self.net_tint = pnl.tint(&total);
         self.pnl_key = Some(pnl.key());
         self
     }

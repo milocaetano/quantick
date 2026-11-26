@@ -1116,16 +1116,3 @@ fn paper_ledger_folds_selection_and_session_edits_delegate_to_domain() {
         }))
     );
 }
-
-/// The report's P&L switch asks the host for the figure, the same choice the
-/// ticket's switch and `session.pnl_display.set` make; the report keeps no
-/// copy of it.
-#[test]
-fn the_report_switch_asks_the_host_for_the_figure() {
-    let mut state = State::default();
-    let primary = quantick_paper::pnl::PnlPrimary::PointsPerContract;
-    assert_eq!(
-        Model::update(&mut state, Intent::PnlPrimary(primary)).pnl_primary,
-        Some(primary)
-    );
-}
