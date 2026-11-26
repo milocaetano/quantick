@@ -321,7 +321,7 @@ fn label(
     let size = ctxt.text.size(text, font) + vec2(2.0 * LABEL_PAD_X_PX, 2.0 * LABEL_PAD_Y_PX);
     let rect = anchor.anchor_size(at, size);
     painter.rect_filled(rect, LABEL_RADIUS_PX, plate);
-    painter.text(
+    painter.plate_text(
         rect.min + vec2(LABEL_PAD_X_PX, LABEL_PAD_Y_PX),
         Align2::LEFT_TOP,
         text,

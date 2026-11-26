@@ -125,14 +125,21 @@ pub(in crate::pane) fn paint_scene(painter: &egui::Painter, scene: &MarkScene) {
                 text,
                 font,
                 color,
+                on_plate,
             } => {
                 // A theme without label plates writes bare, legible ink and
                 // never backs it; one with plates may back low-contrast text.
-                let color = to_color32(palette.resolved.drawing_text_ink(*color));
+                // Text on the drawing's own plate keeps the ink it chose.
+                let color = to_color32(if *on_plate {
+                    *color
+                } else {
+                    palette.resolved.drawing_text_ink(*color)
+                });
                 let galley = painter.layout_no_wrap(text.clone(), font_id(*font), color);
                 let rect =
                     egui::Align2([align(*x), align(*y)]).anchor_size(pos(*at), galley.size());
-                if palette.resolved.drawing_label_plates
+                if !*on_plate
+                    && palette.resolved.drawing_label_plates
                     && let Some(backing) =
                         crate::drawings::text_backing(&palette, color, palette.canvas())
                 {

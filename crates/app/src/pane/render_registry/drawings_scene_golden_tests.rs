@@ -388,6 +388,7 @@ fn drawing_text_and_forms_remain_readable() {
                         size_px: 12.0,
                     },
                     color: PremultipliedRgba::from_premultiplied(color.to_array()),
+                    on_plate: false,
                 });
                 let output = ctx.run(egui::RawInput::default(), |ctx| {
                     paint_scene(
@@ -449,4 +450,54 @@ fn drawing_text_and_forms_remain_readable() {
             }
         }
     }
+}
+
+/// Text on a drawing's own plate keeps the ink it chose against that plate:
+/// Light's paper, which shades bare labels to read on the canvas, must not
+/// grey a position's white words on its green plate.
+#[cfg(test)]
+#[test]
+fn plate_text_keeps_its_ink_on_light() {
+    use quantick_appearance::{Appearance, PremultipliedRgba};
+    let ctx = egui::Context::default();
+    let mut appearance = Appearance::default();
+    appearance.apply(quantick_appearance::LIGHT).unwrap();
+    crate::theme::sync(&ctx, &appearance);
+    let _scope = crate::theme::scope(&ctx, crate::theme::get(&ctx));
+    let mut scene = MarkScene::default();
+    scene.plate_text(
+        Px::new(100.0, 100.0),
+        quantick_drawings::Align2([quantick_drawings::Align::Min, quantick_drawings::Align::Min]),
+        "Target 110",
+        quantick_drawings::FontSpec {
+            family: quantick_drawings::FontFamily::Monospace,
+            size_px: 10.0,
+        },
+        PremultipliedRgba::from_rgb(255, 255, 255),
+    );
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        paint_scene(
+            &ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("plate"),
+            )),
+            &scene,
+        );
+    });
+    let ink = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => Some(text.galley.job.sections[0].format.color),
+            _ => None,
+        })
+        .expect("plate text");
+    assert_eq!(ink, egui::Color32::WHITE);
+    assert!(
+        !output
+            .shapes
+            .iter()
+            .any(|shape| matches!(shape.shape, egui::Shape::Rect(_))),
+        "the drawing painted its own plate; no backing is added"
+    );
 }

@@ -76,13 +76,17 @@ pub enum MarkShape {
         fill: PremultipliedRgba,
         stroke: Stroke,
     },
-    /// One line of text whose `anchor` point sits at `at`.
+    /// One line of text whose `anchor` point sits at `at`. Bare text is
+    /// made legible on the canvas by the renderer; text `on_plate` sits on
+    /// the drawing's own solid plate, was inked against it, and is painted
+    /// as given.
     Text {
         at: Px,
         anchor: Align2,
         text: String,
         font: FontSpec,
         color: PremultipliedRgba,
+        on_plate: bool,
     },
 }
 
@@ -199,6 +203,27 @@ impl MarkScene {
             text: text.to_string(),
             font,
             color,
+            on_plate: false,
+        });
+    }
+
+    /// Text on a solid plate the caller painted under it, in an ink chosen
+    /// against that plate rather than the canvas.
+    pub fn plate_text(
+        &mut self,
+        at: Px,
+        anchor: Align2,
+        text: impl ToString,
+        font: FontSpec,
+        color: PremultipliedRgba,
+    ) {
+        self.add(MarkShape::Text {
+            at,
+            anchor,
+            text: text.to_string(),
+            font,
+            color,
+            on_plate: true,
         });
     }
 }

@@ -743,6 +743,16 @@ fn the_factory_look_reads_on_light_and_dark() {
                 })
                 .unwrap()
         };
+        assert!(
+            scene.shapes.iter().all(|shape| !matches!(
+                shape,
+                crate::MarkShape::Text {
+                    on_plate: false,
+                    ..
+                }
+            )),
+            "every word sits on its plate, inked against it"
+        );
         assert_eq!(words("Target"), white, "dark {dark}");
         assert_eq!(words("Long"), white, "dark {dark}");
         let stop_plate = crate::rgba_unmultiplied(stop[0], stop[1], stop[2], u8::MAX);
