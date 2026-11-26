@@ -65,6 +65,7 @@ impl<T: ToolCatalog> Drawings<T> {
                 magnet: false,
                 foreign_market: false,
                 off_series: false,
+                saved_frame: false,
                 durable_identity: None,
                 origin: None,
                 payload: fresh.payload,
@@ -168,7 +169,8 @@ impl<T: ToolCatalog> Drawings<T> {
     /// An anchor with no timestamp at all is one dropped past the newest bar,
     /// where the tape has written nothing (see `ChartPoint::time_ms`). It has
     /// no instant to look up, so it keeps its distance past the end of the
-    /// series instead — which is exactly where the trader put it.
+    /// series instead — which is exactly where the trader put it. A mark just
+    /// read from the file is the exception ([`Drawing::saved_frame`]).
     ///
     /// Rate: once per re-cut, never per frame or per trade, over a handful of
     /// objects. The undo stacks travel with the live items for the same
@@ -182,8 +184,7 @@ impl<T: ToolCatalog> Drawings<T> {
     ) {
         self.each_copy(|items| {
             for drawing in items {
-                drawing.off_series =
-                    reanchor_points(&mut drawing.points, (old_slots, new_slots), &slot_of);
+                reanchor_drawing(drawing, (old_slots, new_slots), &slot_of);
             }
         });
     }
@@ -204,7 +205,7 @@ impl<T: ToolCatalog> Drawings<T> {
             for drawing in items.iter_mut().filter(|drawing| drawing.off_series) {
                 // Same length either side: an undated anchor already moved
                 // with the shift and has nothing to re-ask.
-                drawing.off_series = reanchor_points(&mut drawing.points, (0, 0), &slot_of);
+                reanchor_drawing(drawing, (0, 0), &slot_of);
             }
         });
     }
@@ -387,6 +388,49 @@ fn reanchor_payload<T: ToolCatalog>(drawing: &mut crate::Drawing<T>, before: &[C
     {
         drawing.payload = payload;
     }
+}
+
+/// One object re-expressed against a re-cut series of `new_slots` that held
+/// `old_slots`, setting [`Drawing::off_series`].
+///
+/// A mark still in its file's bar space ([`Drawing::saved_frame`]) has no
+/// `old_slots` worth the name: the file never recorded the length of the
+/// series it was saved on, so a distance past that end would throw an
+/// undated anchor as far as the reopened series is long. Its undated anchors
+/// move with its first dated anchor instead, which keeps the span the trader
+/// saw at the close on the same bars rebuilt from the same prints.
+fn reanchor_drawing<T>(
+    drawing: &mut Drawing<T>,
+    slots: (usize, usize),
+    slot_of: &impl Fn(i64) -> Option<f32>,
+) {
+    let saved_frame = std::mem::take(&mut drawing.saved_frame);
+    let reference = drawing
+        .points
+        .iter()
+        .find_map(|point| Some((point.bar, point.time_ms?)));
+    let Some((saved_bar, time)) = reference.filter(|_| saved_frame) else {
+        // Undated throughout, a saved mark has neither an instant nor a
+        // known end to measure from: it keeps the bars it was saved at.
+        let slots = if saved_frame { (0, 0) } else { slots };
+        drawing.off_series = reanchor_points(&mut drawing.points, slots, slot_of);
+        return;
+    };
+    let landed = slot_of(time);
+    let shift = landed.unwrap_or(0.0) - saved_bar;
+    let undated = drawing
+        .points
+        .iter_mut()
+        .filter(|point| point.time_ms.is_none());
+    for point in undated {
+        point.bar += shift;
+    }
+    // Dated anchors keep their own rule; undated ones moved above and see no
+    // change of length here.
+    drawing.off_series = reanchor_points(&mut drawing.points, (0, 0), slot_of);
+    // Parked on slot 0, the reference has not left the file's frame yet:
+    // the history that settles it later must carry the undated anchors too.
+    drawing.saved_frame = landed.is_none();
 }
 
 /// Anchors re-expressed against a re-cut series of `new_slots` that held

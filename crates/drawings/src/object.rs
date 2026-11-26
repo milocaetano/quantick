@@ -86,6 +86,16 @@ pub struct Drawing<T> {
     /// from [`PartialEq`] so re-anchoring can never look like a user edit to
     /// the undo history.
     pub off_series: bool,
+    /// Set on a mark read back from the market store until its first dated
+    /// anchor lands on its own instant: its anchors still stand in the bar
+    /// space of the series it was saved on, whose length the file does not
+    /// record. Until then an undated anchor (dropped past the newest bar)
+    /// keeps its saved distance from that dated anchor rather than a distance
+    /// past an end nobody knows — see [`Drawings::reanchor`].
+    ///
+    /// Derived state like [`Self::off_series`], so it stays out of
+    /// [`PartialEq`].
+    pub saved_frame: bool,
     /// Tool-owned state (Fib levels, a future tool's own properties). The
     /// registry creates it; the shared envelope never learns its fields.
     pub payload: Box<dyn DrawingPayload>,

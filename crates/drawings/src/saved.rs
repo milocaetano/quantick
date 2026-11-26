@@ -136,6 +136,7 @@ impl SavedDrawingExt for SavedDrawing {
             legacy_unpinned: self.bars.is_none() && !self.all_timeframes(),
             foreign_market: false,
             off_series: false,
+            saved_frame: true,
             origin: self.origin.clone(),
             payload,
         })
