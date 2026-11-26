@@ -9,7 +9,9 @@
 #   worktree-guard    PreToolUse on Edit|Write|NotebookEdit. Denies a write
 #                     that lands in the main checkout while it sits on the
 #                     main branch ("one goal, one worktree").
-#   pr-gate           PreToolUse on Bash. Denies a non-draft `gh pr
+#   pr-gate           PreToolUse on Bash. Denies an agent's write of
+#                     `code-review-ok`, a `gh api` merge or un-draft, and a
+#                     non-draft `gh pr
 #                     create`, `gh pr ready` and `gh pr merge` until a
 #                     current `code-review-ok` matches the exact change;
 #                     an `implement` branch owes it before any PR, draft
@@ -33,15 +35,9 @@
 #                     has no `build.jobs` cap, tells the session to bring
 #                     docs/dev-machine.md to the user before building.
 #
-# What `runs_command` can and cannot see is a known, bounded limitation, and it
-# is deliberately left as it was rather than deepened. It splits on `&&`, `||`
-# and `;` and anchors the match, so spellings that put the command elsewhere —
-# a pipe, a newline, an env prefix, a wrapper — are not detected. An attempt to
-# close that by parsing harder ran to eight review rounds without converging:
-# every round shut some spellings and opened others, twice producing a denial
-# whose own remedy would have disabled the gate permanently. Widening this is
-# its own change, with its own review; a half-parser that looks airtight is
-# worse than a narrow one that is documented. See README.md.
+# What `shell_statements` can and cannot see is listed where it is defined and
+# in README.md; every spelling it claims has a case in guardrails_test.sh, and
+# every spelling it does not is written down rather than half-handled.
 #
 # Every mode filters the tool payload itself rather than relying on the hook
 # config's `if` matcher: a matcher that silently fails to match would leave a
@@ -168,14 +164,216 @@ ask() {
     exit 0
 }
 
+# Raw JSON string `$1`, the payload's `command`, as the shell reads it: the
+# escapes undone, so quotes and line breaks are real before anything splits.
+json_command() {
+    printf '%s' "$1" | awk '
+        { s = s $0 }
+        END {
+            n = length(s)
+            for (i = 1; i <= n; i++) {
+                c = substr(s, i, 1)
+                if (c != "\\" || i == n) { out = out c; continue }
+                e = substr(s, ++i, 1)
+                if (e == "n") out = out "\n"
+                else if (e == "t") out = out "\t"
+                else if (e == "r") out = out ""
+                else if (e == "u") {
+                    h = tolower(substr(s, i + 1, 4))
+                    if (h == "0026") out = out "&"
+                    else if (h == "003c") out = out "<"
+                    else if (h == "003e") out = out ">"
+                    else if (h == "0027") out = out "\047"
+                    else { out = out "\\u" substr(s, i + 1, 4) }
+                    i += 4
+                }
+                else out = out e
+            }
+            printf "%s", out
+        }'
+}
+
+# Every statement the command `$1` would run, one per line, each starting at
+# its command word. This is what the gate matches, so a gated command is seen
+# wherever the shell would run it and nowhere it is merely mentioned:
+#
+#   split on `&&`, `||`, `;`, `|`, `&`, `(`, `)`, a backtick and a line break,
+#     but never inside quotes, so a commit message naming `gh pr merge` stays
+#     one statement that runs `git`;
+#   a heredoc body is data and is dropped, unless a shell on the same line
+#     could be reading it as a script;
+#   `{`, `!`, `time`, `nohup`, `exec`, `command`, `builtin`, `sudo`, `env`
+#     with its options and `VAR=value` words are stripped from the front;
+#   a command word spelled as a path or with `.exe` is reduced to its name;
+#   `bash -c '...'`, `sh -lc "..."` (any shell, any option cluster with `c`)
+#     and `eval ...` are unwrapped and their script split the same way.
+#
+# What it cannot see, by design: a program read from a file, from a pipe into
+# a shell, or by another interpreter (`echo ... | sh`, `python -c`, `xargs`),
+# a command substitution inside double quotes, aliases and functions. The
+# markers are workflow evidence, not a security boundary; see README.md.
+shell_statements() {
+    printf '%s' "$1" | awk '
+        function trim(t) { sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t); return t }
+        # Lower-cased: Windows resolves `GH.exe` to `gh.exe`.
+        function base(w) {
+            w = tolower(w)
+            sub(/^.*[\/\\]/, "", w)
+            if (tolower(substr(w, length(w) - 3)) == ".exe") w = substr(w, 1, length(w) - 4)
+            return w
+        }
+        function is_shell(w) { return w ~ /^(sh|bash|dash|zsh|ksh|ash)$/ }
+        # Split `t` into words[1..nw], quotes kept, quote-aware.
+        function words_of(t,    i, n, c, q, w, nw) {
+            delete words
+            n = length(t); q = ""; w = ""; nw = 0
+            for (i = 1; i <= n; i++) {
+                c = substr(t, i, 1)
+                if (q != "") {
+                    if (q == "\"" && c == "\\" && i < n) { w = w c substr(t, ++i, 1); continue }
+                    if (c == q) q = ""
+                    w = w c; continue
+                }
+                if (c == "\\" && i < n) { w = w c substr(t, ++i, 1); continue }
+                if (c == "\047" || c == "\"") { q = c; w = w c; continue }
+                if (c == " " || c == "\t") { if (w != "") words[++nw] = w; w = ""; continue }
+                w = w c
+            }
+            if (w != "") words[++nw] = w
+            return nw
+        }
+        # What the shell passes for word `w`: quotes removed, escapes applied.
+        function unquote(w,    i, n, c, q, out) {
+            n = length(w); q = ""; out = ""
+            for (i = 1; i <= n; i++) {
+                c = substr(w, i, 1)
+                if (q == "\047") { if (c == q) q = ""; else out = out c; continue }
+                if (q == "\"") {
+                    if (c == "\\" && i < n && index("\"\\$`", substr(w, i + 1, 1))) { out = out substr(w, ++i, 1); continue }
+                    if (c == q) q = ""; else out = out c
+                    continue
+                }
+                if (c == "\\" && i < n) { out = out substr(w, ++i, 1); continue }
+                if (c == "\047" || c == "\"") { q = c; continue }
+                out = out c
+            }
+            return out
+        }
+        # Print statement `t` from its command word, or split what it unwraps.
+        function emit(t, depth,    nw, k, w, cmd, j, rest) {
+            t = trim(t)
+            if (t == "") return
+            nw = words_of(t)
+            k = 1
+            while (k <= nw) {
+                w = words[k]
+                if (w ~ /^(\{|!|time|nohup|exec|command|builtin|sudo)$/) { k++; continue }
+                if (w ~ /^-/ && k > 1 && words[k - 1] == "time") { k++; continue }
+                if (w ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { k++; continue }
+                if (base(w) == "env") {
+                    k++
+                    while (k <= nw && words[k] ~ /^-/) k += (words[k] == "-u" ? 2 : 1)
+                    continue
+                }
+                break
+            }
+            # Nothing but assignments: the statement itself, as written.
+            if (k > nw) { print t; return }
+            cmd = base(unquote(words[k]))
+            if (depth < 8 && is_shell(cmd)) {
+                for (j = k + 1; j <= nw; j++) {
+                    if (words[j] ~ /^-[A-Za-z]*c[A-Za-z]*$/) {
+                        if (j < nw) split_all(unquote(words[j + 1]), depth + 1)
+                        return
+                    }
+                    if (words[j] == "-o" || words[j] == "+o") { j++; continue }
+                    if (words[j] !~ /^[-+]/) break
+                }
+            }
+            if (depth < 8 && cmd == "eval") {
+                rest = ""
+                for (j = k + 1; j <= nw; j++) rest = rest " " unquote(words[j])
+                split_all(rest, depth + 1)
+                return
+            }
+            # The subcommand words unquoted, so `gh "pr" merge` reads as what
+            # it runs; every argument after them stays as written, quotes kept.
+            rest = cmd
+            for (j = k + 1; j <= nw; j++) {
+                w = words[j]
+                if (j <= k + 2 && unquote(w) !~ /[ \t]/) w = unquote(w)
+                rest = rest " " w
+            }
+            print rest
+        }
+        function split_all(s, depth,    n, i, c, q, cur, line_shell, nd, d, ds, j, dw, dq, line, e) {
+            n = length(s); q = ""; cur = ""; nd = 0; line_shell = 0
+            for (i = 1; i <= n; i++) {
+                c = substr(s, i, 1)
+                if (q == "\047") { if (c == q) q = ""; cur = cur (c == "\n" ? " " : c); continue }
+                if (q == "\"") {
+                    if (c == "\\" && i < n) { cur = cur c substr(s, ++i, 1); continue }
+                    if (c == q) q = ""
+                    cur = cur (c == "\n" ? " " : c); continue
+                }
+                if (c == "\\" && i < n) {
+                    if (substr(s, i + 1, 1) == "\n") { i++; cur = cur " "; continue }
+                    cur = cur c substr(s, ++i, 1); continue
+                }
+                if (c == "\047" || c == "\"") { q = c; cur = cur c; continue }
+                if (c == "#" && (cur == "" || cur ~ /[ \t]$/)) {
+                    while (i < n && substr(s, i + 1, 1) != "\n") i++
+                    continue
+                }
+                if (substr(s, i, 2) == "<<" && substr(s, i, 3) != "<<<") {
+                    j = i + 2; ds = 0
+                    if (substr(s, j, 1) == "-") { ds = 1; j++ }
+                    while (substr(s, j, 1) == " " || substr(s, j, 1) == "\t") j++
+                    dw = ""; dq = substr(s, j, 1)
+                    if (dq == "\047" || dq == "\"") {
+                        for (j++; j <= n && substr(s, j, 1) != dq; j++) dw = dw substr(s, j, 1)
+                        j++
+                    } else {
+                        for (; j <= n && substr(s, j, 1) !~ /[ \t\n;&|<>()]/; j++) dw = dw substr(s, j, 1)
+                    }
+                    if (dw != "") { nd++; delim[depth, nd] = dw; dstrip[depth, nd] = ds }
+                    cur = cur substr(s, i, j - i); i = j - 1
+                    continue
+                }
+                if (c ~ /[;|&()`\n]/) {
+                    if (cur ~ /(^|[ \/\\])(sh|bash|dash|zsh|ksh|ash)(\.exe)?([ \t]|$)/) line_shell = 1
+                    emit(cur, depth); cur = ""
+                    if (c == "\n") {
+                        # A body a shell may read is commands; any other is data.
+                        if (nd > 0 && !line_shell) {
+                            for (d = 1; d <= nd; d++) {
+                                while (i < n) {
+                                    e = index(substr(s, i + 1), "\n")
+                                    line = e ? substr(s, i + 1, e - 1) : substr(s, i + 1)
+                                    i = e ? i + e : n
+                                    if (dstrip[depth, d]) sub(/^\t+/, "", line)
+                                    if (line == delim[depth, d]) break
+                                }
+                            }
+                        }
+                        nd = 0; line_shell = 0
+                    }
+                    continue
+                }
+                cur = cur c
+            }
+            emit(cur, depth)
+        }
+        { s = s (NR > 1 ? "\n" : "") $0 }
+        END { split_all(s, 0) }'
+}
+
 # True when the command actually runs `$2` as a statement, rather than merely
 # mentioning it. A commit message body reaches the hook inside the command
 # string, so a free substring match blocks `git commit -F -` whenever the
 # message happens to name the gated command.
 runs_command() {
-    printf '%s' "$1" |
-        sed 's/&&/\n/g; s/||/\n/g; s/;/\n/g' |
-        grep -qE "^[[:space:]]*$2([[:space:]]|\$)"
+    shell_statements "$1" | grep -qE "^$2([[:space:]]|\$)"
 }
 
 # The directory the command operates on. The payload's `cwd` is the session's,
@@ -183,7 +381,9 @@ runs_command() {
 # with a leading `cd <dir> &&`. Trusting `cwd` alone made the gate judge the
 # main checkout no matter which branch was being shipped.
 effective_dir() {
-    d=$(printf '%s' "$1" | sed -n 's|^[[:space:]]*cd[[:space:]][[:space:]]*"\{0,1\}\([^"[:space:];&|]*\)"\{0,1\}.*|\1|p' | head -n 1)
+    # The first line only: a `cd` on a later line runs after the first line's
+    # statements, so it cannot say where they ran.
+    d=$(printf '%s\n' "$1" | head -n 1 | sed -n 's|^[[:space:]]*cd[[:space:]][[:space:]]*"\{0,1\}\([^"[:space:];&|]*\)"\{0,1\}.*|\1|p' | head -n 1)
     d=$(normalize_path "$d")
     if [ -n "$d" ] && [ -d "$d" ]; then
         printf '%s' "$d"
@@ -349,8 +549,10 @@ require_marker() {
         require_record="sh .claude/hooks/mission_base.sh key \\\"$require_dir\\\" > \\\"$require_file\\\""
     fi
     if [ "$require_name" = "$IMPLEMENT_MARKER" ]; then
-        # Claude Code's classifier denies the agent this write; the hook does it.
-        require_record="end the review with \`REVIEW-VERDICT: pass $require_dir <HEAD>\` and the review-verdict hook records it. Codex only: $require_record"
+        # The agent never writes this marker, and pr-gate refuses the write;
+        # the review-verdict hook records it, and under Codex, which has no
+        # such hook, the user does.
+        require_record="end the review with \`REVIEW-VERDICT: pass $require_dir <HEAD>\` and the review-verdict hook records it. Codex: ask the user to run, outside the agent: $require_record"
     fi
 
     if [ ! -f "$require_file" ]; then
@@ -422,15 +624,45 @@ worktree_guard() {
 
 # --- pr-gate ----------------------------------------------------------------
 
-# The statement inside `$1` that runs `$2`, or nothing. Split exactly as
-# `runs_command` splits, because a flag the gate reads must come from the
-# statement it matched rather than from anywhere else on the line: a `--draft`
-# in a neighbouring `echo` is not a draft PR.
+# The statement among `shell_statements` output `$1` that runs `$2`, or
+# nothing. A flag the gate reads must come from the statement it matched
+# rather than from anywhere else on the line: a `--draft` in a neighbouring
+# `echo` is not a draft PR.
 gh_statement() {
-    printf '%s' "$1" |
-        sed 's/&&/\n/g; s/||/\n/g; s/;/\n/g' |
-        grep -E "^[[:space:]]*$2([[:space:]]|$)" |
+    printf '%s\n' "$1" |
+        grep -E "^$2([[:space:]]|$)" |
         head -n 1
+}
+
+# True when statements `$1` run `$2`.
+has_statement() {
+    printf '%s\n' "$1" | grep -qE "^$2([[:space:]]|\$)"
+}
+
+# True when a statement in `$1` writes the review marker: it names the marker
+# and redirects output, is an assignment, or runs a tool that writes files.
+# Reading or removing it stays allowed; removing only makes the gate stricter.
+writes_marker() {
+    printf '%s\n' "$1" | grep -F "$IMPLEMENT_MARKER" | {
+        while IFS= read -r marker_line; do
+            case "$(unquoted_arguments "$marker_line")" in *'>'*) exit 0 ;; esac
+            case "${marker_line%% *}" in
+                tee | cp | mv | install | ln | touch | dd | sed | truncate | \
+                    python | python3 | py | perl | ruby | node | pwsh | powershell | cmd | \
+                    [A-Za-z_]*=*) exit 0 ;;
+            esac
+        done
+        exit 1
+    }
+}
+
+# True when a `gh api` statement in `$1` merges, enqueues or un-drafts a PR:
+# REST `pulls/<n>/merge`, a `pulls/<n>` write naming `draft` or sending a body
+# from `--input`, or the GraphQL mutations that do the same.
+api_ships_pr() {
+    api_pull='pulls/[^/[:space:]"'\'']+([[:space:]"'\''?]|$)'
+    printf '%s\n' "$1" | grep -E '^gh api([[:space:]]|$)' |
+        grep -qiE "pulls/[^/[:space:]]+/merge|mergePullRequest|enablePullRequestAutoMerge|enqueuePullRequest|markPullRequestReadyForReview|$api_pull.*(draft|--input)|(draft|--input).*$api_pull"
 }
 
 # The statement with its quoted spans blanked out, so a flag can be read from
@@ -576,7 +808,26 @@ pass_pr_gate() {
 }
 
 pr_gate() {
-    command=$(json_string_field command)
+    gate_raw=$(json_string_field command)
+    # Every Bash call passes here, and each spawn costs tens of milliseconds on
+    # Windows. A command that never spells `gh`, the marker or a word broken
+    # by a quote or escape after a `g` (`g\h`, `"g"h`) runs none of them.
+    case "$gate_raw" in
+        *[gG][hH]* | *[gG][\\\"\']* | *"$IMPLEMENT_MARKER"*) ;;
+        *) exit 0 ;;
+    esac
+    command=$(json_command "$gate_raw")
+    gate_lines=$(shell_statements "$command")
+
+    # The review's record is written by the review-verdict hook, or under
+    # Codex by the user; an agent writing it would be grading its own work.
+    writes_marker "$gate_lines" &&
+        deny "\"\`$IMPLEMENT_MARKER\` records an independent review: the review-verdict hook writes it from the reviewer's verdict line, and under Codex the user runs the recording command outside the agent. An agent never writes it.\""
+
+    # `gh api` reaches the endpoints behind `gh pr merge` and `gh pr ready`
+    # with none of the flags this gate reads, so it never carries them.
+    api_ships_pr "$gate_lines" &&
+        deny '"`gh api` does not merge, enqueue or un-draft a PR past this gate; use `gh pr merge` or `gh pr ready <number>`, which it checks."'
 
     # Which of the three the command is, because they are gated differently:
     # `create` opens the PR that carries the findings, while `ready` and
@@ -587,11 +838,11 @@ pr_gate() {
     # && gh pr ready` is the natural way to end phase one and open phase two —
     # and matching `create` first would hand that line the draft exemption and
     # let the `gh pr ready` beside it through with no review at all.
-    if runs_command "$command" "gh pr merge"; then
+    if has_statement "$gate_lines" "gh pr merge"; then
         gate_action=merge
-    elif runs_command "$command" "gh pr ready"; then
+    elif has_statement "$gate_lines" "gh pr ready"; then
         gate_action=ready
-    elif runs_command "$command" "gh pr create"; then
+    elif has_statement "$gate_lines" "gh pr create"; then
         gate_action=create
     else
         exit 0
@@ -612,6 +863,12 @@ pr_gate() {
     # with no parent issue; a /feature child keeps its own authorization and
     # identity checks in the full gate.
     implement_base=$(review_base "$dir" 2>/dev/null) || implement_base=
+
+    # Refused before any marker read or network call: the hook runs under a
+    # 10 s timeout, and a hook that times out lets the command through.
+    [ "$gate_action" = merge ] && [ "$implement_base" = "origin/$MAIN_BRANCH" ] &&
+        deny '"Merge to main is reserved exclusively for the user; do not enable auto-merge or enqueue it."'
+
     if [ "$(declared_tier "$dir")" = "$IMPLEMENT_TIER" ] &&
         { [ "$implement_base" = "origin/$MAIN_BRANCH" ] ||
             sh "$(dirname "$0")/mission_base.sh" implement-target "$dir" >/dev/null 2>&1; }; then
@@ -621,8 +878,8 @@ pr_gate() {
         # words, one value exactly: `gh` takes the last of several, and a title
         # may name the flag. Whichever verb ranks highest on the line.
         if [ "$implement_target" != "$MAIN_BRANCH" ] &&
-            runs_command "$(unquoted_arguments "$command")" "gh pr create"; then
-            implement_named=$(unquoted_arguments "$(gh_statement "$command" "gh pr create")" |
+            has_statement "$gate_lines" "gh pr create"; then
+            implement_named=$(unquoted_arguments "$(gh_statement "$gate_lines" "gh pr create")" |
                 sed 's/\\[nrt]/ /g' |
                 tr -s ' \t\r\n\\' '\n' |
                 awk 'named { print; named = 0; next }
@@ -649,7 +906,7 @@ pr_gate() {
             implement_grant="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/agent-merge-grant"
             if [ "$implement_target" != "$MAIN_BRANCH" ] && [ -f "$implement_grant" ] &&
                 grep -qxF "$implement_target" "$implement_grant"; then
-                implement_pr=$(pr_number "$(gh_statement "$command" "gh pr merge")")
+                implement_pr=$(pr_number "$(gh_statement "$gate_lines" "gh pr merge")")
                 implement_checks=$(cd "$dir" && gh pr checks "$implement_pr" --json bucket --jq '.[].bucket' 2>/dev/null) ||
                     deny '"Cannot read the PR checks for the granted merge."'
                 [ -n "$implement_checks" ] && [ -z "$(printf '%s\n' "$implement_checks" | grep -v -e '^pass$' -e '^skipping$')" ] ||
@@ -661,7 +918,7 @@ pr_gate() {
         # A reused worktree may hold a PR into another base, and this review
         # covered only the diff against the target.
         if [ "$gate_action" = ready ] && [ "$implement_target" != "$MAIN_BRANCH" ]; then
-            implement_pr=$(pr_number "$(gh_statement "$command" "gh pr ready")")
+            implement_pr=$(pr_number "$(gh_statement "$gate_lines" "gh pr ready")")
             sh "$(dirname "$0")/mission_base.sh" check-pr "$dir" "$implement_pr" ready >/dev/null 2>&1 ||
                 deny "\"Name one PR number whose base is $implement_target and whose head is this reviewed branch, after a fetch.\""
         fi
@@ -669,7 +926,7 @@ pr_gate() {
     fi
 
     if [ "$gate_action" = create ]; then
-        gate_statement=$(gh_statement "$command" "gh pr create")
+        gate_statement=$(gh_statement "$gate_lines" "gh pr create")
         if draft_flag "$gate_statement"; then
             pass_pr_gate "$dir"
         fi
@@ -695,7 +952,7 @@ pr_gate() {
         "no branch ships without a code-review" \
         "Run the code-review skill over \`git diff $gate_base...HEAD\` and fix its valid findings"
     [ "$gate_action" = create ] && pass_pr_gate "$dir"
-    gate_pr=$(pr_number "$(gh_statement "$command" "gh pr $gate_action")")
+    gate_pr=$(pr_number "$(gh_statement "$gate_lines" "gh pr $gate_action")")
     [ -n "$gate_pr" ] || deny '"Name the PR number explicitly."'
 
     # Draft pushes run only `gate` and the fast job, so readiness is where
@@ -714,12 +971,11 @@ pr_gate() {
     fi
 
     if [ "$gate_action" = merge ]; then
-        [ "$gate_base" != "origin/$MAIN_BRANCH" ] || deny '"Merge to main is reserved exclusively for the user; do not enable auto-merge or enqueue it."'
         # Only this explicit, head-pinned form is supported, bare or behind the
         # single `cd <worktree> &&` that reaches the task worktree. This also
         # rejects --admin, --auto, alternate repositories and merge-queue
         # shortcuts.
-        gate_merge=$(gh_statement "$command" "gh pr merge" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        gate_merge=$(gh_statement "$gate_lines" "gh pr merge" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
         gate_whole=$(bare_statement "$command")
         [ "$gate_merge" = "$gate_whole" ] || deny '"Run one merge command from the task worktree; compound commands cannot share an authorization check."'
         gate_head=$(git -C "$dir" rev-parse HEAD)
@@ -745,6 +1001,8 @@ pr_gate() {
 
 commit_reminder() {
     command=$(json_string_field command)
+    case "$command" in *commit*) ;; *) exit 0 ;; esac
+    command=$(json_command "$command")
     runs_command "$command" "git commit" || exit 0
 
     dir=$(effective_dir "$command" "$(normalize_path "$(json_string_field cwd)")")

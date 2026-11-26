@@ -306,26 +306,35 @@ the behaviour is covered by tests.
 
 ### What `pr-gate` can and cannot see
 
-`runs_command` splits a command on `&&`, `||` and `;` and anchors the match to
-the start of a segment. Spellings that put the gated command somewhere else are
-not detected: a pipe (`cat body.md | gh pr create --body-file -`), a newline,
-an `env`/`time`/`sudo` wrapper, a `VAR=value` prefix, `bash -c '…'`, a brace
-group, an absolute path.
+`shell_statements` decodes the payload's JSON escapes and splits the command
+into the statements the shell would run, outside quotes, on `&&`, `||`, `;`,
+`|`, `&`, `(`, `)`, a backtick and a line break. From each it strips `{`, `!`,
+`time`, `nohup`, `exec`, `command`, `builtin`, `sudo`, `env` with its options
+and `VAR=value` words, reduces a command word spelled as a path or with `.exe`
+to its name, and unwraps `bash -c` / `sh -lc` (any shell, any option cluster
+holding `c`) and `eval`, splitting their script the same way. `runs_command`
+and `gh_statement` match the gated command at the start of one of those
+statements, so a pipe, a newline, a wrapper or a nested shell reaches the gate,
+and a quoted commit message naming `gh pr merge` does not.
 
-A heredoc body (`gh pr create --body-file - <<'EOF'`) is *not* one of them:
-the command begins its segment, so it reaches the matcher.
+A heredoc body is data and is dropped (`git commit -F - <<'EOF'` may name any
+command, and an apostrophe in it no longer unbalances the draft flag's quote
+count), unless a shell named on the same line could read it as a script.
 
-That is a real gap and it is deliberately left as it was rather than deepened
-here. Closing it by parsing harder was tried, over eight review rounds, and did
-not converge: each round shut some spellings and opened others, and twice
-produced a denial whose own remedy — telling the agent to record markers in the
-main checkout's shared git dir — would have disabled the gate permanently for
-every later branch. A half-parser that looks airtight is worse than a narrow
-one that is written down, because only the first kind gets trusted.
+`gh api` reaches the same endpoints with none of the flags the gate reads, so
+a `gh api` statement on `pulls/<n>/merge`, on `pulls/<n>` naming `draft` or
+sending `--input`, or running the GraphQL merge, auto-merge, enqueue or
+ready-for-review mutations is denied outright.
 
-Widening it is its own change with its own review. What this gate is for is the
-failure the repo actually hits: forgetting the review entirely, or reviewing
-and then pushing three more commits.
+Still not detected, by design: a program read from a file, piped into a shell
+(`echo … | sh`) or run by another interpreter (`python -c`, `xargs`), a
+command substitution inside double quotes, and aliases or functions. The
+markers are workflow evidence, not a security boundary; GitHub's protections
+own enforcement.
+
+A merge whose branch targets `main` is refused before any marker read or
+network call: the hook runs under a 10 s timeout, and a hook that times out
+lets the command through.
 
 ### What worktree-guard does not see
 
@@ -389,10 +398,10 @@ query. The rules it protects are also written in `CLAUDE.md`.
 
 - `pr-gate` has **no override**, and that is a real cost rather than a design
   boast. `runs_command` matches the gated command at the start of *any*
-  `&&`/`||`/`;` segment, so a command that merely quotes the workflow is denied
-  too. Measured: a `git commit -m` whose message describes the flow after a
-  separator is denied, and so is an `echo … >> notes.md` that does the same.
-  Only a mention with no separator in front of it gets through.
+  statement, so a command that writes the workflow out unquoted is denied
+  too: an `echo … && gh pr create …` line, or a heredoc body that a shell on
+  the same line may read. A quoted `git commit -m` message, or a heredoc fed
+  to `git commit -F -`, gets through.
 
   The workaround is to keep the phrase out of the *command*: `git commit -F
   <file>` with the message in a file, or write prose through the file tools
@@ -434,8 +443,9 @@ review's `SubagentHandback` message, a foreground fork's last message). Its
 last `REVIEW-VERDICT: pass|fail <worktree> <HEAD>` line counts only while that
 worktree still sits at that HEAD, whatever its tier: `pass` writes
 `review_key`, the key pr-gate computes, so a later commit leaves it stale;
-`fail` removes the record; no line changes nothing. Codex has no such event
-and records it with the command pr-gate prints. Against `main` or a plain
+`fail` removes the record; no line changes nothing. Codex has no such event,
+and pr-gate refuses an agent's own write of the marker, so under Codex the user
+runs the recording command pr-gate prints, outside the agent. Against `main` or a plain
 target no full-CI check is asked for; a merge to `main` stays the user's alone. The trade
 is deliberate: the tier exists to make a goal cheap in tokens, and what protects
 `main` past the review is CI on the PR and the user's own merge. Into a
@@ -474,12 +484,11 @@ denominator.
 The `pr-gate` cases assert the text of the denial, not only that it denied:
 missing, stale, corrupt and borrowed markers each name what is wrong.
 
-What they deliberately do **not** cover is the set of command spellings the
-matcher cannot see. There is no case pinning that a pipe or a newline reaches
-the gate, because neither does — see the gap section above. A test asserting
-otherwise existed briefly, against a parser that was reverted, and a claim in
-this file outlived it by a commit; that is the failure mode this paragraph is
-here to prevent, since a documented coverage claim is read as coverage.
+Each spelling the splitter claims to see has a case: a pipe, a newline, `bash
+-c`, `sh -lc`, `env`, `VAR=value`, `eval`, a path to `gh.exe`, the `gh api`
+merge and draft forms, an agent's write of the marker, and a merge to `main`
+refused with no `gh` on `PATH`. A spelling listed above as not detected has no
+case, because a documented coverage claim is read as coverage.
 
 ### What the last block actually proves
 

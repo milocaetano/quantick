@@ -558,8 +558,8 @@ fi
 run "gh pr ready without a code-review is denied" \
     pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "code-review-ok"
 
-run "gh pr merge without a code-review is denied" \
-    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "code-review-ok"
+run "gh pr merge to main without a code-review is still the user's" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "reserved exclusively"
 
 # An untiered branch, through both hosts' shared hook entry point: the draft
 # is free, and leaving draft wants the code-review and full CI.
@@ -605,8 +605,10 @@ run "gh pr ready is denied without full CI at the exact head" \
     pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "Full final-head CI gates"
 run "the full-CI denial names the label that runs it" \
     pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "gh pr edit 42 --add-label full-ci"
-run "gh pr merge is denied without full CI at the exact head" \
-    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "Full final-head CI gates"
+# A main merge is the user's whatever CI says, so its denial never suggests
+# waiting for CI and retrying.
+run "a main merge without full CI is refused as the user's, not as a CI wait" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "reserved exclusively"
 set_full_ci unavailable
 run "an unreadable full-CI verdict asks rather than passes" \
     pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" ask "unknown is not green"
@@ -635,7 +637,7 @@ run "gh pr ready naming no PR is denied" \
 
 # Two bare numbers and the operand cannot be told from a flag's value.
 run "two bare numbers are an ambiguous PR, not a guess" \
-    pr-gate "$(json_bash "$root/wt" "gh pr merge 306 42 --squash")" deny "Name the PR number explicitly"
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 306 42")" deny "Name the PR number explicitly"
 
 # A compound line runs two of the gated commands. The draft exemption belongs
 # to the `create` half only, and taking it for the whole line would let the
@@ -650,9 +652,98 @@ run "a draft create beside a ready is judged as the ready" \
 set_marker code-review-ok "$wt_key"
 set_full_ci missing
 run "a digit inside a filename is not the PR number" \
-    pr-gate "$(json_bash "$root/wt" "gh pr merge --body-file notes2.md 42")" deny "gh pr edit 42 --add-label full-ci"
+    pr-gate "$(json_bash "$root/wt" "gh pr ready --body-file notes2.md 42")" deny "gh pr edit 42 --add-label full-ci"
 set_full_ci green
+
+# --- pr-gate: every spelling that runs the gated command --------------------
+#
+# With no review recorded, a reached gate denies a non-draft creation. Each
+# case is a way the shell runs `gh pr create` that a split on `&&`, `||` and
+# `;` alone did not see. `\n` is a JSON escape: the payload carries a newline.
+set_marker code-review-ok ""
+for spelling in \
+    "cat body.md | gh pr create --body-file -" \
+    "echo hi\\ngh pr create --fill" \
+    "bash -c 'gh pr create --fill'" \
+    "sh -lc \\\"cd $root/wt && gh pr create --fill\\\"" \
+    "bash -c \\\"sh -c 'gh pr create --fill'\\\"" \
+    "env GH_TOKEN=x gh pr create --fill" \
+    "GH_PROMPT_DISABLED=1 gh pr create --fill" \
+    "eval 'gh pr create --fill'" \
+    "/c/tools/GH.exe pr create --fill" \
+    "{ gh pr create --fill; }" \
+    "x=\$(gh pr create --fill)" \
+    "bash <<'EOF'\\ngh pr create --fill\\nEOF"; do
+    run "the gate sees: $spelling" \
+        pr-gate "$(json_bash "$root/wt" "$spelling")" deny "code-review-ok"
+done
+
+# The draft flag still comes from the unwrapped statement.
+run "a draft inside bash -c is still a draft" \
+    pr-gate "$(json_bash "$root/wt" "bash -c 'gh pr create --draft --fill'")" silent
+
+# Quoted text and heredoc bodies are data: a commit message may name any
+# command, on any line, apostrophes included.
+for message in \
+    "git commit -m 'first line\\ngh pr merge 42 is the user'\\\\''s'" \
+    "git commit -F - <<'EOF'\\nfix: thing\\ngh pr merge 42\\nit's fine\\nEOF" \
+    "git commit -m \\\"see \\\\\\\"gh pr create\\\\\\\" && gh pr ready\\\""; do
+    run "a commit message is not a statement: $message" \
+        pr-gate "$(json_bash "$root/wt" "$message")" silent
+done
+
+# `gh api` reaches the merge and ready endpoints with none of the flags the
+# gate reads, so it never carries them. Reads stay ungated.
+for api in \
+    "gh api -X PUT repos/o/r/pulls/42/merge" \
+    "gh api --method PATCH repos/o/r/pulls/42 -F draft=false" \
+    "gh api -X PATCH repos/o/r/pulls/42 --input body.json" \
+    "gh api graphql -f query='mutation { markPullRequestReadyForReview(input: {pullRequestId: 1}) { clientMutationId } }'" \
+    "gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: {pullRequestId: 1}) { clientMutationId } }'" \
+    "bash -c 'gh api -X PUT repos/o/r/pulls/42/merge'"; do
+    run "gh api cannot ship a PR: $api" \
+        pr-gate "$(json_bash "$root/wt" "$api")" deny "gh api"
+done
+for api in "gh api repos/o/r/pulls/42" "gh api repos/o/r/pulls/42/comments -f body=draft"; do
+    run "gh api reads are not gated: $api" \
+        pr-gate "$(json_bash "$root/wt" "$api")" silent
+done
+
+# The marker is written by the review-verdict hook or the user; an agent's own
+# write is refused in every spelling, while reading or removing it is not.
+for write in \
+    "git -C $root/wt diff origin/main...HEAD | git hash-object --stdin > \\\"$wt_git_dir/code-review-ok\\\"" \
+    "printf x | tee $wt_git_dir/code-review-ok" \
+    "cp key.txt $wt_git_dir/code-review-ok" \
+    "python -c \\\"open('$wt_git_dir/code-review-ok', 'w')\\\"" \
+    "f=code-review-ok" \
+    "bash -c 'echo x > code-review-ok'"; do
+    run "an agent cannot write the marker: $write" \
+        pr-gate "$(json_bash "$root/wt" "$write")" deny "An agent never writes it"
+done
+for read in "cat $wt_git_dir/code-review-ok" "rm -f $wt_git_dir/code-review-ok"; do
+    run "reading or removing the marker is allowed: $read" \
+        pr-gate "$(json_bash "$root/wt" "$read")" silent
+done
+
+# A merge to main is refused before the marker is read or `gh` runs, so the
+# hook's timeout cannot let it through: no marker, a `gh` that would hang, and
+# the denial still names the user.
 GUARDRAILS_UNDER_TEST="$GUARDRAILS"
+mkdir -p "$root/slowgh"
+printf '#!/bin/sh\n: > "%s/gh-called"\nsleep 30\n' "$root" > "$root/slowgh/gh"
+chmod +x "$root/slowgh/gh"
+slow_path=$PATH
+PATH="$root/slowgh:$PATH"
+run "a main merge is refused before any marker read or gh call" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "reserved exclusively"
+PATH=$slow_path
+if [ -e "$root/gh-called" ]; then
+    printf 'FAIL the main-merge refusal ran gh first\n'
+    failed=$((failed + 1))
+else
+    passed=$((passed + 1))
+fi
 
 # --- ai_review_threads.sh: the exit-status contract ------------------------
 #
