@@ -872,7 +872,9 @@ for message in 'git commit -m "record code-review-ok later"' \
         pr-gate "$(json_cmd "$root/wt" "$message")" silent
 done
 for write in "git diff -o$wt_git_dir/code-review-ok" "git diff --out=$wt_git_dir/code-review-ok" \
-    "git diff --outp $wt_git_dir/code-review-ok"; do
+    "git diff --outp $wt_git_dir/code-review-ok" \
+    "git format-patch \"--output=$wt_git_dir/code-review-ok\"" \
+    "git format-patch '-o' $wt_git_dir/code-review-ok"; do
     run "a git output option naming the marker writes it: $write" \
         pr-gate "$(json_cmd "$root/wt" "$write")" deny "An agent never writes it"
 done

@@ -315,8 +315,8 @@ shell_statements() {
             text = b == "git" || (b == "gh" && tolower(unquote(words[k + 1])) ~ /^(pr|issue|release|gist)$/)
             for (j = k + 1; j <= nw; j++)
                 if (names_marker(words[j]) && (!text ||
-                    (words[j] ~ /^-/ && !msg_opt(words[j])) ||
-                    (words[j - 1] ~ /^-[^=]*$/ && !msg_opt(words[j - 1])))) return 1
+                    (unquote(words[j]) ~ /^-/ && !msg_opt(words[j])) ||
+                    (unquote(words[j]) !~ /^-/ && unquote(words[j - 1]) ~ /^-[^=]*$/ && !msg_opt(words[j - 1])))) return 1
             return 0
         }
         # The words after words[j] as one script, for an unwrapped wrapper.
