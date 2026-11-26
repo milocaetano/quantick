@@ -53,7 +53,6 @@ impl Eval<'_> {
         }
         Ok(last)
     }
-    /// Draws one iteration from the budget every loop of this run shares.
     fn spend_loop_iteration(&mut self, id: NodeId) -> Result<(), PineError> {
         if self.loop_budget == 0 {
             return Err(self.err(

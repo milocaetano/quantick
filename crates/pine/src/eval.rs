@@ -172,7 +172,6 @@ pub(crate) struct Eval<'a> {
     register_base: usize,
     global_base: usize,
     semantic_run: crate::semantics::Run<Vec<u64>>,
-    /// Loop iterations this run may still spend.
     loop_budget: u32,
 }
 
