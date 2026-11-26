@@ -247,11 +247,17 @@ fn the_lock_refuses_a_named_order_over_the_budget() {
     }))
     .unwrap();
     // 4000 points x 0.20 x 10 = 8,000 BRL against a budget of 100.
+    let TradeCommand::Place { intent } = named.clone() else {
+        unreachable!("a placement states a place command")
+    };
+    let expected = paper.account.risk_refusal_for(&intent);
     let outcome = paper.execute(named);
     let Some(TradeRefusal::Ticket(sentence)) = outcome.refusal else {
         panic!("the lock refuses: {outcome:?}");
     };
     assert!(sentence.contains("8000 BRL"), "{sentence}");
+    assert!(sentence.contains("turn the lock off"), "{sentence}");
+    assert_eq!(Some(sentence), expected, "the ticket's own sentence");
     assert!(outcome.events.is_empty());
     assert!(paper.working_orders().is_empty() && paper.is_flat());
 }

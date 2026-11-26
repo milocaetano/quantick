@@ -60,6 +60,8 @@ fn every_trade_call_docks_decodes_refuses_and_journals_through_one_adapter() {
     let place = action(PLACE_CAPABILITY_ID);
     let priced = json!({ "side": "buy", "kind": "limit", "quantity": "1", "price": 95.5 });
     assert!(place.input.validate(&priced).is_err(), "a price is a decimal string");
+    let no_quantity = json!({ "side": "buy", "kind": "limit" });
+    assert!(place.input.validate(&no_quantity).is_err(), "quantity is required");
 
     let trader = FakeWindow::trader();
     let mut access = FakeAccess::with_budget(0);
@@ -90,6 +92,7 @@ fn every_trade_call_docks_decodes_refuses_and_journals_through_one_adapter() {
         quantick_control::error::codes::CAPABILITY_UNAVAILABLE
     );
     assert!(paused.retryable, "nothing was sent, so a retry is safe");
+    assert!(paused.message.contains("the feed is offline"), "{paused:?}");
     let details = paused.context.details.expect("the reading is named");
     assert_eq!(details["trade_gate"], "link");
     assert_eq!(details["link"], "offline");
@@ -118,6 +121,21 @@ fn every_trade_call_docks_decodes_refuses_and_journals_through_one_adapter() {
     );
     assert_eq!(event.payload["asked"]["kind"], "market");
     assert_eq!(event.payload["order_id"], placed["order_id"]);
+    assert_eq!(event.payload["simulated"], true);
+    // The venue's refusal is an answer, not an error, and journals too.
+    let through = json!({ "side": "buy", "kind": "limit", "quantity": "1", "price": "101" });
+    let refused = run(&mut window, &mut access, PLACE_CAPABILITY_ID, through).unwrap();
+    assert_eq!(refused["accepted"], false, "{refused}");
+    let event = access.events.last().expect("journaled");
+    assert_eq!(event.kind.as_str(), PLACE_EVENT_KIND);
+    assert_eq!(event.payload["accepted"], false);
+    assert!(
+        event.payload["rejected_because"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("fill immediately")),
+        "{}",
+        event.payload
+    );
     run(&mut window, &mut access, FLATTEN_CAPABILITY_ID, json!({})).unwrap();
     assert_eq!(
         access.events.last().unwrap().kind.as_str(),

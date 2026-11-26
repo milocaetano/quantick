@@ -33,14 +33,19 @@
 //! [`PaperHost`]: the active tab's paper desk as [`TradeDesk`] — the account,
 //! the ruler and the one `execute` the tab's own buttons trade through — and
 //! the persistence a ticket edit makes. The trade rules (armed bracket, risk
-//! lock, ruler) are the tab's, in `quantick_session::paper`; what is here is
-//! parsing, refusals and the journal.
+//! lock, ruler) and each call's input and answer are the tab's, in
+//! `quantick_session::paper`; what is here is decoding, refusals and the
+//! journal.
 
 pub use quantick_control_host::authority::CAPABILITY_VERSION;
 pub use quantick_control_schema::trade::*;
 
 use quantick_civil::TzOffset;
-use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
+use quantick_control::{
+    error::ControlError,
+    registry::{CapabilityDescriptor, RegistryError},
+    wire::ActorContext,
+};
 use quantick_control_host::journal::NewEvent;
 use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{
@@ -337,6 +342,22 @@ fn set_instrument_money<H: PaperHost + ?Sized, A: JournalAccess>(
     to_value(result)
 }
 
+/// Dock one order or position call: the schema it publishes is the one its
+/// adapter decodes, so the two cannot disagree.
+fn dock<C, D, H, A>(registry: &mut D, descriptor: CapabilityDescriptor) -> Result<(), RegistryError>
+where
+    C: TradeCall,
+    D: ActionDock<H, A>,
+    H: PaperHost + ?Sized,
+    A: JournalAccess,
+{
+    let descriptor = CapabilityDescriptor {
+        input_schema: quantick_control::schema::generated_schema::<C>(),
+        ..descriptor
+    };
+    registry.register(descriptor, trade_call::<C, H, A>)
+}
+
 /// Dock the family. One call from the window's action registry, nothing
 /// else opens.
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
@@ -352,11 +373,11 @@ where
         set_instrument_money_descriptor(),
         set_instrument_money::<H, A>,
     )?;
-    registry.register(place_descriptor(), trade_call::<PlaceInput, H, A>)?;
-    registry.register(bracket_descriptor(), trade_call::<BracketInput, H, A>)?;
-    registry.register(cancel_descriptor(), trade_call::<CancelInput, H, A>)?;
-    registry.register(flatten_descriptor(), trade_call::<FlattenInput, H, A>)?;
-    registry.register(reverse_descriptor(), trade_call::<ReverseInput, H, A>)?;
+    dock::<PlaceInput, _, _, _>(registry, place_descriptor())?;
+    dock::<BracketInput, _, _, _>(registry, bracket_descriptor())?;
+    dock::<CancelInput, _, _, _>(registry, cancel_descriptor())?;
+    dock::<FlattenInput, _, _, _>(registry, flatten_descriptor())?;
+    dock::<ReverseInput, _, _, _>(registry, reverse_descriptor())?;
     crate::trade_account::register(registry)
 }
 
