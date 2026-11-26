@@ -153,6 +153,8 @@ mod grouping_tests {
             assert!(!zoomed.same_tape_settings(&native));
             zoomed.live_lane.window = crate::LaneWindow::Fixed { ms: 3_000 };
             assert!(zoomed.same_tape_grouping(&native));
+            zoomed.bubbles.max_radius += 1.0;
+            assert!(!zoomed.same_tape_grouping(&native), "a style regroups");
         }
         let mut ordinary = config.clone();
         ordinary.live_lane.native_tape = false;
@@ -162,10 +164,6 @@ mod grouping_tests {
             !changed.same_tape_grouping(&ordinary),
             "other lanes regroup"
         );
-        let mut zoomed = config.clone();
-        zoomed.zoom_lane_window(2.0);
-        zoomed.bubbles.max_radius += 1.0;
-        assert!(!zoomed.same_tape_grouping(&config));
     }
 
     /// A tuning changes only what it names, and an opacity out of range is
