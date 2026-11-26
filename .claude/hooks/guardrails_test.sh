@@ -778,7 +778,7 @@ done
 for read in \
     "cat $wt_git_dir/code-review-ok" \
     "cat $wt_git_dir/code-review-ok 2>/dev/null || echo none" \
-    "sed -n p $wt_git_dir/code-review-ok" \
+    "head -n 1 $wt_git_dir/code-review-ok" \
     "rm -f $wt_git_dir/code-review-ok"; do
     run "reading or removing the marker is allowed: $read" \
         pr-gate "$(json_bash "$root/wt" "$read")" silent
@@ -893,6 +893,24 @@ for api in \
     run "gh api cannot move a branch: $api" \
         pr-gate "$(json_cmd "$root/wt" "$api")" deny "gh api"
 done
+# Third test-agent round: sed can write through `w`, and GraphQL and the
+# contents API move branches too.
+for write in "sed -n 'w $wt_git_dir/code-review-ok' a" "sed 's/a/ok/w $wt_git_dir/code-review-ok' a"; do
+    run "sed naming the marker may write it: $write" \
+        pr-gate "$(json_cmd "$root/wt" "$write")" deny "An agent never writes it"
+done
+for api in \
+    "gh api graphql -f query='mutation{mergeBranch(input:{base:\"main\"}){clientMutationId}}'" \
+    "gh api graphql -f query='mutation{updateRefs(input:{refUpdates:[]}){clientMutationId}}'" \
+    "gh api graphql -f query='mutation{createCommitOnBranch(input:{}){clientMutationId}}'" \
+    "gh api -X PUT repos/o/r/contents/a.txt -f message=m -f content=YQ=="; do
+    run "gh api cannot move a branch: $api" \
+        pr-gate "$(json_cmd "$root/wt" "$api")" deny "gh api"
+done
+run "a GraphQL query stays ungated" \
+    pr-gate "$(json_cmd "$root/wt" "gh api graphql -f query='query{viewer{login}}'")" silent
+run "gh api reads a file" \
+    pr-gate "$(json_cmd "$root/wt" 'gh api repos/o/r/contents/a.txt')" silent
 run "gh api reads a ref" \
     pr-gate "$(json_cmd "$root/wt" 'gh api repos/o/r/git/refs/heads/main')" silent
 

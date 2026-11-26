@@ -311,7 +311,7 @@ shell_statements() {
             # the next word, unless that option carries message text.
             b = base(unquote(words[k]))
             for (j = k + 1; j <= nw; j++) if (b == "sed" && words[j] ~ /^(-[a-z]*i|--in-place)/) inplace = 1
-            if (!inplace && b ~ /^(cat|head|tail|less|more|ls|stat|wc|grep|egrep|fgrep|rg|test|\[|file|md5sum|sha1sum|sha256sum|rm|diff|cmp|echo|printf|sed)$/) return 0
+            if (!inplace && b ~ /^(cat|head|tail|less|more|ls|stat|wc|grep|egrep|fgrep|rg|test|\[|file|md5sum|sha1sum|sha256sum|rm|diff|cmp|echo|printf)$/) return 0
             text = b == "git" || (b == "gh" && tolower(unquote(words[k + 1])) ~ /^(pr|issue|release|gist)$/)
             for (j = k + 1; j <= nw; j++)
                 if (names_marker(words[j]) && (!text ||
@@ -851,14 +851,15 @@ api_ships_pr() {
     printf '%s\n' "$1" | awk '
         /^gh api([ \t]|$)/ {
             s = tolower($0); gsub(/["\047\\]/, "", s)
-            if (s ~ /[ \t](https?:\/\/[^ \t]*)?\/?graphql([ \t?]|$)/ && s ~ /mergepullrequest|enablepullrequestautomerge|enqueuepullrequest|markpullrequestreadyforreview|--input|query=@|\$/) hit = 1
+            if (s ~ /[ \t](https?:\/\/[^ \t]*)?\/?graphql([ \t?]|$)/ && s ~ /mergepullrequest|enablepullrequestautomerge|enqueuepullrequest|markpullrequestreadyforreview|mergebranch|updaterefs?[^a-z]|deleteref|createcommitonbranch|--input|query=@|\$/) hit = 1
             pull = s ~ /pulls\/[^\/ \t"\047?]+([ \t"\047?]|$)/
             if (s ~ /pulls\/[^\/ \t]+\/merge/ && s ~ /(-x|--method)[= ]?["\047]?put/) hit = 1
             if (pull && s ~ /(-f|--field|--raw-field)[= ]?["\047]?draft=/) hit = 1
             if (pull && s ~ /--input/ && s ~ /(-x|--method)[= ]?["\047]?patch/) hit = 1
-            # Moving a branch ref or merging branches server-side ships code
-            # past every PR check: any write to `git/refs` or `merges`.
-            if (s ~ /(git\/refs|\/merges)([\/ \t?]|$)/ && s ~ /(-x|--method)[= ]?(post|put|patch|delete)|(^| )(-f|--field|--raw-field|--input)( |=|$)/) hit = 1
+            # Moving a branch ref, merging branches server-side or committing
+            # a file through the API ships code past every PR check: any write
+            # to `git/refs`, `merges` or `contents/`.
+            if (s ~ /(git\/refs|\/merges)([\/ \t?]|$)|\/contents\// && s ~ /(-x|--method)[= ]?(post|put|patch|delete)|(^| )(-f|--field|--raw-field|--input)( |=|$)/) hit = 1
         }
         END { exit !hit }'
 }

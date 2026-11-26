@@ -336,7 +336,7 @@ An agent's write of `code-review-ok` is denied: a redirect of any descriptor
 to it, an assignment naming it, or any program naming it that is not a known
 reader (`cat`, `head`, `tail`, `less`, `more`, `ls`, `stat`, `wc`, `grep`,
 `rg`, `test`, `[`, `file`, the `*sum` tools, `rm`, `diff`, `cmp`, `echo`,
-`printf`, `sed` without `-i`). `git` and `gh pr|issue|release|gist` carry
+`printf`; `sed` is not one, since `w` writes). `git` and `gh pr|issue|release|gist` carry
 messages, so for them an option naming it counts, attached or as the next
 word, unless the option carries message text (`-m`, `-b`, `-t`, `-n`, or a
 prefix of `--message`, `--body`, `--title`, `--notes`); git accepts
@@ -345,9 +345,10 @@ prefix of `--message`, `--body`, `--title`, `--notes`); git accepts
 
 `gh api` reaches the same endpoints with none of the flags the gate reads, so
 it is denied outright for a PUT to `pulls/<n>/merge`, a `draft=` field or a
-PATCH with `--input` on `pulls/<n>`, a write to `git/refs` or `merges`, and a
-GraphQL call (`graphql`, `/graphql` or a URL) naming the merge, auto-merge,
-enqueue or ready-for-review mutations, quotes removed, or taking its query
+PATCH with `--input` on `pulls/<n>`, a write to `git/refs`, `merges` or
+`contents/`, and a GraphQL call (`graphql`, `/graphql` or a URL) naming the
+merge, auto-merge, enqueue, ready-for-review, `mergeBranch`, `updateRef(s)`,
+`deleteRef` or `createCommitOnBranch` mutations, quotes removed, or taking its query
 from `--input`, `query=@file` or an expansion. Reads stay ungated. A `gh`
 group gh does not ship is an alias or an extension, and `gh alias` /
 `gh extension` define them; either may run `pr merge`, so it is unknown and
