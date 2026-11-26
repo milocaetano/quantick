@@ -868,6 +868,11 @@ Then gh pr merge 42; record code-review-ok with tee.
 EOF
 )\"")" silent
 set_marker code-review-ok ""
+run "a gh alias heredoc may be a program and is rescanned" \
+    pr-gate "$(json_cmd "$root/wt" "gh alias set --shell ship - <<'EOF'
+gh pr merge 42
+EOF
+gh ship")" ask "cannot tell"
 run "a git statement's own text is a commit message" \
     pr-gate "$(json_cmd "$root/wt" 'git commit -m "mentions gh pr merge 42 and code-review-ok > x"')" silent
 

@@ -350,7 +350,7 @@ it did not read as a gated statement, flattened (quotes, escapes, `$`,
 backticks, braces and commas removed, lower-cased), is scanned again for
 `gh pr merge|ready|create|new`, a `gh api` merge, GraphQL or draft call, and a
 marker write. A hit with no gated statement asks the user; beside one it is
-denied, since the two cannot share one check. Statements already judged, the heredocs `gh` reads, and
+denied, since the two cannot share one check. Statements already judged, the heredocs `gh pr|issue|release|gist` read as text, and
 `git` statements with their heredocs, are not rescanned: their text is a
 commit message. This is what turns a spelling the splitter misreads into a
 question rather than a pass.

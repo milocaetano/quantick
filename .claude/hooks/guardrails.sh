@@ -442,7 +442,10 @@ shell_statements() {
         function owner_of(t,    nw, k) {
             nw = words_of(trim(t))
             for (k = 1; k <= nw && unquote(words[k]) ~ /^([A-Za-z_][A-Za-z0-9_]*=|\{|!|if|then|do|while|until)/; k++) ;
-            return k <= nw ? base(unquote(words[k])) : "-"
+            if (k > nw) return "-"
+            # `gh` with its subcommand: `gh pr create` reads text, `gh alias set` a program.
+            if (base(unquote(words[k])) == "gh" && k < nw) return "gh " tolower(unquote(words[k + 1]))
+            return base(unquote(words[k]))
         }
         # Arithmetic: return the index of the `)` closing the `((` at `s[i]`.
         function arith_end(s, i, n,    j, p) {
@@ -793,12 +796,13 @@ writes_marker() {
 }
 
 # True when statements `$1`, outside those already judged and outside `git`
-# statements and the heredocs `git` or `gh` reads (a commit message, a PR
-# body; `gh api` heredoc input is judged by `api_ships_pr`), still spell a gated call or a marker write
+# statements and the heredocs `git` or `gh pr|issue|release|gist` read as
+# text (a commit message, a PR body; `gh alias` and `gh extension` input may
+# be a program and is rescanned), still spell a gated call or a marker write
 # once flattened. See its use in `pr_gate`.
 unknown_gated() {
     printf '%s\n' "$1" |
-        grep -vE '^(git( |$)|#data (git|gh) |#writes-marker$|gh pr (merge|ready|create)( |$)|gh api( |$))' |
+        grep -vE '^(git( |$)|#data (git|gh (pr|issue|release|gist)) |#writes-marker$|gh pr (merge|ready|create)( |$)|gh api( |$))' |
         tr -d "'\"\\\\\$\`{}," | tr 'A-Z\t' 'a-z ' |
         sed 's/[0-9]*>>* *\/dev\/null//g; s/[0-9]*>&[0-9]//g' |
         grep -qE 'gh +pr +(merge|ready|create|new)|gh +api.*(/merge|graphql|draft)|code-review-ok.*(>|(^| )(tee|cp|mv|install|ln|touch|dd|truncate|rsync|curl|wget|sort|tar|unzip|cpio|python3?|py|perl|ruby|node|pwsh|powershell|cmd|exec)( |$)|sed .*-i)|((>|(^| )(tee|cp|mv|install|ln|touch|dd|truncate|rsync|curl|wget|sort|tar|unzip|cpio|python3?|py|perl|ruby|node|pwsh|powershell|cmd|exec) ).*code-review-ok)'
