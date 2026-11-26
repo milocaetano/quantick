@@ -15,6 +15,8 @@ quantick-engine = { path = "../engine" }
 quantick-indicators = { path = "../indicators" }
 quantick-pine = { path = "../pine" }
 quantick-replay = { path = "../replay" }
+# The chart's script instance, run over a recorded session.
+quantick-script-trigger = { path = "../script-trigger" }
 quantick-sim = { path = "../sim" }
 quantick-strategy = { path = "../strategy" }
 rust_decimal = { workspace = true }

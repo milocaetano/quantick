@@ -1,5 +1,5 @@
-//! The Pine scripts a tab arms alarm-only on its panes, in plain words and
-//! numbers.
+//! The Pine scripts a tab arms on its panes — ringing, or placing paper
+//! orders — in plain words and numbers.
 //!
 //! The kernel types live in `quantick-script-trigger` and
 //! `quantick-strategy`, which the control crates may not reach
@@ -11,13 +11,15 @@
 use quantick_engine::{Bar, Side};
 pub use quantick_script_trigger::ScriptPlacement;
 use quantick_script_trigger::{Script, ScriptInstance, ScriptState, WARMUP_BARS};
-use quantick_strategy::DisarmReason;
+use quantick_sim::{Command, VenueEvent};
+use quantick_strategy::runner::StrategyPort;
+pub use quantick_strategy::{OrderQuantity, SignalAction, SignalOrder};
 use rust_decimal::Decimal;
 
 use crate::strategies::TabStrategies;
 
 /// One arm: which script, read by the caller from its library, on which
-/// pane, hunting which side, where.
+/// pane, hunting which side, where, doing what when it fires.
 #[derive(Debug, Clone, Copy)]
 pub struct ScriptArm<'a, D> {
     pub pane_id: u64,
@@ -26,6 +28,7 @@ pub struct ScriptArm<'a, D> {
     pub source: &'a str,
     pub side: Side,
     pub place: ScriptPlacement<D>,
+    pub action: SignalAction,
 }
 
 /// One armed script as a caller reads it.
@@ -37,6 +40,7 @@ pub struct ScriptReading<D> {
     pub script: String,
     pub side: Side,
     pub place: ScriptPlacement<D>,
+    pub action: SignalAction,
     /// Why it stopped — `line N: <CODE> <message>` for a script that failed,
     /// else the disarm reason; `None` while it watches.
     pub disarm_reason: Option<String>,
@@ -52,6 +56,7 @@ impl<D: Copy> ScriptReading<D> {
             script: instance.script.clone(),
             side: instance.side(),
             place: instance.placement,
+            action: instance.action(),
             disarm_reason: match instance.state() {
                 ScriptState::Watching => None,
                 ScriptState::Disarmed { reason } => Some(reason),
@@ -62,21 +67,25 @@ impl<D: Copy> ScriptReading<D> {
 }
 
 impl<D: Copy + PartialEq> TabStrategies<D> {
-    /// Compile `request.source` and arm it alarm-only on `request.pane_id`,
+    /// Compile `request.source` and arm it on `request.pane_id` to do
+    /// `request.action`,
     /// warmed on `warmup(depth)` — closed bars with their footprint POC,
     /// oldest first. A script that fails while warming is armed already
     /// disarmed, and its reading says why.
     ///
     /// # Errors
     ///
-    /// The sentence the caller reads: a script that does not compile, an
-    /// alert title that names no side, or none naming `request.side`.
+    /// The sentence the caller reads: an order with no size or a negative
+    /// distance, a script that does not compile, an alert title that names
+    /// no side, or none naming `request.side`.
     pub fn arm_script(
         &mut self,
         request: ScriptArm<'_, D>,
         warmup: impl FnOnce(usize) -> Vec<(Bar, Option<Decimal>)>,
     ) -> Result<ScriptReading<D>, String> {
         let name = request.script;
+        action_refusal(request.action)
+            .map_err(|refusal| format!("`{name}` cannot be armed: {refusal}"))?;
         let script = Script::load(name, request.source)
             .map_err(|refusal| format!("`{name}` cannot be armed: {refusal}"))?;
         if !script.sides().iter().any(|(_, side)| *side == request.side) {
@@ -96,6 +105,7 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
             request.side,
             request.place,
             &warm,
+            request.action,
         );
         Ok(self.publish_script(request.pane_id, instance, script))
     }
@@ -118,13 +128,12 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
     }
 
     /// Disarm and remove script instance `id`, answering it as it stood once
-    /// disarmed; `None` when no pane holds it. Alarm-only, so nothing is
-    /// owed on the way out.
+    /// disarmed; `None` when no pane holds it. A pending entry's cancel is
+    /// queued with the pane's cleanup; an open position stays the trader's.
     pub fn disarm_script(&mut self, id: u64) -> Option<ScriptReading<D>> {
         let removed = self.panes_mut().find_map(|(pane_id, pane)| {
             let at = pane.scripts.iter().position(|script| script.id == id)?;
-            let mut instance = pane.scripts.remove(at);
-            instance.disarm(DisarmReason::User);
+            let instance = pane.remove_script_at(at);
             Some(ScriptReading::of(pane_id, &instance))
         });
         self.desk.forget_script(id);
@@ -139,6 +148,38 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                 (pane.scripts.iter()).map(move |script| ScriptReading::of(pane_id, script))
             })
             .collect()
+    }
+}
+
+/// Why `action` cannot be armed: an order of no size, or a stop or gain
+/// below zero, which would read as a leg and place none.
+pub(crate) fn action_refusal(action: SignalAction) -> Result<(), &'static str> {
+    let SignalAction::Order(order) = action else {
+        return Ok(());
+    };
+    if let OrderQuantity::Fixed(quantity) = order.quantity
+        && quantity <= Decimal::ZERO
+    {
+        return Err("an order's fixed quantity must be above zero");
+    }
+    if order.stop < Decimal::ZERO || order.gain < Decimal::ZERO {
+        return Err("stop and gain are distances from the entry: zero for no leg, never below");
+    }
+    Ok(())
+}
+
+/// The account a replayed copy of a script judges against: always flat, and
+/// it takes nothing. The copies arm [`SignalAction::Alarm`], so nothing is
+/// ever offered.
+pub(crate) struct NoAccount;
+
+impl StrategyPort for NoAccount {
+    fn apply(&mut self, _command: Command) -> Vec<VenueEvent> {
+        Vec::new()
+    }
+
+    fn is_flat(&self) -> bool {
+        true
     }
 }
 

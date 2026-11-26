@@ -15,6 +15,22 @@
       ],
       "type": "string"
     },
+    "FireAction": {
+      "description": "What a firing does.",
+      "oneOf": [
+        {
+          "enum": [
+            "alarm"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "order",
+          "description": "A paper market order.",
+          "type": "string"
+        }
+      ]
+    },
     "LibraryListing": {
       "description": "The strategy library as the call found it.",
       "properties": {
@@ -132,12 +148,22 @@
     "ScriptStrategy": {
       "description": "One armed script.",
       "properties": {
+        "action": {
+          "$ref": "#/$defs/FireAction"
+        },
         "alarm_only": {
-          "description": "Always true: a script strategy never places an order.",
+          "description": "True while `action` is `alarm`: it rings and places nothing.",
           "type": "boolean"
         },
         "disarm_reason": {
           "description": "Why it stopped: `line N: <CODE> <message>` when its script failed at\nruntime, otherwise the disarm reason in the badge's words.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gain": {
+          "description": "An order's target distance from the entry, in price; `0` places none.\nAbsent for an alarm.",
           "type": [
             "string",
             "null"
@@ -153,6 +179,13 @@
         "placement": {
           "$ref": "#/$defs/Placement"
         },
+        "quantity": {
+          "description": "An order's size in the instrument's units, or `ticket` for the\nticket's quantity when the bar closes. Absent for an alarm.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "script": {
           "type": "string"
         },
@@ -165,6 +198,13 @@
         "status": {
           "description": "What the last closed bar did, as the instance's badge line says it.",
           "type": "string"
+        },
+        "stop": {
+          "description": "An order's stop distance from the entry, in price; `0` places none.\nAbsent for an alarm.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -175,7 +215,8 @@
         "placement",
         "state",
         "status",
-        "alarm_only"
+        "alarm_only",
+        "action"
       ],
       "type": "object"
     },

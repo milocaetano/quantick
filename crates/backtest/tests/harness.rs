@@ -193,6 +193,7 @@ fn the_force_region_kernel_walks_a_full_operation_under_the_harness() {
             rearm: Rearm::OneShot,
             on_break: quantick_strategy::BreakPolicy::Ignore,
             execution: quantick_strategy::Execution::Paper,
+            bracket: None,
         },
         ForceParams {
             window: 3,
@@ -256,6 +257,7 @@ fn a_body_cut_rests_a_limit_under_the_harness_and_the_retest_fills() {
             rearm: Rearm::OneShot,
             on_break: BreakPolicy::RetestLimit,
             execution: quantick_strategy::Execution::Paper,
+            bracket: None,
         },
         ForceParams {
             window: 3,
@@ -309,6 +311,7 @@ fn a_body_that_never_cut_the_region_rests_nothing_under_the_harness() {
             rearm: Rearm::OneShot,
             on_break: BreakPolicy::RetestLimit,
             execution: quantick_strategy::Execution::Paper,
+            bracket: None,
         },
         ForceParams {
             window: 3,

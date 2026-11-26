@@ -50,7 +50,7 @@ pub const DRAWING_REMOVED: &str = "its region drawing was removed";
 pub struct PaneStrategies<D> {
     /// Armed strategy instances riding this pane's drawings.
     pub anchors: StrategyAnchors<D>,
-    /// Pine scripts armed alarm-only on this pane's bars, in arming order
+    /// Pine scripts armed on this pane's bars, in arming order
     /// (`crate::script_strategies`).
     pub scripts: Vec<ScriptInstance<D>>,
     /// Closed bars awaiting evaluation, each with the slot it closed at.
@@ -64,7 +64,8 @@ pub struct PaneStrategies<D> {
     /// arming dialog over this pane.
     popup_request: Option<D>,
     /// Simulator commands a disarm or removal owes the paper account —
-    /// cancelling a resting retest limit — drained on the same frame.
+    /// cancelling a resting retest limit or a script's pending entry —
+    /// drained on the same frame.
     cleanup: Vec<Command>,
 }
 
@@ -125,17 +126,21 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
         (self.anchors.instances.iter()).any(|instance| instance.alarm.is_some())
     }
 
-    /// Halt every script riding a drawing `exists` denies, naming why.
-    fn halt_orphan_scripts(&mut self, exists: impl Fn(D) -> bool) {
+    /// Halt every script riding a drawing `exists` denies, naming why;
+    /// answers what they owe the account.
+    #[must_use = "apply or queue the cleanup the halted scripts owe"]
+    fn halt_orphan_scripts(&mut self, exists: impl Fn(D) -> bool) -> Vec<Command> {
+        let mut owed = Vec::new();
         for script in &mut self.scripts {
             if script
                 .placement
                 .drawing()
                 .is_some_and(|drawing| !exists(drawing))
             {
-                script.halt(DRAWING_REMOVED);
+                owed.extend(script.halt(DRAWING_REMOVED));
             }
         }
+        owed
     }
 
     /// The closed bars awaiting evaluation, drained, each with whether it
@@ -173,6 +178,14 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
         }
     }
 
+    /// Disarm and remove the script at `index` as the user, queueing the
+    /// sweep of its pending entry.
+    pub(crate) fn remove_script_at(&mut self, index: usize) -> ScriptInstance<D> {
+        let mut script = self.scripts.remove(index);
+        self.cleanup.extend(script.disarm(DisarmReason::User));
+        script
+    }
+
     /// Remove the drawn instance at `index`, queueing the sweep of its
     /// resting entry; its drawing's other instances stay.
     pub(crate) fn remove_instance_at(&mut self, index: usize) {
@@ -184,7 +197,8 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
     /// owe for the same-frame drain — for the deletion paths that have no
     /// id in hand (delete-all, undo, redo).
     pub fn sweep_orphans(&mut self, exists: impl Fn(D) -> bool) {
-        self.halt_orphan_scripts(&exists);
+        let owed = self.halt_orphan_scripts(&exists);
+        self.cleanup.extend(owed);
         if self.anchors.is_empty() {
             return;
         }
@@ -202,7 +216,8 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
     /// pending entries — every "the bot dies with its drawing" path funnels
     /// through here.
     pub fn remove_for_drawing(&mut self, drawing: D) {
-        self.halt_orphan_scripts(|riding| riding != drawing);
+        let owed = self.halt_orphan_scripts(|riding| riding != drawing);
+        self.cleanup.extend(owed);
         let cleanup = self.anchors.remove_for_drawing(drawing);
         self.cleanup.extend(cleanup);
     }
@@ -222,10 +237,12 @@ impl<D: Copy + PartialEq> PaneStrategies<D> {
     /// the series that ended; answers with the cleanup the instances owe.
     pub fn disarm_all(&mut self, reason: DisarmReason) -> Vec<Command> {
         self.pending.clear();
+        let mut cleanup = Vec::new();
         for script in &mut self.scripts {
-            script.disarm(reason);
+            cleanup.extend(script.disarm(reason));
         }
-        self.anchors.disarm_all(reason)
+        cleanup.extend(self.anchors.disarm_all(reason));
+        cleanup
     }
 
     /// Arm `form` on `drawing`, warmed on `warmup(depth)`, once `check` —
@@ -315,7 +332,8 @@ pub struct Forming {
 pub struct Evaluation {
     /// The alarm sounds raised, oldest first.
     pub alarms: Vec<Cue>,
-    /// How many instances are still watching; zero lets the account stop
+    /// How many instances that place orders are still watching — every drawn
+    /// one, and each script placing orders; zero lets the account stop
     /// listening for them.
     pub watching: usize,
 }
@@ -468,6 +486,7 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
             // The batch to each instance, applying what it answers with —
             // the self-protection close after a dropped bracket.
             runner::deliver_print_events(&mut pane.anchors.instances, events, port);
+            runner::deliver_print_events(&mut pane.scripts, events, port);
             let bars = pane.take_bars();
             if !bars.is_empty() {
                 // An instance whose drawing was deleted from a surface that
@@ -477,7 +496,9 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                     let _ = port.apply(command);
                 }
                 // A script riding a region stops with its drawing, and says so.
-                pane.halt_orphan_scripts(|drawing| exists(id, drawing));
+                for command in pane.halt_orphan_scripts(|drawing| exists(id, drawing)) {
+                    let _ = port.apply(command);
+                }
             }
             for (close, judged) in &bars {
                 if !judged {
@@ -495,16 +516,23 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                     now_ms,
                 ));
                 self.desk.count_drawn(id, &pane.anchors.instances, now_ms);
+                let ticket = port.ticket_quantity();
                 for script in &mut pane.scripts {
                     // Paused from the desk: its script keeps its history.
                     if self.desk.script_paused(script.id) {
                         script.warm(&close.bar, close.poc);
                         continue;
                     }
+                    script.refresh_ticket(ticket);
                     let resolved =
                         (script.placement).resolve(|drawing| region(id, drawing, close.slot));
-                    let rang =
-                        script.on_closed_bar(&close.bar, close.poc, resolved.as_ref(), now_ms);
+                    let rang = script.on_closed_bar(
+                        &close.bar,
+                        close.poc,
+                        resolved.as_ref(),
+                        port,
+                        now_ms,
+                    );
                     if rang.is_some() {
                         self.desk.fired(InstanceRef::Script(script.id), now_ms);
                     }
@@ -534,6 +562,12 @@ impl<D: Copy + PartialEq> TabStrategies<D> {
                 }
             }
             answer.watching += pane.anchors.watching();
+            // A script hears its fills through the same stream the drawn
+            // instances do: one placing orders, or one whose order is still
+            // live after it was switched back to an alarm.
+            answer.watching += (pane.scripts.iter())
+                .filter(|script| script.watching() && (script.places_orders() || script.trading()))
+                .count();
         }
         answer
     }

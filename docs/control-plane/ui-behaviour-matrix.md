@@ -142,6 +142,9 @@ The three exclusion classes are closed:
 | `indicator.settings.open` | Open an indicator's settings | the legend row's gear, and the indicator picker | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `indicator.source.edit` | Read, copy and edit Pine source | Indicators > Scripts > View source; Pine source window | `indicator.library.edit` | — |
 | `strategy.describe` | Describe a strategy | Panels > Describe a strategy... | `strategy.describe.open`, `strategy.describe.read`, `strategy.describe.submit`, `strategy.describe.cancel`, `strategy.describe.save` | — |
+| `strategy.script.action.set` | Switch an armed script between ringing an alarm and placing paper orders | a script row's action chip in the Strategies tab: its order switch and Apply | `strategy.script.action.set` | — |
+| `strategy.script.order.protection` | Set how far a script order's stop and gain sit from its entry | a script row's action chip in the Strategies tab: its stop and gain fields | `strategy.script.action.set` | — |
+| `strategy.script.order.quantity` | Size a script's orders: a fixed contract count or the ticket's quantity | a script row's action chip in the Strategies tab: its ticket switch and quantity | `strategy.script.action.set` | — |
 | `trade.account.route` | Choose where orders go: the simulator or the broker account | the Trading panel's Account selector, the toolbar's orders notice | `trade.account.select` | — |
 | `trade.aim.bracket` | Send an entry with its stop and target attached | the ticket's bracket fields, and the aim on the chart | `trade.order.bracket` | — |
 | `trade.instrument.money.set` | Declare what one point of an instrument is worth | the Trading panel's instrument section | `trade.instrument.set_money` | — |
@@ -334,6 +337,9 @@ declares nothing here is a guard failure.
 | `indicator.mouse_vertical_line.toggle` | the indicator pane's Mouse vertical line checkbox |
 | `indicator.native.remove` | the legend row close, which the toolbar enum sees only as `RemoveIndicator` |
 | `indicator.source.edit` | View source / Create editable copy / Save / source text editor |
+| `strategy.script.action.set` | the Strategies tab action chip order switch |
+| `strategy.script.order.protection` | the Strategies tab action chip stop and gain fields |
+| `strategy.script.order.quantity` | the Strategies tab action chip quantity field |
 | `trade.account.route` | the Trading panel Account selector |
 | `trade.aim.bracket` | the ticket bracket fields and the aim on the chart |
 | `trade.instrument.money.set` | the Trading panel instrument section |

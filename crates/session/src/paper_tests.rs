@@ -252,3 +252,25 @@ fn the_strategy_port_reaches_the_account() {
     paper.on_trade(&print(1, 100));
     assert!(!StrategyPort::is_flat(&paper), "and it filled");
 }
+
+#[test]
+fn a_script_borrows_the_typed_ticket_size_only_while_fixed_risk_is_off() {
+    let mut paper = flat();
+    paper.desk.ticket.qty_text = "3".to_owned();
+    assert_eq!(
+        StrategyPort::ticket_quantity(&paper),
+        Some(Decimal::from(3))
+    );
+    paper
+        .account
+        .set_risk_settings(quantick_paper::risk_sizing::RiskSettings {
+            basis: quantick_paper::risk_sizing::RiskBasis::Amount,
+            amount: Decimal::from(100),
+            ..Default::default()
+        });
+    assert_eq!(
+        StrategyPort::ticket_quantity(&paper),
+        None,
+        "fixed risk sizes by the ticket's stop, which the script does not carry"
+    );
+}

@@ -257,3 +257,38 @@ fn bank_receipt_is_terminal_and_keeps_edits_and_refusal() {
         Some("keep editing")
     );
 }
+
+#[test]
+fn observe_asks_only_when_the_host_view_moved() {
+    let state = opened();
+    assert!(state.observe((7, &[], None)).is_none(), "nothing moved");
+    let Some(Intent::Observe { active_tab, .. }) = state.observe((8, &[], None)) else {
+        panic!("a tab switch is observed");
+    };
+    assert_eq!(active_tab, 8);
+    assert!(state.observe((7, &[PaneSide::Flow], None)).is_some());
+    assert!(state.observe((7, &[], Some("muted"))).is_some());
+    let closed = State::default();
+    assert!(closed.observe((8, &[PaneSide::Flow], None)).is_none());
+    assert!(closed.observe((8, &[], Some("muted"))).is_some());
+}
+
+#[test]
+fn a_bank_effect_writes_through_the_bank_and_answers_its_rows() {
+    let dir = crate::scratch::ScratchDir::new("strategy-popup-bank");
+    let mut bank = StrategyBank::load_from(dir.join("strategies.toml"));
+    let form = Box::new(StoredPreset::starting_point(quantick_engine::Side::Buy));
+    let saved = BankEffect::Save {
+        name: "kept".into(),
+        form: form.clone(),
+    }
+    .apply(&mut bank);
+    let Intent::BankSnapshot(rows) = saved else {
+        panic!("a save answers the rows");
+    };
+    assert_eq!(rows, [("kept".to_owned(), *form)]);
+    let Intent::BankSnapshot(rows) = BankEffect::Remove("kept".into()).apply(&mut bank) else {
+        panic!("a removal answers the rows");
+    };
+    assert!(rows.is_empty() && bank.rows().is_empty());
+}

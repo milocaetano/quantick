@@ -110,7 +110,7 @@
         },
         {
           "const": "order",
-          "description": "A paper order: drawn strategies only, never a script.",
+          "description": "A paper market order.",
           "type": "string"
         }
       ]
@@ -309,6 +309,12 @@
       "minimum": 0,
       "type": "integer"
     },
+    "gain": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "history_slots": {
       "description": "The chart's closed slots (from zero, the oldest loaded bar) a fresh\ncopy armed on the oldest fires on, through the live kernel.",
       "items": {
@@ -329,8 +335,21 @@
       "$ref": "#/$defs/Placement",
       "description": "Where it may fire; a drawn instance always rides its region."
     },
+    "quantity": {
+      "description": "A script order's size, stop and gain, as `strategy.script.list` words\nthem; absent for an alarm and for a drawn instance, whose preset\nsizes and protects its orders.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "side": {
       "$ref": "#/$defs/ActionSide"
+    },
+    "stop": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "strategy": {
       "$ref": "#/$defs/DeskRow"
