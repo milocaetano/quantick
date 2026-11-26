@@ -86,6 +86,8 @@ pub struct MergeView {
     pub own: Option<Currency>,
     /// The currencies a merge can read in: the selection's, and USD.
     pub currencies: Vec<Currency>,
+    /// Whether the report reads money, the one figure a merge converts.
+    pub reads_money: bool,
 }
 
 impl MergeView {
@@ -134,7 +136,7 @@ impl MergeReadout {
                     used.len()
                 ),
             };
-            caption.push_str(&format!(" · {from}→{to} {span}"));
+            caption.push_str(&format!(" · {from}/{to} {span}"));
         }
         if !self.unconverted.is_empty() {
             let trades: usize = self.unconverted.iter().map(|entry| entry.trades).sum();
@@ -167,12 +169,12 @@ impl MergeReadout {
 }
 
 impl Unconverted {
-    /// Why, in words: `pt value unset`, `no USDT→BRL rate`.
+    /// Why, in words: `pt value unset`, `no USDT/BRL rate`.
     #[must_use]
     pub fn why_text(&self, target: &Currency) -> String {
         match &self.why {
             Unconvertible::PointValueUnset => "pt value unset".to_owned(),
-            Unconvertible::NoRate(from) => format!("no {}→{} rate", from.code(), target.code()),
+            Unconvertible::NoRate(from) => format!("no {}/{} rate", from.code(), target.code()),
         }
     }
 }
@@ -212,6 +214,7 @@ impl ReportView {
                 _ => None,
             },
             currencies: currencies.into_iter().collect(),
+            reads_money: money,
         };
         let Some(target) = target else {
             return self;

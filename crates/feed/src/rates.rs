@@ -24,9 +24,13 @@ pub const BINANCE: &str = "binance";
 const DAY_MS: i64 = 86_400_000;
 
 /// Fold a venue's daily candles for `pair` into `store`: each close is the
-/// rate of its candle's UTC day. Answers how many days were recorded.
-pub fn record(store: &mut RateStore, pair: &RatePair, bars: &[Bar]) -> usize {
+/// rate of its candle's UTC day. A candle still open at `now_ms` has no
+/// close yet, only a last price, and is left out: that day reads as having
+/// no rate until a later fetch finds it closed. Answers how many days were
+/// recorded.
+pub fn record(store: &mut RateStore, pair: &RatePair, bars: &[Bar], now_ms: i64) -> usize {
     bars.iter()
+        .filter(|bar| bar.close_time < now_ms)
         .filter(|bar| store.record_daily_close(pair, bar.open_time, bar.close))
         .count()
 }
@@ -69,7 +73,7 @@ pub fn refresh_in_background(path: PathBuf, pairs: Vec<RatePair>) {
                 ));
                 fetched.push((pair.clone(), history.bars));
             }
-            write(&path, &fetched);
+            write(&path, &fetched, to_ms);
         });
     if let Err(error) = spawned {
         tracing::warn!(target: "quantick::feed", event_code = "RATES_FETCH", %error, "rates fetch thread not started");
@@ -78,7 +82,7 @@ pub fn refresh_in_background(path: PathBuf, pairs: Vec<RatePair>) {
 
 /// Merge `fetched` into the store at `path`, written whole through a
 /// temporary file so a crash never leaves half a store.
-fn write(path: &Path, fetched: &[(RatePair, Vec<Bar>)]) {
+fn write(path: &Path, fetched: &[(RatePair, Vec<Bar>)], now_ms: i64) {
     let mut store = match std::fs::read_to_string(path) {
         Ok(text) => match RateStore::parse(&text) {
             Ok(store) => store,
@@ -91,7 +95,7 @@ fn write(path: &Path, fetched: &[(RatePair, Vec<Bar>)]) {
     };
     let days: usize = fetched
         .iter()
-        .map(|(pair, bars)| record(&mut store, pair, bars))
+        .map(|(pair, bars)| record(&mut store, pair, bars, now_ms))
         .sum();
     if days == 0 {
         return;
@@ -145,25 +149,26 @@ mod tests {
     fn each_daily_close_is_the_rate_of_its_utc_day_and_a_fetch_adds_to_the_store() {
         let scratch = crate::scratch::ScratchDir::new("rates-store");
         let path = scratch.path().join("rates.csv");
-        // 2026-11-20 and 2026-11-21 at 00:00 UTC.
+        // 2026-11-20 at 00:00 UTC.
         let day = 20_777 * DAY_MS;
-        write(
-            &path,
-            &[(pair(), vec![bar(day, 581), bar(day + DAY_MS, 579)])],
-        );
+        let open = bar(day + 2 * DAY_MS, 1);
+        let bars = vec![bar(day, 581), bar(day + DAY_MS, 579), open];
+        write(&path, &[(pair(), bars)], day + 2 * DAY_MS + 5);
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "# quantick-rates v1\n2026-11-20,USDT,BRL,5.81\n2026-11-21,USDT,BRL,5.79\n"
+            "# quantick-rates v1\n2026-11-20,USDT,BRL,5.81\n2026-11-21,USDT,BRL,5.79\n",
+            "the 22nd's candle is still open: its last price is no close"
         );
-        write(&path, &[(pair(), vec![bar(day + 2 * DAY_MS, 580)])]);
+        let later = day + 3 * DAY_MS;
+        write(&path, &[(pair(), vec![bar(day + 2 * DAY_MS, 580)])], later);
         assert!(
             std::fs::read_to_string(&path)
                 .unwrap()
                 .ends_with("2026-11-21,USDT,BRL,5.79\n2026-11-22,USDT,BRL,5.8\n"),
-            "a later fetch adds its days"
+            "a later fetch adds the day once it closed"
         );
         std::fs::write(&path, "not a store").unwrap();
-        write(&path, &[(pair(), vec![bar(day, 581)])]);
+        write(&path, &[(pair(), vec![bar(day, 581)])], later);
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "not a store",

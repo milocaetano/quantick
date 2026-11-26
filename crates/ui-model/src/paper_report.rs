@@ -478,13 +478,11 @@ impl State {
             .flatten()
             .find(|currency| offered.contains(currency))
             .unwrap_or(usd);
-        let money = (view.equity.walks().iter())
-            .any(|walk| walk.primary == PnlPrimary::Money || walk.fallback.is_some());
-        let current = self.merge.clone().or_else(|| own_currency(view));
+        let current = self.merge.clone().or_else(|| view.merge.own.clone());
         MergeControls {
             switch: (view.merge.per_asset_walks > 1).then_some(self.merge.is_some()),
             currency: current
-                .filter(|_| money)
+                .filter(|_| view.merge.reads_money)
                 .map(|current| (current, offered.clone())),
             default,
         }
@@ -761,14 +759,6 @@ fn chart_only(symbol: String) -> BTreeSet<String> {
     (!symbol.is_empty()).then_some(symbol).into_iter().collect()
 }
 
-/// The one asset's own currency, when the view walks a single money curve
-/// per asset: picking it reads per asset rather than a merge of one.
-fn own_currency(view: &ReportView) -> Option<Currency> {
-    (view.merge.per_asset_walks == 1)
-        .then(|| view.merge.own.clone())
-        .flatten()
-}
-
 /// The report's merge controls for one frame; see [`State::merge_controls`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeControls {
@@ -901,7 +891,8 @@ impl crate::Model for Model {
                 return state.report_load();
             }
             Intent::MergeCurrency(currency) => {
-                let own = state.report_view.as_ref().and_then(own_currency);
+                // The one asset's own currency reads per asset, not a merge of one.
+                let own = (state.report_view.as_ref()).and_then(|view| view.merge.own.clone());
                 state.merge = (own.as_ref() != Some(&currency)).then(|| currency.clone());
                 state.report_view = None;
                 let mut effects = state.report_load();

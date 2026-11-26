@@ -196,7 +196,7 @@ fn brl_and_usdt_merge_in_brl_at_the_days_rate() {
     assert!(readout.unconverted.is_empty());
     assert_eq!(
         readout.caption(),
-        "Merged in BRL · BTCUSDT USDT + WINZ26 BRL · USDT→BRL 5 on 2026-11-20"
+        "Merged in BRL · BTCUSDT USDT + WINZ26 BRL · USDT/BRL 5 on 2026-11-20"
     );
     assert_eq!(view.merge.per_asset_walks, 2, "the switch stays on offer");
 }
@@ -216,7 +216,7 @@ fn brl_and_usdt_merge_in_usd_through_the_reverse_rate_and_the_peg() {
             to: code("USD"),
             rate: d("0.2"),
         }],
-        "BRL→USD is the stored USDT→BRL inverted; USDT needs no rate to be USD"
+        "BRL to USD is the stored USDT to BRL inverted; USDT needs no rate to be USD"
     );
 }
 
@@ -253,7 +253,7 @@ fn a_trade_without_a_rate_or_a_point_value_is_left_out_and_listed() {
     );
     assert!(
         readout.caption().ends_with(
-            "not converted: 2 trade(s) - BTCUSDT 2026-11-21 no USDT→BRL rate, \
+            "not converted: 2 trade(s) - BTCUSDT 2026-11-21 no USDT/BRL rate, \
              XYZ 2026-11-21 pt value unset"
         ),
         "{}",
