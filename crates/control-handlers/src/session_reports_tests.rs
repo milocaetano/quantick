@@ -31,10 +31,25 @@ fn sources_call_normalizes_unions_and_rejects_invalid_input_without_success_even
     .unwrap();
     assert_eq!(dates["open"], false);
     assert_eq!(dates["timezone"], "UTC-03:00");
-    assert_eq!(dates["applied_start"], Value::Null);
+    assert_eq!(dates["applied_days"], json!([]));
+    assert_eq!(dates["applied_day_count"], "0");
+    let input_schema = quantick_control_schema::session_reports::descriptor().input_schema;
+    let first = quantick_civil::CivilDate::from_ymd(2026, 11, 1);
+    let too_many: Vec<String> = (0..=MAX_LISTED_DAYS as i64)
+        .map(|offset| first.offset_days(offset).iso())
+        .collect();
     for (input, code) in [
         (
-            json!({"action":"draft_dates", "start":"2026-11-300", "end":""}),
+            json!({"action":"days", "days":["2026-11-24", "2026-11-300"]}),
+            "invalid_dates",
+        ),
+        (
+            json!({"action":"days", "days":["2026-11-31"]}),
+            "invalid_dates",
+        ),
+        (json!({"action":"days", "days":too_many}), "invalid_dates"),
+        (
+            json!({"action":"days", "days":[format!("2026-11-24{}", "9".repeat(4096))]}),
             "invalid_dates",
         ),
         (
@@ -42,7 +57,12 @@ fn sources_call_normalizes_unions_and_rejects_invalid_input_without_success_even
             "invalid_period",
         ),
     ] {
+        // The schema admits every day list, so the gateway hands each one to
+        // the handler and the refusal carries its code.
+        quantick_control::schema::validate_instance(&input_schema, &input).unwrap();
         let error = open(&mut host, &mut access, &FakeWindow::assistant(), &input).unwrap_err();
+        let wire = serde_json::to_string(&error).unwrap();
+        assert!(!wire.contains("9999"), "no echo of the long entry: {wire}");
         assert_eq!(error.context.details.unwrap()["code"], code);
     }
     assert!(access.events.is_empty());
@@ -307,4 +327,89 @@ fn whole_day_and_tag_calls_open_one_origin_and_refuse_empty_or_invalid_scopes() 
     }
     assert_eq!(host.desk.as_ref().unwrap().reports.len(), reports);
     assert_eq!(access.events.len(), events, "refusals emit no opens");
+}
+
+#[test]
+fn days_call_sets_the_picked_days_idempotently_and_clear_dates_empties_them() {
+    let scratch = crate::scratch::ScratchDir::new("report-days");
+    let mut host = Host {
+        desk: Some(PaperDesk::new(
+            quantick_paper::PaperAccount::with_trades_dir(scratch.path().to_owned()),
+        )),
+        dir: scratch.path().to_owned(),
+    };
+    let mut access = FakeAccess::with_budget(0);
+    let input =
+        json!({"action":"days", "days":["2026-11-25", "2026-11-12", "2026-11-24", "2026-11-25"]});
+    let set = open(&mut host, &mut access, &FakeWindow::assistant(), &input).unwrap();
+    assert_eq!(set["action"], "days");
+    assert_eq!(
+        set["applied_days"],
+        json!(["2026-11-12", "2026-11-24", "2026-11-25"]),
+        "oldest first, duplicates collapsed"
+    );
+    assert_eq!(set["applied_day_count"], "3");
+    assert_eq!(set["timezone"], "UTC-03:00");
+    assert_eq!(access.events.last().unwrap().payload["report"], set);
+    assert_eq!(
+        open(&mut host, &mut access, &FakeWindow::assistant(), &input).unwrap(),
+        set,
+        "a retry sets the same days, never toggles them"
+    );
+    let cleared = open(
+        &mut host,
+        &mut access,
+        &FakeWindow::assistant(),
+        &json!({"action":"clear_dates"}),
+    )
+    .unwrap();
+    assert_eq!(cleared["applied_days"], json!([]));
+    assert_eq!(cleared["applied_day_count"], "0");
+    let emptied = open(
+        &mut host,
+        &mut access,
+        &FakeWindow::assistant(),
+        &json!({"action":"days", "days":[]}),
+    )
+    .unwrap();
+    assert_eq!(emptied["applied_days"], json!([]));
+    let copies = json!({"action":"days", "days":vec!["2026-11-24"; MAX_LISTED_DAYS + 1]});
+    let input_schema = quantick_control_schema::session_reports::descriptor().input_schema;
+    quantick_control::schema::validate_instance(&input_schema, &copies).unwrap();
+    let one = open(&mut host, &mut access, &FakeWindow::assistant(), &copies).unwrap();
+    assert_eq!(
+        one["applied_days"],
+        json!(["2026-11-24"]),
+        "copies collapse"
+    );
+}
+
+/// A pick longer than the readback lists its newest days; the count
+/// carries the rest.
+#[test]
+fn a_long_pick_reads_back_its_newest_days() {
+    let scratch = crate::scratch::ScratchDir::new("report-days-newest");
+    let mut desk = PaperDesk::new(quantick_paper::PaperAccount::with_trades_dir(
+        scratch.path().to_owned(),
+    ));
+    let first = quantick_civil::CivilDate::from_ymd(2026, 8, 1);
+    let last = first.offset_days(99);
+    desk.report_days = DaySet::span(first, last);
+    let mut host = Host {
+        desk: Some(desk),
+        dir: scratch.path().to_owned(),
+    };
+    let mut access = FakeAccess::with_budget(0);
+    let read = open(
+        &mut host,
+        &mut access,
+        &FakeWindow::assistant(),
+        &json!({"action":"inspect"}),
+    )
+    .unwrap();
+    let listed = read["applied_days"].as_array().unwrap();
+    assert_eq!(listed.len(), MAX_LISTED_DAYS);
+    assert_eq!(listed[0], first.offset_days(8).iso());
+    assert_eq!(listed[MAX_LISTED_DAYS - 1], last.iso());
+    assert_eq!(read["applied_day_count"], "100");
 }

@@ -70,7 +70,7 @@ pub trait TradeDesk {
         &mut self,
         change: Option<quantick_paper::report::snapshot::ReportChange>,
         tz: TzOffset,
-    ) -> Result<quantick_paper::report::snapshot::ReportReadout, &'static str>;
+    ) -> quantick_paper::report::snapshot::ReportReadout;
     /// The simulated account.
     fn account(&self) -> &PaperAccount;
     /// The simulated account, to place into.

@@ -126,6 +126,12 @@ impl ReportRequest {
         }
     }
 
+    /// The restriction left once picked dates take over from a whole-session
+    /// report: the session's origin, never its one file.
+    pub fn admits_origin(&self, row: &HistoryRow) -> bool {
+        of_origin(row, self.origin())
+    }
+
     fn title(&self, history: &LoadedHistory, tz: TzOffset) -> String {
         let origin = self.source().label();
         match self {

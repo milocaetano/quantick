@@ -9,17 +9,12 @@ pub fn report(
     change: Option<ReportChange>,
     tz: quantick_civil::TzOffset,
     env: &ReportEnv<'_>,
-) -> Result<ReportReadout, &'static str> {
+) -> ReportReadout {
     if let Some(change) = change {
         let reload = matches!(change, ReportChange::Sources(_));
         let intent = match change {
             ReportChange::Sources(sources) => Intent::Source(sources),
-            ReportChange::Draft(draft) => Intent::Draft(draft),
-            ReportChange::Generate => {
-                updates.state().date_draft().range()?;
-                Intent::GenerateDates
-            }
-            ReportChange::ClearDates => Intent::Dates(super::DaySelection::None),
+            ReportChange::Days(days) => Intent::Days(days),
             ReportChange::Period(period) => Intent::Period(period),
         };
         updates.update(intent);
@@ -35,16 +30,17 @@ pub fn report(
         .as_ref()
         .and_then(|receipt| receipt.view.as_deref())
         .or(state.report_view().as_ref());
-    Ok(ReportReadout {
-        draft: state.date_draft().clone(),
-        applied: state.applied_dates(),
+    ReportReadout {
+        days: state.picked_days().clone(),
         open: state.report_open(),
         loaded: state.report().is_some(),
         source: state.report_source(),
         symbol: state.report_symbol().clone(),
-        window: state
-            .applied_dates()
-            .map_or_else(|| state.report_period().phrase(), |range| range.label()),
+        window: if state.picked_days().is_empty() {
+            state.report_period().phrase()
+        } else {
+            state.picked_days().label()
+        },
         scope: state.report_scope_label().map(str::to_owned),
         trade_count: view.map_or(0, |view| view.rows.len()),
         unreadable_files: state
@@ -56,7 +52,7 @@ pub fn report(
             .as_ref()
             .map_or(0, |history| history.problem_rows),
         net_points: view.map_or_else(Default::default, |view| view.report.net_points),
-    })
+    }
 }
 
 pub fn local_effects(mut effects: Effects, env: &ReportEnv<'_>) -> (Effects, Option<Intent>) {

@@ -10,7 +10,7 @@ use quantick_control_schema::session_reports::{
 };
 use quantick_paper::report::{
     ReportPeriod,
-    calendar::DateDraft,
+    calendar::{DaySet, MAX_LISTED_DAYS},
     parse_period,
     scope::{self, ReportOrigin, ReportRequest},
     session_edit::SessionEditError,
@@ -72,24 +72,17 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
             report(desk, "sources", sources.map(ReportChange::Sources), tz)?
         }
         ReportInput::Inspect {} => report(desk, "inspect", None, tz)?,
-        ReportInput::DraftDates { start, end } => {
-            if start.chars().count() > 10 || end.chars().count() > 10 {
-                return Err(invalid(
-                    "invalid_dates",
-                    "Date fields allow up to ten characters.",
-                ));
-            }
-            report(
-                desk,
-                "draft_dates",
-                Some(ReportChange::Draft(DateDraft { start, end })),
-                tz,
-            )?
+        ReportInput::Days { days } => {
+            let days = DaySet::parse_list(&days)
+                .map_err(|error| invalid("invalid_dates", &error.to_string()))?;
+            report(desk, "days", Some(ReportChange::Days(days)), tz)?
         }
-        ReportInput::Generate {} => report(desk, "generate", Some(ReportChange::Generate), tz)?,
-        ReportInput::ClearDates {} => {
-            report(desk, "clear_dates", Some(ReportChange::ClearDates), tz)?
-        }
+        ReportInput::ClearDates {} => report(
+            desk,
+            "clear_dates",
+            Some(ReportChange::Days(DaySet::default())),
+            tz,
+        )?,
         ReportInput::Period { period } => {
             let period = (period.len() <= 16)
                 .then(|| {
@@ -169,9 +162,7 @@ fn report(
     change: Option<ReportChange>,
     tz: quantick_civil::TzOffset,
 ) -> Result<ReportOutput, ControlError> {
-    let view = desk
-        .report_change(change, tz)
-        .map_err(|error| invalid("invalid_dates", error))?;
+    let view = desk.report_change(change, tz);
     use quantick_control_schema::journal_sessions::JournalSourceFilter as WireSource;
     let sources = [WireSource::Broker, WireSource::Real, WireSource::Replay]
         .into_iter()
@@ -182,11 +173,15 @@ fn report(
         .collect();
     Ok(ReportOutput::Sources {
         action: action.to_owned(),
-        validation_error: view.draft.range().err().map(str::to_owned),
-        draft_start: view.draft.start,
-        draft_end: view.draft.end,
-        applied_start: view.applied.map(|range| range.start.iso()),
-        applied_end: view.applied.map(|range| range.end.iso()),
+        // The newest days, still oldest first: the edge of a long pick is
+        // the one a caller acts on, and the count says how many came before.
+        applied_days: view
+            .days
+            .iter()
+            .skip(view.days.len().saturating_sub(MAX_LISTED_DAYS))
+            .map(|day| day.iso())
+            .collect(),
+        applied_day_count: WireU64::new(view.days.len() as u64),
         timezone: tz.label(),
         sources,
         open: view.open,

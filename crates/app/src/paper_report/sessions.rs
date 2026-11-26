@@ -21,7 +21,7 @@ use quantick_sim::history::SessionSource;
 
 use super::rows::{Bold, draw_header};
 use super::{LEDGER_ROW_HEIGHT_PX, Paint, SourceFilter};
-use crate::paper_calendar::{draw_month, today};
+use crate::paper_calendar::{DayFace, draw_month, today};
 use crate::paper_chrome::pill_toggle;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -102,7 +102,15 @@ impl Paint<'_, '_> {
             &button,
             egui::PopupCloseBehavior::CloseOnClickOutside,
             |ui| {
-                if let Some(day) = draw_month(ui, days, &mut calendar, PICKER_CELL_PX, today(tz)) {
+                if let Some(day) = draw_month(
+                    ui,
+                    days,
+                    &mut calendar.month,
+                    &|day| calendar.selection.contains(day),
+                    DayFace::Trades,
+                    PICKER_CELL_PX,
+                    today(tz),
+                ) {
                     calendar.selection = calendar.selection.click(day);
                 }
             },

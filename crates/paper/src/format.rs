@@ -121,6 +121,29 @@ pub fn fmt_signed_points(value: Decimal) -> String {
     }
 }
 
+/// Signed points short enough for a calendar day cell: whole points cut
+/// toward zero, then whole thousands (`k`) from five digits and whole
+/// millions (`M`) from seven — `+1250.50` reads `+1250`, `-12480` reads
+/// `-12k`. A figure never claims more than came; the exact net stays in
+/// the cell's hover.
+pub fn fmt_compact_signed_points(value: Decimal) -> String {
+    let whole = value.trunc();
+    let magnitude = whole.abs();
+    let (figure, suffix) = if magnitude >= Decimal::from(1_000_000) {
+        (whole / Decimal::from(1_000_000), "M")
+    } else if magnitude >= Decimal::from(10_000) {
+        (whole / Decimal::from(1_000), "k")
+    } else {
+        (whole, "")
+    };
+    let figure = figure.trunc().normalize();
+    if figure.is_zero() {
+        return "0".to_owned();
+    }
+    let sign = if figure > Decimal::ZERO { "+" } else { "" };
+    format!("{sign}{figure}{suffix}")
+}
+
 pub use quantick_replay::deals::sanitize_symbol;
 
 /// The value of `word` when it is a signed figure (`+24.77`, `-3`), the only
@@ -178,6 +201,26 @@ mod tests {
         assert_eq!(fmt_signed_points(Decimal::from(12)), "+12");
         assert_eq!(fmt_signed_points(Decimal::from(-3)), "-3");
         assert_eq!(fmt_signed_points(Decimal::ZERO), "0");
+    }
+
+    #[test]
+    fn compact_points_fit_a_day_cell() {
+        for (value, spelled) in [
+            (Decimal::new(125_050, 2), "+1250"),
+            (Decimal::new(-125_099, 2), "-1250"),
+            (Decimal::from(9_999), "+9999"),
+            (Decimal::from(10_000), "+10k"),
+            (Decimal::from(-12_480), "-12k"),
+            (Decimal::from(999_999), "+999k"),
+            (Decimal::from(-1_250_000), "-1M"),
+            (Decimal::new(75, 2), "0"),
+            (Decimal::new(-75, 2), "0"),
+            (Decimal::ZERO, "0"),
+        ] {
+            let text = fmt_compact_signed_points(value);
+            assert_eq!(text, spelled, "{value}");
+            assert!(text.len() <= 5, "{text}");
+        }
     }
 
     #[test]

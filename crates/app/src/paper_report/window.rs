@@ -8,6 +8,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_paper::report::ReportPeriod;
+use quantick_paper::report::calendar::{DayPreset, DaySet};
 use quantick_ui_model::paper_report::Intent;
 
 use super::curve::draw_equity_curve;
@@ -15,12 +16,11 @@ use super::tables::{
     draw_exit_reason_grid, draw_report_grid, draw_report_tiles, draw_side_grid, draw_trade_list,
 };
 use super::{
-    CALENDAR_CELL_H_PX, CALENDAR_CELL_W_PX, CURVE_MIN_H_CALENDAR_PX, CURVE_MIN_H_PX,
-    CUSTOM_PERIOD_FIELD_PX, Paint, REPORT_DEFAULT_H_PX, REPORT_DEFAULT_W_PX,
-    REPORT_FOOTER_RESERVE_PX, REPORT_GRID_MIN_H_PX, REPORT_MIN_HEIGHT_CALENDAR_PX,
+    CALENDAR_CELL_H_PX, CALENDAR_CELL_W_PX, CURVE_MIN_H_PX, CUSTOM_PERIOD_FIELD_PX, Paint,
+    REPORT_DEFAULT_H_PX, REPORT_DEFAULT_W_PX, REPORT_FOOTER_RESERVE_PX, REPORT_GRID_MIN_H_PX,
     REPORT_MIN_HEIGHT_PX, REPORT_MIN_WIDTH_PX, ReportEnv, SourceFilter,
 };
-use crate::paper_calendar::{DaySelection, today};
+use crate::paper_calendar::{DayFace, draw_month, today};
 use crate::paper_chrome::pill_toggle;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -60,24 +60,13 @@ impl Paint<'_, '_> {
             // Both are still only a starting size — the window resizes.
             .default_size(egui::vec2(REPORT_DEFAULT_W_PX, REPORT_DEFAULT_H_PX))
             .min_width(REPORT_MIN_WIDTH_PX)
-            // An expanded month grid needs its own room. Without this the
-            // report at its smallest pushed the tiles, the curve and the
-            // disclosure lines out through the bottom of the window.
-            .min_height(
-                (if self.calendar().open {
-                    REPORT_MIN_HEIGHT_CALENDAR_PX
-                } else {
-                    REPORT_MIN_HEIGHT_PX
-                })
-                .min(max_height),
-            )
+            .min_height(REPORT_MIN_HEIGHT_PX.min(max_height))
             .show(ctx, |ui| {
                 #[cfg(any(feature = "scenario-harness", test))]
                 self.native.scroll_probe.report(ui);
                 if self.draw_report_filters(ui) {
                     self.update(Intent::ReloadReport);
                 }
-                self.draw_report_calendar(ui, tz);
                 if let Some(scope) = self.report_scope_label() {
                     let reset = ui
                         .horizontal(|ui| {
@@ -89,6 +78,7 @@ impl Paint<'_, '_> {
                         self.update(Intent::ClearFilters(env.symbol.to_owned()));
                     }
                 }
+                self.draw_report_dates(ui, tz);
                 self.ensure_report_view(tz, env.pnl);
                 if let Some(view) = self.report_view() {
                     ui.label(
@@ -98,20 +88,11 @@ impl Paint<'_, '_> {
                 }
                 ui.separator();
                 let list_open = self.report_list_open();
-                let calendar_open = self.calendar().open;
                 match self.updates.state().report_view() {
                     Some(view) if !view.rows.is_empty() => {
                         draw_report_tiles(ui, view);
                         ui.add_space(8.0);
-                        draw_equity_curve(
-                            ui,
-                            view,
-                            if calendar_open {
-                                CURVE_MIN_H_CALENDAR_PX
-                            } else {
-                                CURVE_MIN_H_PX
-                            },
-                        );
+                        draw_equity_curve(ui, view, CURVE_MIN_H_PX);
                         ui.add_space(4.0);
                         // The grids fill whatever height the user gave the
                         // window and scroll inside it. Letting them take
@@ -245,7 +226,7 @@ impl Paint<'_, '_> {
                     .color(palette.text_muted())
                     .small(),
             );
-            let ranged = self.applied_dates().is_some();
+            let ranged = !self.picked_days().is_empty();
             for period in ReportPeriod::PILLS {
                 let on = !ranged && self.report_period() == period;
                 if pill_toggle(
@@ -297,72 +278,86 @@ impl Paint<'_, '_> {
         reload
     }
 
-    fn draw_report_calendar(&mut self, ui: &mut egui::Ui, tz: TzOffset) {
-        ui.strong("Report dates");
-        let mut draft = self.date_draft().clone();
-        ui.horizontal_wrapped(|ui| {
-            for (label, text) in [
-                ("Start date", &mut draft.start),
-                ("End date", &mut draft.end),
-            ] {
-                ui.vertical(|ui| {
-                    let id = egui::Id::new(("report date", label));
-                    let label = ui.label(label);
-                    ui.add(
-                        egui::TextEdit::singleline(text)
-                            .id(id)
-                            .hint_text("YYYY-MM-DD")
-                            .char_limit(10)
-                            .desired_width(theme::get(ui.ctx()).layout(100.0)),
-                    )
-                    .labelled_by(label.id);
-                });
-            }
-            if &draft != self.date_draft() {
-                self.update(Intent::Draft(draft));
-            }
-            let valid = self.date_draft().range().is_ok();
-            let mut calendar = self.calendar();
-            if ui
-                .add_enabled(valid, egui::Button::new("Generate report"))
-                .clicked()
-            {
-                self.update(Intent::GenerateDates);
-            }
-            if ui.toggle_value(&mut calendar.open, "Calendar").changed() {
-                self.update(Intent::Calendar(calendar));
-            }
-            if ui
-                .button("Clear dates")
-                .on_hover_text(format!("Restore {}", self.report_period().phrase()))
-                .clicked()
-            {
-                self.update(Intent::Dates(DaySelection::None));
-            }
-        });
-        if let Some(feedback) = self.date_feedback() {
-            ui.label(feedback);
+    /// The `Dates` button, the picked days' chip and, while open, the
+    /// popover: presets, the month grid and its gesture hint. Every pick
+    /// applies at once; a press outside the popover closes it.
+    fn draw_report_dates(&mut self, ui: &mut egui::Ui, tz: TzOffset) {
+        let open = self.calendar().open;
+        let (button, chip, clear) = ui
+            .horizontal(|ui| {
+                let button = pill_toggle(
+                    ui,
+                    &format!("{} Dates", icons::CALENDAR_BLANK),
+                    open,
+                    "pick the days to report: click = day, Shift+click = range",
+                );
+                if self.picked_days().is_empty() {
+                    return (button, None, false);
+                }
+                // The chip's label opens the picker; only its x clears.
+                let label = self.picked_days().label();
+                let chip = pill_toggle(ui, &label, true, "open the date picker");
+                let back = format!(
+                    "clear the dates - back to {}",
+                    self.report_period().phrase()
+                );
+                let clear = ui.small_button(icons::X).on_hover_text(back).clicked();
+                (button, Some(chip), clear)
+            })
+            .inner;
+        if clear {
+            self.update(Intent::Days(DaySet::default()));
         }
-        let mut calendar = self.calendar();
-        if calendar.open {
-            let day = egui::ScrollArea::horizontal()
-                .id_salt("report_calendar_grid")
-                .show(ui, |ui| {
-                    crate::paper_calendar::draw_month(
+        if button.clicked() || chip.as_ref().is_some_and(egui::Response::clicked) {
+            self.update(Intent::DatesOpen(!open));
+        }
+        if !self.calendar().open {
+            return;
+        }
+        let today = today(tz);
+        let popover = egui::Area::new(egui::Id::new("paper_report_dates_popover"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(button.rect.left_bottom() + egui::vec2(0.0, 4.0))
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        for preset in DayPreset::ALL {
+                            if ui.button(preset.label()).clicked() {
+                                self.update(Intent::Days(preset.days(today)));
+                            }
+                        }
+                    });
+                    let mut month = self.calendar().month;
+                    let day = draw_month(
                         ui,
                         self.report_days(),
-                        &mut calendar,
+                        &mut month,
+                        &|day| self.picked_days().contains(day),
+                        DayFace::Net,
                         egui::vec2(CALENDAR_CELL_W_PX, CALENDAR_CELL_H_PX),
-                        today(tz),
-                    )
+                        today,
+                    );
+                    if month != self.calendar().month {
+                        self.update(Intent::ShowMonth(month));
+                    }
+                    if let Some(day) = day {
+                        let extend = ui.input(|input| input.modifiers.shift);
+                        self.update(Intent::PickDay { day, extend });
+                    }
+                    ui.weak("Click = day · Shift+click = range");
+                });
+            })
+            .response;
+        let toggles = [Some(button.rect), chip.map(|chip| chip.rect)];
+        let outside = ui.input(|input| {
+            input.pointer.any_pressed()
+                && input.pointer.interact_pos().is_some_and(|pos| {
+                    !popover.rect.contains(pos)
+                        && !toggles.iter().flatten().any(|r| r.contains(pos))
                 })
-                .inner;
-            if calendar.month != self.calendar().month {
-                self.update(Intent::Calendar(calendar));
-            }
-            if let Some(day) = day {
-                self.update(Intent::PickDate(day));
-            }
+        });
+        if outside {
+            self.update(Intent::DatesOpen(false));
         }
     }
 }

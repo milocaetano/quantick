@@ -4,7 +4,6 @@
 //! filesystem, focus, scroll and host tests remain in app. Support is counted here.
 use super::*;
 use crate::Model as _;
-use quantick_civil::DateRange;
 use quantick_engine::Side;
 use quantick_paper::report::HistoryRow;
 use quantick_paper::report::snapshot::ReportWindow;
@@ -39,10 +38,7 @@ fn scoped_open_replaces_stale_filters_and_reloads_keep_the_exact_session() {
     let mut state = State::default();
     Model::update(&mut state, Intent::Symbol(Some("X".to_owned())));
     Model::update(&mut state, Intent::Source(SourceFilter::Replay.into()));
-    Model::update(
-        &mut state,
-        Intent::Dates(DaySelection::Anchor(day.offset_days(1))),
-    );
+    Model::update(&mut state, Intent::Days(DaySet::single(day.offset_days(1))));
     let scoped = |rows| {
         Intent::Scoped(Box::new(PreparedReport {
             receipt: ReportReceipt {
@@ -62,7 +58,7 @@ fn scoped_open_replaces_stale_filters_and_reloads_keep_the_exact_session() {
     state.ensure_report_view(tz, PnlReader::plain());
     assert!(state.report_open());
     assert!(state.report_symbol().is_none());
-    assert_eq!(state.calendar().selection, DaySelection::None);
+    assert!(state.picked_days().is_empty());
     assert_eq!(state.snapshot().unwrap().rows.len(), 1);
     assert_eq!(
         state.snapshot().unwrap().report.net_points,
@@ -193,8 +189,8 @@ impl State {
             Model::update(self, Intent::InstallReport(receipt));
         }
     }
-    fn pick_report_dates(&mut self, dates: DaySelection) {
-        Model::update(self, Intent::Dates(dates));
+    fn pick_report_day(&mut self, day: CivilDate, extend: bool) {
+        Model::update(self, Intent::PickDay { day, extend });
     }
     fn set_day_collapsed(&mut self, day: CivilDate, folded: bool) {
         Model::update(self, Intent::Ledger(LedgerIntent::FoldDay(day, folded)));
@@ -358,25 +354,24 @@ fn the_report_reports_itself_as_data() {
     assert_eq!(snapshot.window.label(), "everything saved");
 
     // The named action a script would call, then the same read-back.
-    paper
-        .report_state_mut()
-        .pick_report_dates(DaySelection::None.click(day));
+    paper.report_state_mut().pick_report_day(day, false);
     paper
         .report_state_mut()
         .ensure_report_view(tz, PnlReader::plain());
     let snapshot = paper.report_state().snapshot().expect("a snapshot");
     assert_eq!(
         snapshot.window,
-        ReportWindow::Dates(DateRange {
-            start: day,
-            end: day
-        }),
+        ReportWindow::Dates(DaySet::single(day)),
         "a range and a period are never both in force"
     );
     assert_eq!(snapshot.rows.len(), 1);
     assert_eq!(snapshot.rows[0].symbol, "WINV26");
     assert_eq!(snapshot.hidden_outside, 1, "the next day sits outside");
-    assert_eq!(snapshot.window.label(), day.iso(), "and it names itself");
+    assert_eq!(
+        snapshot.window.label(),
+        "Aug 17 · 1 day",
+        "and it names itself"
+    );
     // The numbers the tiles show come from the very rows handed back.
     let net: Decimal = snapshot
         .rows
@@ -491,48 +486,37 @@ fn a_picked_calendar_range_cuts_the_report_and_the_pills_stand_down() {
     // the range must win outright, not intersect.
     paper.report_state_mut().filter.period = ReportPeriod::Today;
 
-    let picked = paper.report_state().calendar.selection.click(first);
-    paper.report_state_mut().pick_report_dates(picked);
+    paper.report_state_mut().pick_report_day(first, false);
     paper
         .report_state_mut()
         .ensure_report_view(tz, PnlReader::plain());
     let view = paper.report_state().report_view.as_ref().expect("a view");
     assert_eq!(view.rows.len(), 1, "one day, one trade");
-    assert_eq!(
-        view.range.map(DateRange::label),
-        Some("2026-08-12".to_owned())
-    );
+    assert_eq!(view.days.label(), "Aug 12 · 1 day");
     assert_eq!(view.hidden_outside, 3, "and it counts what it hides");
     assert_eq!(view.report.net_points, Decimal::from(5), "the tiles agree");
 
-    let picked = paper
-        .report_state()
-        .calendar
-        .selection
-        .click(first.offset_days(5));
-    paper.report_state_mut().pick_report_dates(picked);
+    // Shift+click the 17th: every day from the 12th through it.
+    paper
+        .report_state_mut()
+        .pick_report_day(first.offset_days(5), true);
     paper
         .report_state_mut()
         .ensure_report_view(tz, PnlReader::plain());
     let view = paper.report_state().report_view.as_ref().expect("a view");
     assert_eq!(view.rows.len(), 3, "both ends of the span are inside");
-    assert_eq!(
-        view.range.map(DateRange::label),
-        Some("2026-08-12 to 2026-08-17".to_owned())
-    );
+    assert_eq!(view.days.label(), "Aug 12 to Aug 17 · 6 days");
     assert_eq!(view.hidden_outside, 1, "only the 18th sits outside");
     assert_eq!(view.report.net_points, Decimal::from(10));
 
     // Clearing hands the window back to the pills, unchanged.
-    paper
-        .report_state_mut()
-        .pick_report_dates(DaySelection::None);
+    Model::update(paper.report_state_mut(), Intent::Days(DaySet::default()));
     paper.report_state_mut().filter.period = ReportPeriod::All;
     paper
         .report_state_mut()
         .ensure_report_view(tz, PnlReader::plain());
     let view = paper.report_state().report_view.as_ref().expect("a view");
-    assert!(view.range.is_none());
+    assert!(view.days.is_empty());
     assert_eq!(view.rows.len(), 4, "every saved trade is back");
     assert_eq!(view.hidden_outside, 0);
 }
@@ -552,17 +536,13 @@ fn a_picked_day_with_no_trades_reports_an_honest_empty() {
         problem_rows: 0,
         sessions: Default::default(),
     });
-    let picked = paper.report_state().calendar.selection.click(day);
-    paper.report_state_mut().pick_report_dates(picked);
+    paper.report_state_mut().pick_report_day(day, false);
     paper
         .report_state_mut()
         .ensure_report_view(tz, PnlReader::plain());
     let view = paper.report_state().report_view.as_ref().expect("a view");
     assert!(view.rows.is_empty());
-    assert_eq!(
-        view.range.map(DateRange::label),
-        Some("2026-08-12".to_owned())
-    );
+    assert_eq!(view.days.label(), "Aug 12 · 1 day");
     assert_eq!(view.hidden_outside, 1, "the trade exists, just not here");
 }
 
@@ -593,12 +573,12 @@ fn an_empty_report_names_why_and_offers_clear_only_when_narrowed() {
         state.empty_hint(),
         "X has 1 trade(s) outside the selected source or report scope."
     );
-    Model::update(&mut state, Intent::Dates(DaySelection::Anchor(day)));
+    Model::update(&mut state, Intent::Days(DaySet::single(day)));
     assert!(state.filters_narrowed("X"), "picked dates narrow it");
     assert_eq!(
         state.empty_hint(),
-        "X closed no trades in 2026-08-12 - pick another day, or clear the date \
-         filter to go back to the period pills."
+        "X closed no trades on Aug 12 · 1 day - pick other days, or clear the \
+         dates to go back to the period pills."
     );
 }
 
@@ -838,7 +818,7 @@ fn paper_report_filters_calendar_and_snapshot_keep_one_owner() {
                     session.update(Intent::InstallReport(cut));
                     assert_eq!(session.state().snapshot().unwrap().rows.len(), 1);
                     session.update(Intent::Source(SourceFilter::All.into()));
-                    session.update(Intent::Dates(DaySelection::Anchor(day.offset_days(1))));
+                    session.update(Intent::Days(DaySet::single(day.offset_days(1))));
                     let cut = session
                         .state()
                         .project_report(tz, PnlReader::plain())
@@ -848,7 +828,7 @@ fn paper_report_filters_calendar_and_snapshot_keep_one_owner() {
                     assert_eq!(snapshot.source, SourceFilter::All.into());
                     assert_eq!(
                         snapshot.window,
-                        ReportWindow::Dates(DateRange::new(day.offset_days(1), day.offset_days(1)))
+                        ReportWindow::Dates(DaySet::single(day.offset_days(1)))
                     );
                     assert_eq!(snapshot.report.net_points, Decimal::from(9));
                 },
@@ -896,12 +876,8 @@ fn paper_report_projection_receipts_preserve_freshness_and_month() {
         state.project_report(tz, PnlReader::plain()).is_none(),
         "warm frames borrow the cache"
     );
-    let shown = CalendarState {
-        month: Some(january.month_start()),
-        ..state.calendar
-    };
-    Model::update(&mut state, Intent::Calendar(shown));
-    Model::update(&mut state, Intent::Dates(DaySelection::Anchor(august)));
+    Model::update(&mut state, Intent::ShowMonth(Some(january.month_start())));
+    Model::update(&mut state, Intent::Days(DaySet::single(august)));
     state.ensure_report_view(tz, PnlReader::plain());
     assert_eq!(
         state.calendar.month,

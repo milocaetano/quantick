@@ -122,6 +122,53 @@ fn the_equity_walk_is_cut_once_and_both_readers_share_it() {
     assert_eq!((empty.low, empty.high), (0.0, 0.0));
 }
 
+/// A sparse set of picked days keeps exactly the trades that closed on a
+/// picked civil day in the display timezone, after the Source filter, and
+/// overrides a period pill that would cut them.
+#[test]
+fn sparse_picked_days_cut_by_closing_day_after_the_source_filter() {
+    let tz = TzOffset::new(-180);
+    let nov = |day| CivilDate::from_ymd(2026, 11, day);
+    let live = Some(history::SessionSource::Live);
+    let history = LoadedHistory {
+        rows: vec![
+            row("X", live, trade_at(nov(12).start_ms(tz), 1)),
+            row("X", live, trade_at(nov(13).start_ms(tz), 2)),
+            // 23:59:59.999 local on the 24th, 02:59 UTC on the 25th.
+            row("X", live, trade_at(nov(24).end_ms(tz) - 1, 4)),
+            row(
+                "X",
+                Some(history::SessionSource::Replay),
+                trade_at(nov(25).start_ms(tz), 8),
+            ),
+            // 00:00 local on the 26th: outside.
+            row("X", live, trade_at(nov(25).end_ms(tz), 16)),
+        ],
+        files: 1,
+        unreadable_files: 0,
+        problem_rows: 0,
+        sessions: BTreeMap::new(),
+    };
+    let mut days = calendar::DaySet::span(nov(24), nov(25));
+    days.toggle(nov(12));
+    let cut = ReportView::cut(&history, ReportPeriod::Today, SourceFilter::Real, &days, tz);
+    let nets: Vec<i64> = cut
+        .rows
+        .iter()
+        .map(|row| i64::try_from(row.trade.pnl_points).unwrap())
+        .collect();
+    assert_eq!(
+        nets,
+        [1, 4],
+        "the 12th and the 24th; the 25th's trade is a replay"
+    );
+    assert_eq!(cut.report.net_points, Decimal::from(5));
+    assert_eq!(cut.hidden_outside, 2, "the 13th and the 26th");
+    assert_eq!(cut.hidden_by_source_or_scope, 1);
+    let all = ReportView::cut(&history, ReportPeriod::Today, SourceFilter::All, &days, tz);
+    assert_eq!(all.report.net_points, Decimal::from(13));
+}
+
 /// The support line names the window it cut and every trade it kept out:
 /// older trades behind the period, others behind picked dates, and those
 /// the source filter or a report scope set aside.
@@ -145,14 +192,20 @@ fn the_scope_line_accounts_for_every_hidden_trade() {
         problem_rows: 0,
         sessions: BTreeMap::new(),
     };
-    let week = ReportView::cut(&history, ReportPeriod::Week, SourceFilter::Real, None, utc);
+    let week = ReportView::cut(
+        &history,
+        ReportPeriod::Week,
+        SourceFilter::Real,
+        &Default::default(),
+        utc,
+    );
     assert_eq!(
         week.scope_line(),
         "Applied: the last 7 days up to 1970-01-11 (newest saved trade) · closes in UTC · Sim live · 2 trade(s) \
          - 1 older saved trade(s) before this window \
          - 1 trade(s) outside the selected source or report scope"
     );
-    let picked = DateRange::new(
+    let picked = calendar::DaySet::span(
         CivilDate::from_ymd(1970, 1, 11),
         CivilDate::from_ymd(1970, 1, 6),
     );
@@ -160,15 +213,21 @@ fn the_scope_line_accounts_for_every_hidden_trade() {
         &history,
         ReportPeriod::Week,
         SourceFilter::Real,
-        Some(picked),
+        &picked,
         utc,
     );
     assert_eq!(
         range.scope_line(),
-        "Applied: 1970-01-06 to 1970-01-11 (6 days inclusive) · closes in UTC · Sim live · 2 trade(s) - 1 saved trade(s) outside these dates \
+        "Applied: Jan 6 to Jan 11 · 6 days · closes in UTC · Sim live · 2 trade(s) - 1 saved trade(s) outside these dates \
          - 1 trade(s) outside the selected source or report scope"
     );
-    let none = ReportView::cut(&history, ReportPeriod::All, SourceFilter::Broker, None, utc);
+    let none = ReportView::cut(
+        &history,
+        ReportPeriod::All,
+        SourceFilter::Broker,
+        &Default::default(),
+        utc,
+    );
     assert_eq!(
         none.scope_line(),
         "Applied: everything saved · closes in UTC · Broker · 0 trade(s) - 4 trade(s) outside the selected source or report scope"
@@ -611,7 +670,15 @@ fn the_report_numbers_are_fixed() {
     // `ReportView::cut` before a trader touches a filter.
     let utc = TzOffset::new(0);
     let history = golden_history();
-    let cut = |period| ReportView::cut(&history, period, SourceFilter::Real, None, utc);
+    let cut = |period| {
+        ReportView::cut(
+            &history,
+            period,
+            SourceFilter::Real,
+            &Default::default(),
+            utc,
+        )
+    };
     let all = dump_report(&cut(ReportPeriod::All));
     let week = dump_report(&cut(ReportPeriod::Week));
 

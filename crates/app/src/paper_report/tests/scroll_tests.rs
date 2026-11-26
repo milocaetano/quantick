@@ -22,12 +22,7 @@ fn enlarged_populated_report_footer_is_reached_by_wheel_input() {
     assert_eq!(crate::theme::get(&ctx).body_font(12.5).size, 25.0);
     let mut state = ReportState::default();
     state.update(Intent::Open(String::new()));
-    state.update(Intent::Calendar(
-        quantick_paper::report::calendar::CalendarState {
-            open: true,
-            ..Default::default()
-        },
-    ));
+    state.update(Intent::DatesOpen(true));
     state.update(Intent::LoadedReport(LoadedReport {
         history: LoadedHistory {
             rows: (0..40)
