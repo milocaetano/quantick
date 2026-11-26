@@ -9,5 +9,9 @@ publish.workspace = true
 [dependencies]
 rust_decimal = { workspace = true }
 
+[dev-dependencies]
+# The property tests generate books and depth events.
+proptest = { workspace = true }
+
 [lints]
 workspace = true
