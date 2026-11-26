@@ -102,6 +102,11 @@ class Workspace(unittest.TestCase):
         # comment can never turn it red.
         self.assertEqual("prose", self.decide("docs/prose-only-fixture/nothing-names-this.md"))
 
+    def test_a_skill_file_crates_only_document_is_prose(self):
+        # Crates name this skill's directory in doc comments and its sibling
+        # `.claude/skills/ui-harness/` in code; neither reads it (PR #1238).
+        self.assertEqual("prose", self.decide(".claude/skills/implement/references/execute.md"))
+
     def test_the_cli_prints_the_verdict(self):
         head = subprocess.run(("git", "rev-parse", "HEAD"), cwd=self.root, check=True,
                               capture_output=True, text=True).stdout.strip()

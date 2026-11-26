@@ -15,7 +15,7 @@ selects
   * any crate whose tracked files name it by path: a fixture, a script or a
     doc a test reads with `include_str!` or opens at run time, or a Rust file
     pulled in with `#[path]`, belongs to that test's crate too, whoever owns
-    the directory (see `needles`);
+    the directory (see `needles`; `hits` says which mentions count);
 
 and then every crate that depends on a selected one, through normal, dev or
 build dependencies, transitively. `quantick-guards` always runs: its tests are
@@ -28,6 +28,7 @@ PR can be made ready; see .claude/hooks/README.md.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -170,23 +171,78 @@ def changed_paths(root, base, head):
     ).split("\0") if p]
 
 
+SEGMENT = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+
+# A Rust doc comment names a path without reading it, unless it is doctest
+# code that embeds the file. `////` is a plain comment.
+DOC_COMMENT = re.compile(r"\s*(//!|///)(?!/)")
+EMBEDS = ("include_str!", "include_bytes!")
+
+
+def hits(referrer, text, wanted):
+    """The needles in `wanted` (a set) that line `text` of file `referrer`
+    names in a way that can make its crate read the path.
+
+    A Rust doc comment does not count. An occurrence that the line continues
+    as a longer path, `/` and more segments, counts only when that path starts
+    some wanted one: every needle is a changed path or one of its ancestors,
+    so a longer path that starts none lies in a sibling subtree, as
+    `.claude/skills/ui-harness/` is no reader of `.claude/skills/implement/`.
+    A prefix still counts, for a glob or format string that stops mid-name
+    (`tests/test_*.py`). Anything else after a needle counts.
+    """
+    if referrer.endswith(".rs") and DOC_COMMENT.match(text) and not any(e in text for e in EMBEDS):
+        return []
+    found = []
+    for needle in wanted:
+        start = text.find(needle)
+        while start != -1:
+            path = spelled(text, start, start + len(needle))
+            if path in wanted or any(w.startswith(path) for w in wanted):
+                found.append(needle)
+                break
+            start = text.find(needle, start + 1)
+    return found
+
+
+def spelled(text, start, end):
+    """The path `text[start:end]` begins, followed while `/<segment>` repeats.
+    A trailing `/` or `.` is punctuation, not part of the path."""
+    stop = end
+    while stop + 1 < len(text) and text[stop] == "/" and text[stop + 1] in SEGMENT:
+        stop += 2
+        while stop < len(text) and text[stop] in SEGMENT:
+            stop += 1
+    path = text[start:stop].rstrip(".").rstrip("/")
+    return path if len(path) > end - start else text[start:end]
+
+
 def git_referrers(root, head):
     """The `referrers` `select` takes: one search of the crates at `head`."""
     def referrers(wanted):
         if not wanted:
             return []
-        # One pass for every needle. -o prints each match, -z ends the path
-        # with NUL, and `git grep <rev>` prefixes it with `<rev>:`.
+        # One pass for every needle, whole lines so `hits` can read what
+        # surrounds each match. -z ends the path with NUL, `git grep <rev>`
+        # prefixes it with `<rev>:`, and -a reads a binary file as text, so a
+        # fixture blob that names a path still selects its crate.
         result = subprocess.run(
-            ("git", "grep", "-o", "-F", "-z", "-f", "-", head, "--", "crates/"),
-            cwd=root, input="\n".join(wanted) + "\n", capture_output=True, text=True,
+            ("git", "grep", "-a", "-F", "-z", "-f", "-", head, "--", "crates/"),
+            cwd=root, input="\n".join(wanted) + "\n", capture_output=True,
+            encoding="utf-8", errors="replace",
         )
         if result.returncode not in (0, 1):
             raise SystemExit(f"git grep failed: {result.stderr.strip()}")
+        wanted = set(wanted)
         found = set()
-        for line in result.stdout.splitlines():
-            location, _, needle = line.partition("\0")
-            found.add((location.split(":", 1)[1], needle))
+        # Split on newlines only: str.splitlines also breaks at form feeds and
+        # other separators a source line may hold.
+        for line in result.stdout.split("\n"):
+            location, _, text = line.partition("\0")
+            if not text:
+                continue
+            referrer = location.split(":", 1)[1]
+            found.update((referrer, needle) for needle in hits(referrer, text, wanted))
         return sorted(found)
     return referrers
 

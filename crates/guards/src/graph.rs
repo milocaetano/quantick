@@ -288,10 +288,12 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // `workspace` for the one store-write gate the preset bank asks (DS7).
     ("strategy", &["alerts", "engine", "sim", "workspace"]),
     // A Pine script as a strategy trigger: the kernel's port, run over the
-    // compiler and the indicator runtime. Reached by `session` alone.
+    // compiler and the indicator runtime; `sim` for the cleanup an instance
+    // placing orders owes. Reached by `session`, and by `backtest` to run
+    // one over a recorded session.
     (
         "script-trigger",
-        &["engine", "indicators", "pine", "strategy"],
+        &["engine", "indicators", "pine", "sim", "strategy"],
     ),
     ("indicators", &["engine"]),
     ("indicator-session", &["engine", "indicators", "pine"]),
@@ -304,6 +306,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "paper",
             "pine",
             "replay",
+            "script-trigger",
             "sim",
             "strategy",
             "trading",

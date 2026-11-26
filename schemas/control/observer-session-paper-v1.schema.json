@@ -41,6 +41,11 @@
         "exit_reason": {
           "type": "string"
         },
+        "fees_points": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Commission both sides of the round trip paid, never negative; zero\non a free fill model and on rows journaled before fees existed.",
+          "x-unit": "points"
+        },
         "maximum_adverse_excursion_points": {
           "anyOf": [
             {
@@ -60,6 +65,7 @@
         },
         "pnl_points": {
           "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Points before fees; the account kept `pnl_points - fees_points`.",
           "x-unit": "points"
         },
         "quantity": {
@@ -77,6 +83,7 @@
         "opened_unix_ms",
         "closed_unix_ms",
         "pnl_points",
+        "fees_points",
         "exit_reason"
       ],
       "type": "object"

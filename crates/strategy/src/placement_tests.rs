@@ -141,6 +141,7 @@ fn instance(on_break: BreakPolicy) -> ArmedStrategy {
             rearm: Rearm::OneShot,
             on_break,
             execution: Execution::Paper,
+            bracket: None,
         },
         Box::new(ForceTrigger::new(ForceParams {
             window: 3,

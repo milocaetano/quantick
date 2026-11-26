@@ -51,12 +51,14 @@
 //! purpose. A script may *supply a signal* — the harness compiles it through
 //! `quantick_pine` and the strategy reads its plot column like any other
 //! indicator — but the order decision is code in [`strategy`]. See
-//! [`strategies::PlotSignal`].
+//! [`strategies::PlotSignal`], and [`script_orders::ScriptOrders`] for a
+//! script's `alertcondition`s trading as the chart's script instance does.
 
 pub mod bars;
 pub mod diagnostics;
 pub mod report;
 pub mod run;
+pub mod script_orders;
 pub mod strategies;
 pub mod strategy;
 

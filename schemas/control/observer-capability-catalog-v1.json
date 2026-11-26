@@ -6296,7 +6296,44 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Loads a .pine file from the strategy library and arms it alarm-only on one chart's closed bars: an alertcondition that holds rings the alarm when the bar's body meets the placement (a drawn rectangle, a fixed range, a line crossed one way, or anywhere). The title's first word is the side (bull, buy or long; bear, sell or short; any case); a script with a title naming no side, a computed title, no alertcondition, no title naming the side asked for, or a compile error is refused with the reason, compile errors as `line N: <CODE> <message>`. Never places an order. A runtime error later disarms that instance alone; strategy.script.list shows the reason. Journaled as strategy.script.armed. Lives for the session.",
+      "description": "Sets what one armed script strategy does from its next close: `alarm` rings and places nothing; `order` places a paper market order of `quantity` (a size above zero in the instrument's units, or `ticket` for the ticket's quantity when the bar closes) with a stop `stop` and a target `gain` away from the entry, in price (absent or 0: no leg). A resting order or an open position keeps its course. A drawn strategy takes its action from its preset and is refused, as are an order with no quantity, a quantity of zero or less, a distance below zero, and quantity, stop or gain sent with `alarm`. strategy.script.list and strategy.desk.detail read it back. Journaled as strategy.desk.changed.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "trade",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "strategy.script.action.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$ref": "strategy-script-action-set-input-v1.schema.json"
+      },
+      "module": "strategy",
+      "output_schema": {
+        "$ref": "strategy-desk-command-result-v1.schema.json"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "trade"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The instance is named by an id never reused in the tab's session, and the call states the whole action, so a repeat leaves the instance as the first call did; an id that has since been removed is refused.",
+      "title": "Set what a script strategy does when it fires",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Loads a .pine file from the strategy library and arms it as an alarm on one chart's closed bars: an alertcondition that holds rings the alarm when the bar's body meets the placement (a drawn rectangle, a fixed range, a line crossed one way, or anywhere). The title's first word is the side (bull, buy or long; bear, sell or short; any case); a script with a title naming no side, a computed title, no alertcondition, no title naming the side asked for, or a compile error is refused with the reason, compile errors as `line N: <CODE> <message>`. Places no order: an `action` of `order` is refused, and strategy.script.action.set, in the trade tier, switches an armed instance to orders. A runtime error later disarms that instance alone; strategy.script.list shows the reason. Journaled as strategy.script.armed. Lives for the session.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "annotate",
@@ -6372,7 +6409,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Reads the strategy library (the bundled scripts, then the folder's .pine files, sorted: what strategy.script.arm accepts) and every script strategy armed on the tab: its id, chart, script, side, placement, whether it is watching or disarmed and why, and its badge line. Changes nothing.",
+      "description": "Reads the strategy library (the bundled scripts, then the folder's .pine files, sorted: what strategy.script.arm accepts) and every script strategy armed on the tab: its id, chart, script, side, placement, whether it is watching or disarmed and why, its badge line, and what a firing does — an alarm, or an order with its quantity, stop and gain. Changes nothing.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "observe",
@@ -7756,7 +7793,7 @@
       "title": "Snapshot"
     },
     {
-      "description": "Strategies armed on charts: Pine scripts that ring an alarm and place nothing, and the strategy desk that lists, pauses and resumes them beside the drawn ones.",
+      "description": "Strategies armed on charts: Pine scripts that ring an alarm or, once the trade tier sets it, place paper orders, and the strategy desk that lists, pauses and resumes them beside the drawn ones.",
       "id": "strategy",
       "title": "Strategy"
     },
@@ -13640,6 +13677,11 @@
               "exit_reason": {
                 "type": "string"
               },
+              "fees_points": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Commission both sides of the round trip paid, never negative; zero\non a free fill model and on rows journaled before fees existed.",
+                "x-unit": "points"
+              },
               "maximum_adverse_excursion_points": {
                 "anyOf": [
                   {
@@ -13659,6 +13701,7 @@
               },
               "pnl_points": {
                 "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Points before fees; the account kept `pnl_points - fees_points`.",
                 "x-unit": "points"
               },
               "quantity": {
@@ -13676,6 +13719,7 @@
               "opened_unix_ms",
               "closed_unix_ms",
               "pnl_points",
+              "fees_points",
               "exit_reason"
             ],
             "type": "object"
