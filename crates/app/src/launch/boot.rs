@@ -121,7 +121,6 @@ pub(crate) fn run() -> eframe::Result {
     // feature.
     let startup = super::LaunchConfig::capture(|name| std::env::var_os(name));
     super::install(startup.paths.clone());
-    feed::binance::configure_initial_book_depth(startup.book_depth.as_deref());
     #[cfg(feature = "scenario-harness")]
     let scenario = crate::hooks::ScenarioInputs::capture(|name| std::env::var_os(name));
     #[cfg(feature = "scenario-harness")]
@@ -183,7 +182,7 @@ pub(crate) fn run() -> eframe::Result {
         feed::log_sink::drain_before_exit();
         std::process::exit(1);
     }
-    feed::configure_idle_timeouts(config.feeds.iter().map(|f| (f.provider, f.idle_timeout())));
+    feed::configure_launch(startup.book_depth.as_deref(), config.idle_timeouts());
 
     // The saved workspace, read before anything opens: the market its first
     // tab was on is the market this window has to spawn, because a feed is

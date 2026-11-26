@@ -53,8 +53,6 @@ pub mod stall;
 pub mod sync;
 mod venue_loop;
 
-pub use idle_timeout::configure_idle_timeouts;
-
 use std::path::PathBuf;
 
 use tokio::sync::{mpsc, watch};
@@ -710,6 +708,19 @@ pub fn initial_backfill_target() -> usize {
         return target;
     }
     DEFAULT_BACKFILL_TARGET
+}
+
+/// Configure the feed host, once, from the application's composition root
+/// before the first feed spawns: the initial Binance book depth from
+/// `QUANTICK_BOOK_DEPTH` and each provider's trade-stream idle timeout from
+/// the config's feeds. This crate reads neither the environment nor the
+/// config file.
+pub fn configure_launch(
+    book_depth: Option<&str>,
+    idle_timeouts: impl IntoIterator<Item = (ProviderKind, std::time::Duration)>,
+) {
+    binance::configure_initial_book_depth(book_depth);
+    idle_timeout::configure_idle_timeouts(idle_timeouts);
 }
 
 /// Start the feed for `source` on a background thread, returning the handle the

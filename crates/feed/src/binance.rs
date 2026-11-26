@@ -567,7 +567,7 @@ static INITIAL_BOOK_DEPTH: std::sync::OnceLock<u16> = std::sync::OnceLock::new()
 /// `QUANTICK_BOOK_DEPTH`. The application's composition root reads the
 /// variable and hands the raw value in; this crate reads no environment.
 /// Unset, or never configured, means [`DEFAULT_BOOK_DEPTH`].
-pub fn configure_initial_book_depth(raw: Option<&str>) {
+pub(crate) fn configure_initial_book_depth(raw: Option<&str>) {
     let _ = INITIAL_BOOK_DEPTH.set(parse_book_depth(raw));
 }
 

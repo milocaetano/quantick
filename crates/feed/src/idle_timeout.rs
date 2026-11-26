@@ -16,7 +16,7 @@ static IDLE_TIMEOUTS: OnceLock<Vec<(ProviderKind, Duration)>> = OnceLock::new();
 
 /// Set the per-provider idle timeouts, once, from the configured feeds.
 /// Never configured, every provider uses [`DEFAULT_IDLE_TIMEOUT_SECS`].
-pub fn configure_idle_timeouts(feeds: impl IntoIterator<Item = (ProviderKind, Duration)>) {
+pub(crate) fn configure_idle_timeouts(feeds: impl IntoIterator<Item = (ProviderKind, Duration)>) {
     let _ = IDLE_TIMEOUTS.set(feeds.into_iter().collect());
 }
 

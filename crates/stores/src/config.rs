@@ -634,6 +634,13 @@ impl AppConfig {
         self.feed(id).map(|f| f.provider)
     }
 
+    /// Each feed's provider and trade-stream idle timeout, in config order.
+    #[must_use]
+    pub fn idle_timeouts(&self) -> Vec<(ProviderKind, std::time::Duration)> {
+        let timeout = |f: &FeedConfig| (f.provider, f.idle_timeout());
+        self.feeds.iter().map(timeout).collect()
+    }
+
     /// How far behind feed `id` a chart may fall before new entries pause;
     /// the defaults for a feed the config does not name.
     #[must_use]
