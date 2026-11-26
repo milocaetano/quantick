@@ -137,10 +137,10 @@ impl<'a> DrawingAccess<'a> {
     /// The saved-defaults context of `side` on `tab`, to be put `on` the
     /// bank: a tab that is gone answers the default canvas's.
     pub(super) fn presets_of(&self, tab: u64, side: PaneSide) -> drawings::PresetContext<()> {
-        self.tabs
-            .by_id(tab)
-            .map(|tab| tab.pane(side).drawings.preset_context(()))
-            .unwrap_or_default()
+        self.tabs.by_id(tab).map_or_else(
+            || drawings::PresetContext::new((), Default::default()),
+            |tab| tab.pane(side).drawings.preset_context(()),
+        )
     }
     pub(super) fn target(&self) -> (u64, PaneSide) {
         (

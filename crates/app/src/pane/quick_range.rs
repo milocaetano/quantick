@@ -43,7 +43,7 @@ pub(super) struct QuickRangeView<'a> {
     /// series revision and the layout it shows.
     pub(super) owner: QuickRangeOwner,
     pub(super) projection: DrawingProjection<'a>,
-    /// The pane's saved-defaults context, put on the chrome's bank.
+    /// Put `on` the chrome's bank at the gesture, which borrows the chrome.
     pub(super) presets: drawings::PresetContext<()>,
 }
 

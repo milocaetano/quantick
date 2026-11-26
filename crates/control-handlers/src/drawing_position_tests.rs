@@ -228,7 +228,7 @@ fn another_tool_is_refused() {
 fn the_default_call_saves_resets_and_reads_per_tool() {
     let mut bank = MemoryBank::default();
     let (marks, _) = marks();
-    let mut presets = marks.preset_context(&mut bank);
+    let mut presets = marks.preset_context::<&mut dyn PresetHost>(&mut bank);
     let drawing = marks.items()[0].clone();
     let fresh = default(&mut presets, &drawing, DefaultAction::Inspect).unwrap();
     assert!(!fresh.saved);

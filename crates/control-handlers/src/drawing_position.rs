@@ -216,15 +216,11 @@ fn read_back(
 ///
 /// # Errors
 /// Another tool's drawing.
-pub fn default<H>(
-    presets: &mut PresetContext<H>,
+pub fn default(
+    presets: &mut PresetContext<&mut dyn PresetHost>,
     drawing: &Drawing<DrawingTool>,
     action: DefaultAction,
-) -> Result<PositionDefaultResult, ControlError>
-where
-    H: std::ops::DerefMut,
-    H::Target: PresetHost,
-{
+) -> Result<PositionDefaultResult, ControlError> {
     let refused =
         |refusal: quantick_drawings::position_edit::PositionEditRefusal| invalid(refusal.reason());
     position_of(drawing).map_err(refused)?;
@@ -236,7 +232,7 @@ where
     if let Some(action) = action {
         apply_position_default(presets, drawing, action).map_err(refused)?;
     }
-    let opening = opening_position(presets, drawing.tool)
+    let opening = opening_position(&presets.on(presets.host()), drawing.tool)
         .ok_or_else(|| invalid("the tool opens no position"))?;
     Ok(PositionDefaultResult {
         tool_id: drawing.tool.id().to_owned(),

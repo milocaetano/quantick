@@ -175,15 +175,11 @@ pub enum PositionAsk {
 ///
 /// # Errors
 /// A drawing of any other tool.
-pub fn apply_position_default<H>(
-    presets: &mut PresetContext<H>,
+pub fn apply_position_default(
+    presets: &mut PresetContext<&mut dyn PresetHost>,
     drawing: &Drawing<DrawingTool>,
     action: PositionDefault,
-) -> Result<(), PositionEditRefusal>
-where
-    H: std::ops::DerefMut,
-    H::Target: PresetHost,
-{
+) -> Result<(), PositionEditRefusal> {
     let (_, payload) = position_of(drawing)?;
     match action {
         // The ratio the bar shows — the plan's prices — not a stored one an
@@ -204,11 +200,10 @@ where
 
 /// The payload a new position of `tool` opens with on the pane.
 #[must_use]
-pub fn opening_position<H>(presets: &PresetContext<H>, tool: DrawingTool) -> Option<PositionPayload>
-where
-    H: std::ops::Deref,
-    H::Target: PresetHost,
-{
+pub fn opening_position(
+    presets: &PresetContext<&dyn PresetHost>,
+    tool: DrawingTool,
+) -> Option<PositionPayload> {
     let opening = presets.new_drawing(tool);
     let payload = opening.payload.as_any().downcast_ref::<PositionPayload>();
     payload.cloned()

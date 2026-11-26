@@ -119,7 +119,7 @@ pub trait PresetHost {
 ///
 /// `H` is how the bank is held: a shared reference answers the read calls,
 /// a mutable one the write calls as well.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct PresetContext<H> {
     host: H,
     canvas: PaneCanvas,
@@ -135,7 +135,9 @@ impl<H> PresetContext<H> {
     }
 
     /// The same pane's context over another hold on the bank, such as a
-    /// recorder that defers this frame's writes.
+    /// recorder that defers this frame's writes. A `PresetContext<()>` is
+    /// the pane's half held while the bank is borrowed elsewhere, put `on`
+    /// it at the call.
     #[must_use]
     pub fn on<G>(&self, host: G) -> PresetContext<G> {
         PresetContext {
