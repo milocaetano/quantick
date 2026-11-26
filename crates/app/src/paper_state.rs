@@ -33,10 +33,7 @@ pub(crate) fn restore_money(account: &mut quantick_paper::PaperAccount, state: &
     let pnl = quantick_paper::pnl::PnlSettings::restored(INSTRUMENTS, trader.as_deref(), state);
     if !cfg!(test) {
         let rates = quantick_paper::rates::store_path(account.trades_dir());
-        quantick_feed::rates::refresh_in_background(
-            rates,
-            pnl.catalog.currencies().pairs().to_vec(),
-        );
+        quantick_feed::rates::refresh_in_background(rates, pnl.catalog.currencies().pairs());
     }
     account.set_pnl_settings(pnl);
 }

@@ -37,10 +37,11 @@ pub fn record(store: &mut RateStore, pair: &RatePair, bars: &[Bar], now_ms: i64)
 
 /// Fetch every pair's daily closes once, on a background thread, and write
 /// them into the store at `path`. Nothing to fetch spawns nothing.
-pub fn refresh_in_background(path: PathBuf, pairs: Vec<RatePair>) {
+pub fn refresh_in_background(path: PathBuf, pairs: &[RatePair]) {
     if pairs.is_empty() {
         return;
     }
+    let pairs = pairs.to_vec();
     let spawned = std::thread::Builder::new()
         .name("quantick-rates".into())
         .spawn(move || {
