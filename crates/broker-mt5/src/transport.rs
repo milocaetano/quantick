@@ -8,6 +8,9 @@
 //! a false account, while a bridge that listened would take orders from any
 //! local process. The port binds `127.0.0.1` only.
 //!
+//! A connection is the bridge only once [`crate::auth`] has seen this run's
+//! secret as its first line.
+//!
 //! One bridge at a time: while one is connected, a second waits in the
 //! listen backlog until the first goes.
 
@@ -18,6 +21,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
+use tracing::warn;
+
+use crate::auth::{AUTH_DEADLINE, BridgeSecret, authenticate};
 use crate::link::{BridgeLink, LinkEvent};
 
 /// Longest line accepted from the bridge. A state line for one symbol is a
@@ -51,12 +57,13 @@ impl std::fmt::Debug for TcpBridgeLink {
 impl TcpBridgeLink {
     /// Listen on `127.0.0.1:port` (0 asks the OS for a free port, which
     /// tests use). Binding happens here, so a port already taken is an
-    /// error the caller sees rather than a silent thread.
+    /// error the caller sees rather than a silent thread. Only a connection
+    /// whose first line is `secret` becomes the bridge.
     ///
     /// # Errors
     ///
     /// The bind's own error.
-    pub fn listen(port: u16) -> io::Result<Self> {
+    pub fn listen(port: u16, secret: BridgeSecret) -> io::Result<Self> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
         let local_addr = listener.local_addr()?;
         let (inbound_tx, inbound) = mpsc::channel();
@@ -72,7 +79,9 @@ impl TcpBridgeLink {
             let outbound = outbound.clone();
             thread::Builder::new()
                 .name("broker-mt5-reader".into())
-                .spawn(move || accept_loop(&listener, &inbound_tx, &outbound, &stop, &current))?
+                .spawn(move || {
+                    accept_loop(&listener, &secret, &inbound_tx, &outbound, &stop, &current);
+                })?
         };
         Ok(Self {
             inbound,
@@ -126,6 +135,7 @@ impl Drop for TcpBridgeLink {
 
 fn accept_loop(
     listener: &TcpListener,
+    secret: &BridgeSecret,
     inbound: &Sender<LinkEvent>,
     outbound: &Sender<Outbound>,
     stop: &AtomicBool,
@@ -140,11 +150,39 @@ fn accept_loop(
         let (Ok(writer), Ok(closer)) = (stream.try_clone(), stream.try_clone()) else {
             continue;
         };
+        // Held while the first line is awaited too, so dropping the link
+        // closes a connection that is still proving itself.
         *current.lock().unwrap_or_else(PoisonError::into_inner) = Some(closer);
+        // A drop between the check above and the store found nothing to close.
+        if stop.load(Ordering::SeqCst) {
+            return;
+        }
+        let mut reader = BufReader::new(stream);
+        if !authenticate(&mut reader, secret) {
+            if let Some(refused) = current
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+            {
+                let _ = refused.shutdown(Shutdown::Both);
+            }
+            if stop.load(Ordering::SeqCst) {
+                return;
+            }
+            warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "BROKER_EXEC_BRIDGE_REFUSED",
+                deadline_ms = u64::try_from(AUTH_DEADLINE.as_millis()).unwrap_or(u64::MAX),
+                action = "await_the_bridge_this_run_launched",
+                "refused an execution bridge connection that did not send this run's secret first"
+            );
+            continue;
+        }
         if outbound.send(Outbound::Stream(Some(writer))).is_err() {
             return;
         }
-        read_lines(stream, inbound);
+        read_lines(reader, inbound);
         let _ = outbound.send(Outbound::Stream(None));
         current
             .lock()
@@ -157,8 +195,7 @@ fn accept_loop(
 }
 
 /// Forward complete lines until the connection ends or breaks the bound.
-fn read_lines(stream: TcpStream, inbound: &Sender<LinkEvent>) {
-    let mut reader = BufReader::new(stream);
+fn read_lines(mut reader: BufReader<TcpStream>, inbound: &Sender<LinkEvent>) {
     let mut buffer = Vec::new();
     loop {
         buffer.clear();

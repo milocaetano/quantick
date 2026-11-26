@@ -502,7 +502,7 @@ fn read_descriptor_file(path: &Path) -> Result<InstanceDescriptor, DiscoveryErro
     Ok(descriptor)
 }
 
-fn remove_owned_descriptor(path: &Path) -> Result<(), DiscoveryError> {
+pub(crate) fn remove_owned_descriptor(path: &Path) -> Result<(), DiscoveryError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
             reject_metadata_redirect(&metadata)?;
@@ -551,7 +551,7 @@ fn ensure_private_chain(base: &Path, components: &[&str]) -> Result<PathBuf, Dis
     Ok(current)
 }
 
-fn ensure_explicit_private_directory(directory: &Path) -> Result<(), DiscoveryError> {
+pub(crate) fn ensure_explicit_private_directory(directory: &Path) -> Result<(), DiscoveryError> {
     if !directory.exists() {
         fs::create_dir_all(directory)
             .map_err(|error| DiscoveryError::io("create private instance directory", error))?;
@@ -603,7 +603,7 @@ const fn metadata_is_reparse_point(_metadata: &fs::Metadata) -> bool {
     false
 }
 
-fn private_new_file(path: &Path) -> Result<File, DiscoveryError> {
+pub(crate) fn private_new_file(path: &Path) -> Result<File, DiscoveryError> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -660,7 +660,7 @@ fn verify_private_directory(path: &Path) -> Result<(), DiscoveryError> {
 }
 
 #[cfg(unix)]
-fn verify_private_file(path: &Path) -> Result<(), DiscoveryError> {
+pub(crate) fn verify_private_file(path: &Path) -> Result<(), DiscoveryError> {
     use std::os::unix::fs::MetadataExt as _;
     let metadata = fs::metadata(path)
         .map_err(|error| DiscoveryError::io("inspect private descriptor file", error))?;
@@ -673,7 +673,7 @@ fn verify_private_file(path: &Path) -> Result<(), DiscoveryError> {
 }
 
 #[cfg(windows)]
-fn verify_private_file(path: &Path) -> Result<(), DiscoveryError> {
+pub(crate) fn verify_private_file(path: &Path) -> Result<(), DiscoveryError> {
     verify_windows_acl(path)
 }
 
@@ -1177,7 +1177,7 @@ fn well_known_sid(kind: i32) -> Result<Vec<u8>, DiscoveryError> {
 pub struct DiscoveryError(String);
 
 impl DiscoveryError {
-    fn new(message: &'static str) -> Self {
+    pub(crate) fn new(message: &'static str) -> Self {
         Self(message.to_owned())
     }
 
@@ -1185,7 +1185,7 @@ impl DiscoveryError {
         Self(message)
     }
 
-    fn io(action: &str, error: std::io::Error) -> Self {
+    pub(crate) fn io(action: &str, error: std::io::Error) -> Self {
         Self(format!("{action} failed: {error}"))
     }
 }

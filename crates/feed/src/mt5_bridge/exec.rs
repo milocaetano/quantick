@@ -12,11 +12,17 @@
 //! [`Mt5Connector`] is that owner: the route's [`BrokerConnector`], which
 //! listens on the configured loopback port, launches the bridge and builds
 //! the MetaTrader venue over the socket.
+//!
+//! The bridge is handed the path of this run's secret file (`--secret-file`),
+//! never the secret, which a process list would show. With no secret there
+//! is no listener (`PROTOCOL.md`, "Execution channel").
 
 use std::io::{BufRead as _, BufReader, Read};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
-use quantick_broker_mt5::{BrokerConfig, Mt5Venue, TcpBridgeLink};
+use quantick_broker_mt5::{BridgeSecret, BrokerConfig, Mt5Venue, TcpBridgeLink};
+use quantick_control_local::secret_file::{PublishedSecret, publish_secret};
 use quantick_feed_mt5::MAX_LINE_BYTES;
 use quantick_sources::config::MetaTraderBrokerSettings;
 use quantick_trading::{BrokerConnector, BrokerVenue};
@@ -32,6 +38,52 @@ pub struct Mt5Connector {
     bridge: Option<ExecBridge>,
     /// A venue was built and its listener waits for a bridge to dial.
     listening: bool,
+    /// This run's secret and the file it is published in, drawn at the
+    /// first connect and kept for every later listener and relaunch.
+    auth: Option<ExecAuth>,
+}
+
+/// The secret a bridge must send first, and its private file, removed with
+/// the connector.
+#[derive(Debug)]
+struct ExecAuth {
+    secret: BridgeSecret,
+    file: PublishedSecret,
+}
+
+impl ExecAuth {
+    fn publish() -> Option<Self> {
+        let drawn = BridgeSecret::generate().map_err(|error| error.to_string());
+        let published = drawn.and_then(|secret| {
+            let stem = format!("mt5-exec-{}", std::process::id());
+            publish_secret(&stem, secret.to_hex().as_bytes())
+                .map(|file| Self { secret, file })
+                .map_err(|error| error.to_string())
+        });
+        match published {
+            Ok(auth) => {
+                info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "MT5_EXEC_SECRET_PUBLISHED",
+                    path = %auth.file.path().display(),
+                    "published the execution bridge's secret; a bridge started by hand takes --secret-file with this path"
+                );
+                Some(auth)
+            }
+            Err(error) => {
+                warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "MT5_EXEC_SECRET_UNPUBLISHED",
+                    %error,
+                    action = "execution_stays_off",
+                    "could not publish the execution bridge's secret; not listening for a bridge"
+                );
+                None
+            }
+        }
+    }
 }
 
 impl Mt5Connector {
@@ -41,14 +93,19 @@ impl Mt5Connector {
             settings,
             bridge: None,
             listening: false,
+            auth: None,
         }
     }
 }
 
 impl BrokerConnector for Mt5Connector {
     fn connect(&mut self, symbol: &str) -> Option<Box<dyn BrokerVenue>> {
+        if self.auth.is_none() {
+            self.auth = ExecAuth::publish();
+        }
+        let auth = self.auth.as_ref()?;
         let settings = &self.settings;
-        let link = match TcpBridgeLink::listen(settings.exec_port) {
+        let link = match TcpBridgeLink::listen(settings.exec_port, auth.secret.clone()) {
             Ok(link) => link,
             Err(error) => {
                 warn!(
@@ -64,7 +121,12 @@ impl BrokerConnector for Mt5Connector {
             }
         };
         self.listening = true;
-        self.bridge = ExecBridge::launch(&settings.exec_bridge_command, settings.exec_port, symbol);
+        self.bridge = ExecBridge::launch(
+            &settings.exec_bridge_command,
+            settings.exec_port,
+            symbol,
+            auth.file.path(),
+        );
         // Unique per run: the process and the moment it built the venue.
         let started_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -92,10 +154,14 @@ impl BrokerConnector for Mt5Connector {
         // The listener is still the venue's: the new process dials it, and
         // its new instance tells the venue nothing it sent is remembered.
         self.bridge = None;
+        let Some(auth) = &self.auth else {
+            return;
+        };
         self.bridge = ExecBridge::launch(
             &self.settings.exec_bridge_command,
             self.settings.exec_port,
             symbol,
+            auth.file.path(),
         );
     }
 }
@@ -108,11 +174,12 @@ pub struct ExecBridge {
 
 impl ExecBridge {
     /// Launch `command` (program plus arguments, the configured
-    /// `exec_bridge_command`) dialing `127.0.0.1:port`, watching `symbol`.
+    /// `exec_bridge_command`) dialing `127.0.0.1:port`, watching `symbol`,
+    /// proving itself with the secret in `secret_file`.
     /// `None` when the command is empty, the script cannot be found or no
     /// interpreter starts — each logged with its reason.
     #[must_use]
-    pub fn launch(command: &[String], port: u16, symbol: &str) -> Option<Self> {
+    pub fn launch(command: &[String], port: u16, symbol: &str, secret_file: &Path) -> Option<Self> {
         let Some((program, extra)) = command.split_first() else {
             info!(
                 target: "quantick::app",
@@ -148,6 +215,8 @@ impl ExecBridge {
                 .arg(port.to_string())
                 .arg("--symbol")
                 .arg(symbol)
+                .arg("--secret-file")
+                .arg(secret_file)
                 .stdin(Stdio::null())
                 // Read rather than discarded: the bridge logs every answer
                 // the terminal gave (a refusal's retcode, its comment, the

@@ -3014,11 +3014,14 @@ dependencies = [
 name = "quantick-broker-mt5"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.3.4",
  "quantick-engine",
  "quantick-trading",
  "rust_decimal",
  "serde",
  "serde_json",
+ "subtle",
+ "tracing",
 ]
 
 [[package]]
@@ -3173,6 +3176,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "quantick-broker-mt5",
+ "quantick-control-local",
  "quantick-engine",
  "quantick-feed-binance",
  "quantick-feed-hyperliquid",
