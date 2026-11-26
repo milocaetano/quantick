@@ -510,7 +510,8 @@ pr_number() {
 # asked a reader to hold, one file per pull request, and its README carries
 # the ceiling those rows produced: the median of the feature branches,
 # rounded to the thousand. A feature branch over it hears about it once,
-# here, while detaching a reference is still cheap, and hears it as news. Nothing on this path can refuse anything.
+# here, while detaching a reference is still cheap, and hears it as news.
+# Nothing on this path can refuse anything.
 #
 # Silence answers everything it cannot determine - no interpreter, no
 # calculator in the worktree, no recorded ceiling, a measurement that fails, a

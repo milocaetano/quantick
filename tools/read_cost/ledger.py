@@ -35,11 +35,9 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_PATH = "docs/quality/read-cost/ledger.d"
-# The ledger's prose and ceiling. Never a row file, so no backfill touches it.
 CEILING_FILE = "README.md"
-# A row file is named by its pull request's number and nothing else; any other
-# file in the directory is not read for rows.
-ROW_FILE = re.compile(r"^(\d+)\.md$")
+# No leading zero: one number has one name, so no row can be read twice.
+ROW_FILE = re.compile(r"^([1-9]\d*)\.md$")
 # The recorded ceiling, as data on its own line. A marker rather than prose so
 # the hook reads the same bytes a person does and neither has to guess which
 # sentence held the number.
@@ -116,14 +114,14 @@ def load_rows(directory):
     mistaken for a row, and ordered by number rather than by name, so 999
     stays before 1000.
     """
-    numbers = sorted(
-        int(found.group(1))
+    names = sorted(
+        (int(found.group(1)), found.group(0))
         for found in map(ROW_FILE.match, os.listdir(directory))
         if found
     )
     rows = []
-    for number in numbers:
-        rows.extend(parse_rows(read(row_path(directory, number))))
+    for _, name in names:
+        rows.extend(parse_rows(read(os.path.join(directory, name))))
     return rows
 
 
@@ -155,8 +153,7 @@ def write_row(directory, row):
 
     Idempotent on the pull-request number because a workflow re-run is an
     ordinary event and a ledger that double-counts a merge misreports the
-    median that the ceiling comes from. Only this pull request's own path is
-    written, so a second pull request's row never touches it.
+    median that the ceiling comes from.
     """
     try:
         with open(row_path(directory, row["pr"]), "x", encoding="utf-8",
@@ -268,9 +265,7 @@ def backfill(repo, directory, limit):
         existing.add(number)
         print(f"#{number}: {report['production_lines']} lines measured", file=sys.stderr)
     # A failed lookup or measurement leaves the ledger untouched.
-    for row in rows:
-        write_row(directory, row)
-    return len(rows)
+    return sum(write_row(directory, row) for row in rows)
 
 
 def main(argv=None):
@@ -290,14 +285,17 @@ def main(argv=None):
         if args.limit < 1:
             parser.error("--limit must be positive")
         try:
-            print(f"{backfill(args.repo, args.ledger, args.limit)} row(s) appended")
+            print(f"{backfill(args.repo, args.ledger, args.limit)} row file(s) written")
         except (OSError, subprocess.CalledProcessError, json.JSONDecodeError,
                 MEASURE.ReadCostError) as problem:
             print(f"error: {problem}", file=sys.stderr)
             return 1
         return 0
     if args.mode == "median":
-        suggestion = suggested_ceiling(load_rows(args.ledger))
+        try:
+            suggestion = suggested_ceiling(load_rows(args.ledger))
+        except OSError as problem:
+            parser.exit(2, f"error: cannot read the ledger: {problem}\n")
         if suggestion is None:
             parser.exit(2, "error: the ledger holds no feature rows\n")
         print(

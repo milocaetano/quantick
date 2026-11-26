@@ -128,6 +128,8 @@ class Rows(unittest.TestCase):
             "README.md": README + stray + "\n",
             "notes.md": stray + "\n",
             "12a.md": stray + "\n",
+            # A second name for 999 would count its row twice.
+            "0999.md": ledger.format_row(row(999)) + "\n",
             "1000.md": ledger.format_row(row(1000)) + "\n",
             "999.md": ledger.format_row(row(999)) + "\n",
         })
@@ -288,6 +290,20 @@ class MainHistory(unittest.TestCase):
         self.path = os.path.join(self.repo.root, "absent.d")
         self.assertEqual(self.execute(), 1)
         self.assertFalse(os.path.exists(self.path))
+        with contextlib.redirect_stderr(io.StringIO()) as printed:
+            with self.assertRaises(SystemExit) as stopped:
+                ledger.main(["--ledger", self.path, "median"])
+        self.assertEqual(stopped.exception.code, 2)
+        self.assertIn("error: cannot read the ledger", printed.getvalue())
+
+    def test_backfill_counts_only_the_row_files_it_wrote(self):
+        # A row file whose line no longer parses still owns its number.
+        with open(os.path.join(self.path, "1.md"), "w", encoding="utf-8") as stream:
+            stream.write("| 1 | malformed |\n")
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(io.StringIO()):
+            ledger.main(["--ledger", self.path, "backfill", "--repo", self.repo.root])
+        self.assertEqual(printed.getvalue(), "1 row file(s) written\n")
 
 
 class Ceiling(unittest.TestCase):
@@ -368,6 +384,7 @@ class Ceiling(unittest.TestCase):
         self.assertIn(f"**{recorded:,} production lines.**", text)
         self.assertEqual(ledger.parse_rows(text), [])
         self.assertGreaterEqual(len(rows), 30)
+        self.assertEqual(len({row["pr"] for row in rows}), len(rows))
         # Every row file holds exactly its own pull request's row.
         for name in os.listdir(path):
             found = ledger.ROW_FILE.match(name)
