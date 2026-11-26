@@ -104,6 +104,49 @@ class Selection(unittest.TestCase):
         )
 
 
+class Hits(unittest.TestCase):
+    """Which needle occurrences on one line can make the line's crate read a path."""
+
+    def hits(self, changed, text, referrer="crates/app/src/lib.rs"):
+        wanted = {needle for path in changed for needle in affected_crates.needles(path)}
+        return sorted(affected_crates.hits(referrer, text, wanted))
+
+    def test_a_rust_doc_comment_names_without_reading(self):
+        for text in ("//! See `.claude/skills/implement/SKILL.md`.",
+                     "    /// Render `.claude/skills/implement/SKILL.md`."):
+            with self.subTest(text=text):
+                self.assertEqual(self.hits([".claude/skills/implement/SKILL.md"], text), [])
+
+    def test_the_same_line_outside_rust_still_counts(self):
+        text = "/// .claude/skills/implement/SKILL.md"
+        self.assertEqual(self.hits([".claude/skills/implement/SKILL.md"], text, "crates/app/fixtures/notes.txt"),
+                         [".claude/skills", ".claude/skills/implement", ".claude/skills/implement/SKILL.md"])
+
+    def test_a_plain_comment_and_a_string_still_count(self):
+        for text in ("// reads docs/quality/envelope.md", 'include_str!("../../docs/quality/envelope.md")'):
+            with self.subTest(text=text):
+                self.assertIn("docs/quality/envelope.md", self.hits(["docs/quality/envelope.md"], text))
+
+    def test_an_ancestor_continued_into_a_sibling_subtree_does_not_count(self):
+        changed = [".claude/skills/implement/references/execute.md", "a/b/c/e.md"]
+        for text in ('root.join(".claude/skills/ui-harness/references/hook-registry.md")',
+                     '"against .claude/skills/implement/references/other.md; \\',
+                     '"a/b/c/d"'):
+            with self.subTest(text=text):
+                self.assertEqual(self.hits(changed, text), [])
+
+    def test_an_ancestor_continued_toward_the_change_counts(self):
+        text = 'walk("bridge/mt5/tests/test_paging.py")'
+        self.assertEqual(self.hits(["bridge/mt5/tests/test_paging.py"], text),
+                         ["bridge/mt5", "bridge/mt5/tests", "bridge/mt5/tests/test_paging.py"])
+
+    def test_an_ancestor_a_test_walks_counts(self):
+        for text in ('walk("bridge/mt5/tests")', 'walk("bridge/mt5/tests/")',
+                     'format!("bridge/mt5/tests/{name}")', "see bridge/mt5/tests.", "bridge/mt5/tests"):
+            with self.subTest(text=text):
+                self.assertIn("bridge/mt5/tests", self.hits(["bridge/mt5/tests/test_paging.py"], text))
+
+
 @unittest.skipUnless(shutil.which("cargo"), "cargo is not installed")
 class Workspace(unittest.TestCase):
     @classmethod
