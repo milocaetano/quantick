@@ -730,3 +730,25 @@ jobs:
           cache-key: windows
       - name: Test
         run: cargo test -p quantick-app
+
+  # One check that carries the full-CI verdict, so a branch rule can require a
+  # single name. It runs whatever its needs concluded, prose-only and draft
+  # heads included, and asks `full_ci.sh verify` rather than reading `needs`:
+  # the same rule the gate's ready flip uses, `rust-skip` excuse and all. An
+  # unrelated label runs it too, and it then reports the head's earlier
+  # verdict instead of the skipped jobs of its own run.
+  ci-ok:
+    needs: [gate, ci, linux-tests, harness-app, harness-combined, harness-scenario, windows, windows-tests, windows-heavy-tests, windows-app-tests, rust-skip]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Full CI at this head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: sh .claude/hooks/full_ci.sh verify . "$HEAD_SHA"
