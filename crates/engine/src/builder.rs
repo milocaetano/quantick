@@ -9,8 +9,8 @@ pub trait DealCounterInput {
     fn observe(&mut self, sample: DealSample);
 }
 
-/// Prints a builder could not cut into bars, counted rather than hidden. All zero when every print
-/// is cut on arrival.
+/// What a builder could not do with its prints (uncounted, held, off-grid), counted rather than
+/// hidden. All zero when every print is cut on arrival.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BarBuilderDiagnostics {
     /// Prints placed in no bar: the rule had nothing to count them against (deal bar before its

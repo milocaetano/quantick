@@ -140,9 +140,9 @@ impl VolumeProfile {
         best.map(|(bucket, _)| bucket)
     }
 
-    /// The narrowest printed-row band around the POC holding at least `fraction` of the volume.
-    /// Sierra/CQG rule: expand into the larger of the next two buckets above or below (empty count
-    /// 0), tie downward, one bucket at a time. A pair inside a gap jumps to the next printed row.
+    /// The narrowest printed-row band around the POC holding `fraction` of the volume (Sierra/CQG:
+    /// grow toward the larger next pair, empties 0, tie down; a gap jumps to the next printed row).
+    /// VAH/VAL are always printed rows; `None` when empty; `fraction >= 1` covers every printed row.
     #[must_use]
     pub fn value_area(&self, fraction: Decimal) -> Option<ValueArea> {
         let poc = self.poc()?;

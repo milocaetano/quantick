@@ -135,7 +135,7 @@ impl ApproxSpread {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let rows = (hi - lo + 1) as u64;
         let rows_dec = Decimal::from(rows);
-        // Widen the grouping until the bar's price span fits the cap, as the trade fold does.
+        // Shares round down and remainders go to the close's row, so totals conserve exactly.
         let share = |total: Decimal| {
             total
                 .checked_div(rows_dec)
@@ -257,7 +257,8 @@ impl BarFootprint {
         self.doublings
     }
 
-    /// Per-row shares round down and remainders go to the close's row, so totals conserve exactly.
+    /// Point of control: the bucket with the highest total volume; ties break toward the lowest
+    /// bucket.
     #[must_use]
     pub fn poc(&self) -> Option<i64> {
         let mut best: Option<(i64, Decimal)> = None;
@@ -403,8 +404,8 @@ pub(crate) fn halved(levels: BTreeMap<i64, FootprintLevel>) -> BTreeMap<i64, Foo
     merged
 }
 
-/// Accumulates one [`BarFootprint`] at a time from the trade stream the bar
-/// builders already consume. See the [module docs](self) for the contract.
+/// Accumulates one [`BarFootprint`] at a time from the trade stream the bar builders consume.
+/// It knows no bar boundaries: the caller calls `close()` when its own bar closes.
 #[derive(Debug, Clone)]
 pub struct FootprintBuilder {
     base_group: Decimal,

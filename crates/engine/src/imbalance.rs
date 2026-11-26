@@ -1,6 +1,8 @@
 //! Imbalance bars (López de Prado): close when `|theta| = |sum(s)|`, `s = ±w` by aggressor, reaches
 //! `max(E[T] * |E[s]|, floor)`; `E[T]` is the fixed `target_trades`, the floor `round(sqrt(target))` weights.
 //! Units ([`ImbalanceUnit`]) change only `w`; counts (warm-up, cap `3x`) stay in trades. Decimal only.
+//! The first bar closes at exactly `target_trades` (warm-up). Trades fold a print in before the
+//! test; weighted units test it against prior expectations, so a giant print cannot lift its own bar.
 
 use rust_decimal::Decimal;
 
@@ -224,8 +226,8 @@ impl BarBuilder for ImbalanceBarBuilder {
         };
         self.theta = self.theta.saturating_add(s);
 
-        // Per-unit evaluation order (module docs): trades folds the trade in first, bit-exact with the
-        // shipped behavior; weighted units judge it against the expectations formed before it.
+        // Trades fold the print in first; weighted units judge it against the expectations formed
+        // before it, so a giant print cannot raise its own threshold (module docs).
         let close = if self.unit == ImbalanceUnit::Trades {
             self.absorb(s);
             self.should_close()

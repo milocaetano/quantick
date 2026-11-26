@@ -19,7 +19,7 @@ const OFFSET_MASK: usize = CHUNK_TRADES - 1;
 
 /// Every print a chart holds, oldest first, in fixed-size chunks.
 ///
-/// See the [module docs](self) for why chunks, and what an append costs.
+/// An append writes one print and allocates at most one chunk; see the [module docs](self).
 #[derive(Debug, Default)]
 pub struct TradeTape {
     /// The full chunks, oldest first: [`CHUNK_TRADES`] prints each.
@@ -177,7 +177,7 @@ impl TradeTape {
     }
 
     /// The position of the first print for which `pred` is false, given it is true for every
-    /// earlier print (`slice::partition_point` over the chunks).
+    /// earlier print and false for every later one (`slice::partition_point` over the chunks).
     pub fn partition_point(&self, mut pred: impl FnMut(&Trade) -> bool) -> usize {
         let whole = self
             .full

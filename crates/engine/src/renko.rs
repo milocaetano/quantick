@@ -74,8 +74,9 @@ impl Measure {
     }
 }
 
-/// Builds Renko bricks of `N` ticks. See the [module docs](self) for the
-/// rule and for where its price step comes from.
+/// Builds Renko bricks of `N` ticks; no session reset. A closed brick's open/close are its levels,
+/// high/low its own prints plus body; the forming brick opens on the last close. The first brick's
+/// body is the `S`-cell holding the first print.
 #[derive(Debug, Clone)]
 pub struct RenkoBarBuilder {
     ticks: u64,

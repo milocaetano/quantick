@@ -1,6 +1,8 @@
 //! Deal bars: close a bar every `N` exchange deals, estimating per-print deals between venue readings.
 //! Bars close on session multiples of `N`; prints with no usable reading or rate are uncounted, never guessed.
 //! A reading falling by over half is a session rollover that closes the forming bar.
+//! The estimate uses only what came before each print, so live and rebuild order cut identical
+//! bars; a sample older than the newest is ignored.
 
 use std::collections::VecDeque;
 

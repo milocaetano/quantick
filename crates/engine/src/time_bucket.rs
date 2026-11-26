@@ -10,7 +10,7 @@ pub const WEEK_MS: i64 = 7 * DAY_MS;
 
 /// The nominal size of one calendar month: the mean Gregorian month, 365.2425 / 12 days.
 /// An interval of `n` times this (1..=[`MAX_CALENDAR_MONTHS`]) reads as `n` calendar months; it
-/// is not a whole number of minutes, so it collides with no interval below a year.
+/// is whole seconds but not whole minutes, hours or days, so no interval written in those collides.
 pub const CALENDAR_MONTH_MS: i64 = 2_629_746_000;
 
 /// The most calendar months one bar may span: a calendar year.

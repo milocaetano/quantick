@@ -9,7 +9,7 @@ use rust_decimal::Decimal;
 /// fine is the defect avoided; each narrowing costs a regroup, so a few prints are spent.
 const STEPS_BEFORE_REPORTING: u32 = 8;
 
-/// The largest price step consistent with every print observed so far; see the [module docs](self).
+/// The largest price step consistent with every print observed so far; see the module docs.
 /// Cheap for the per-trade path: one comparison, and Euclid only when a print is off the grid.
 #[derive(Debug, Clone, Default)]
 pub struct PriceGrid {

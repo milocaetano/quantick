@@ -28,7 +28,7 @@ struct Delta {
 }
 
 /// A resumable, memory-bounded fold of ladders and venue candles into one
-/// [`VolumeProfile`]. See the [module docs](self).
+/// [`VolumeProfile`]. See the module docs.
 #[derive(Debug, Clone)]
 pub struct ProfileFold {
     base_group: Decimal,
