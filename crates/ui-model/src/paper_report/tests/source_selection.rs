@@ -17,7 +17,7 @@ fn sources_api_helper_loads_real_journals_retries_and_inspects_without_writes() 
                 _ => "# source=live\n",
             };
             let text = format!(
-                "# quantick-trades 2\n# symbol=X\n{source}{}\n{},{},long,1,100,{},{},manual,,,,\n",
+                "# quantick-trades 3\n# symbol=X\n{source}{}\n{},{},long,1,100,{},{},manual,,,,,0\n",
                 history::HEADER,
                 row.trade.opened_ms,
                 row.trade.closed_ms,

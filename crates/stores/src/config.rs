@@ -18,10 +18,12 @@ use serde::Deserialize;
 
 mod asset_modes;
 mod contract_rolls;
+mod costs;
 mod icons;
 mod market_asset;
 mod widgets;
 pub use asset_modes::AssetMode;
+pub use costs::{CommissionBasis, CostSetup};
 pub use icons::{AssetIcon, ICON_GLYPH_MAX_CHARS};
 pub use widgets::{DEFAULT_BIG_TRADE_PRESETS, NotionalKind, WidgetSetup};
 
@@ -117,6 +119,10 @@ pub struct FeedConfig {
     /// ([`WidgetSetup`]): tick, notional unit and Big Trades thresholds.
     #[serde(default)]
     pub symbol_widgets: BTreeMap<String, WidgetSetup>,
+    /// Per-asset paper fill costs, keyed like [`symbol_bubble_presets`](Self::symbol_bubble_presets)
+    /// ([`CostSetup`]): commission, slippage in the widget tick, limit rule.
+    #[serde(default)]
+    pub symbol_costs: BTreeMap<String, CostSetup>,
     /// Per-asset tab icons, keyed like [`symbol_bubble_presets`](Self::symbol_bubble_presets)
     /// ([`AssetIcon`]): a glyph on a disc of the asset's colour.
     #[serde(default)]
@@ -830,6 +836,7 @@ impl AppConfig {
             feed.validate_asset_aliases()?;
             feed.validate_contract_rolls()?;
             feed.validate_widgets()?;
+            feed.validate_costs()?;
             feed.validate_icons()?;
             feed.sync.validate(&feed.id)?;
             for (symbol, preset) in &feed.symbol_bubble_presets {

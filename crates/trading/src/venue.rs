@@ -24,6 +24,7 @@
 use quantick_engine::Trade;
 use rust_decimal::Decimal;
 
+use crate::costs::FillCosts;
 use crate::events::VenueEvent;
 use crate::intent::{BracketTarget, CloseAmount, OrderIntent};
 use crate::order::{Bracket, Order, OrderId};
@@ -56,6 +57,12 @@ pub trait TradingVenue {
 
     /// Cancel every working order and close the position.
     fn flatten(&mut self) -> Vec<VenueEvent>;
+
+    /// Price later fills with `costs`. A simulator applies them; a broker
+    /// charges what it charges, so the default ignores them.
+    fn set_fill_costs(&mut self, costs: FillCosts) {
+        let _ = costs;
+    }
 
     // --- the market ---------------------------------------------------
 
@@ -112,7 +119,7 @@ pub trait TradingVenue {
     /// Round trips completed this session, oldest first.
     fn closed_trades(&self) -> &[ClosedTrade];
 
-    /// Realized profit this session, in points.
+    /// Realized profit this session, in points, after fees.
     fn realized_points(&self) -> Decimal;
 
     // --- derived ------------------------------------------------------

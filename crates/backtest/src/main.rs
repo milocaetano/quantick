@@ -31,7 +31,7 @@ use std::time::Instant;
 use quantick_backtest::bars::{self, BarSpec};
 use quantick_backtest::diagnostics::Event;
 use quantick_backtest::report::render_run;
-use quantick_backtest::run::{RunOutcome, SessionRun, run_session};
+use quantick_backtest::run::{RunOutcome, SessionRun, run_session_with_costs};
 use quantick_backtest::script_orders::ScriptOrders;
 use quantick_backtest::strategies::{EmaCross, ForceRegion, PlotSignal, Protection};
 use quantick_backtest::strategy::Strategy;
@@ -40,6 +40,7 @@ use quantick_replay::format::ParseOptions;
 use quantick_replay::library::{self, ProblemKind, SessionEntry};
 use quantick_replay::session::{Session, SessionDate};
 use quantick_sim::history;
+use quantick_trading::{Commission, CostsError, FillCosts};
 use rust_decimal::Decimal;
 
 /// Where sessions come from when `--dir` is absent. It is the desktop app's
@@ -170,8 +171,50 @@ struct Args {
     retest_limit: bool,
     quantity: Decimal,
     protection: Protection,
+    /// What each fill costs; free unless a cost flag says otherwise.
+    costs: FillCosts,
     write_trades: Option<PathBuf>,
     limit: Option<usize>,
+}
+
+/// The fill-cost flags as given; [`CostFlags::resolve`] checks they agree.
+/// None given is the free fill model, the one every earlier run used.
+#[derive(Debug, Default)]
+struct CostFlags {
+    commission_contract: Option<Decimal>,
+    commission_rate: Option<Decimal>,
+    slippage_ticks: u32,
+    tick_size: Option<Decimal>,
+    conservative_limits: bool,
+}
+
+impl CostFlags {
+    fn resolve(&self) -> Result<FillCosts, String> {
+        let commission = match (self.commission_contract, self.commission_rate) {
+            (Some(_), Some(_)) => {
+                return Err(
+                    "--commission-contract and --commission-rate are two ways to charge one \
+                     commission; pass one"
+                        .to_owned(),
+                );
+            }
+            (Some(points), None) => Commission::PerContract(points),
+            (None, Some(rate)) => Commission::PerNotional(rate),
+            (None, None) => Commission::Free,
+        };
+        FillCosts::new(
+            commission,
+            self.slippage_ticks,
+            self.tick_size,
+            self.conservative_limits,
+        )
+        .map_err(|error| match error {
+            CostsError::MissingTick => {
+                "--slippage-ticks and --conservative-limits need --tick-size <price>".to_owned()
+            }
+            other => other.to_string(),
+        })
+    }
 }
 
 /// A calendar day, for the `--from`/`--to` window. Compared against the day
@@ -233,6 +276,15 @@ fn usage() -> String {
   --quantity <n>           contracts per entry (default {DEFAULT_QUANTITY})
   --stop <points>          protective stop distance from the entry mark
   --target <points>        protective target distance from the entry mark
+  --commission-contract <points>
+                           commission per contract per side, in points
+  --commission-rate <fraction>
+                           commission per side as a fraction of notional
+                           (0.0004 = 4 bp); not with --commission-contract
+  --slippage-ticks <n>     market, stop and close fills land n ticks worse
+  --tick-size <price>      the instrument's tick, for the two flags around it
+  --conservative-limits    a limit or take profit fills only on a print one
+                           tick through its price, not on a touch
   --write-trades <folder>  write one quantick-trades CSV per session
   --help
 
@@ -259,10 +311,12 @@ fn parse_args() -> Result<Args, String> {
         retest_limit: false,
         quantity: DEFAULT_QUANTITY,
         protection: Protection::default(),
+        costs: FillCosts::default(),
         write_trades: None,
         limit: None,
     };
 
+    let mut cost_flags = CostFlags::default();
     let mut raw = std::env::args().skip(1);
     while let Some(arg) = raw.next() {
         let mut value = || raw.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -314,12 +368,31 @@ fn parse_args() -> Result<Args, String> {
             "--target" => {
                 args.protection.target_points = Some(positive_decimal("--target", &value()?)?);
             }
+            "--commission-contract" => {
+                cost_flags.commission_contract =
+                    Some(non_negative_decimal("--commission-contract", &value()?)?);
+            }
+            "--commission-rate" => {
+                cost_flags.commission_rate =
+                    Some(non_negative_decimal("--commission-rate", &value()?)?);
+            }
+            "--slippage-ticks" => {
+                let text = value()?;
+                cost_flags.slippage_ticks = text
+                    .parse()
+                    .map_err(|_| format!("--slippage-ticks `{text}` is not a whole tick count"))?;
+            }
+            "--tick-size" => {
+                cost_flags.tick_size = Some(positive_decimal("--tick-size", &value()?)?);
+            }
+            "--conservative-limits" => cost_flags.conservative_limits = true,
             "--write-trades" => args.write_trades = Some(PathBuf::from(value()?)),
             "--help" | "-h" => return Err("help".to_string()),
             other => return Err(format!("unexpected argument `{other}`")),
         }
     }
 
+    args.costs = cost_flags.resolve()?;
     if args.dir.is_none() {
         args.dir = std::env::var_os(REPLAY_DIR_ENV).map(PathBuf::from);
     }
@@ -407,6 +480,13 @@ fn positive_count(flag: &str, text: &str) -> Result<usize, String> {
     match text.parse::<usize>() {
         Ok(n) if n > 0 => Ok(n),
         _ => Err(format!("{flag} `{text}` is not a positive whole number")),
+    }
+}
+
+fn non_negative_decimal(flag: &str, text: &str) -> Result<Decimal, String> {
+    match text.parse::<Decimal>() {
+        Ok(d) if d >= Decimal::ZERO => Ok(d),
+        _ => Err(format!("{flag} `{text}` is not a number of zero or more")),
     }
 }
 
@@ -524,7 +604,7 @@ fn run(args: &Args) -> Result<usize, String> {
             }
         };
         let session_started = Instant::now();
-        let outcome = run_session(&session, args.bars, strategy.as_mut());
+        let outcome = run_session_with_costs(&session, args.bars, strategy.as_mut(), args.costs);
         let elapsed = session_started.elapsed();
         prints_total += outcome.prints as u64;
         drop(session);

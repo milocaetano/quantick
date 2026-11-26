@@ -1,0 +1,5 @@
+# The performance report carries the fees its trades paid, so a run can
+# show gross, fees and net; the gross is a method over the two, not a
+# third field. Signed growth against the merge base.
+sim::PerformanceReport +1
+!budget +1

@@ -2105,9 +2105,12 @@ fn observer_per_scope_capture_cost() {
 /// has read a few bytes apart before, so the byte ceiling sits about 3.5%
 /// above the Windows reading: room for a few more tokens, not for a new
 /// scope. 1349 allocations, 90028 bytes on Windows once each drawing row
-/// named its layout and All windows (forty rows on the fixture).
+/// named its layout and All windows (forty rows on the fixture). 1461
+/// allocations, 94144 bytes on Windows once each closed trade carried its
+/// `fees_points` and the report its gross / fees / net row (93632 without
+/// the trade field); the byte ceiling sits about 3.5% above that again.
 const CORE_CAPTURE_MAX_ALLOCS: u64 = 1480;
-const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 93200;
+const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 97400;
 
 #[test]
 fn observer_core_capture_stays_within_the_ui_budget() {

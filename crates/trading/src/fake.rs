@@ -183,6 +183,7 @@ impl FakeVenue {
             exit_agg_id: Some(self.last_agg_id),
             mae_points: Some(adverse.saturating_mul(quantity)),
             mfe_points: Some(favorable.saturating_mul(quantity)),
+            fees_points: Decimal::ZERO,
         };
         self.closed.push(trade.clone());
         events.push(VenueEvent::Closed {

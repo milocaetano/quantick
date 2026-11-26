@@ -99,6 +99,24 @@ key_env = "OPENAI_API_KEY"
 #                                         the first preset).
 #                     merge_fills       — fold same-millisecond fills of one
 #                                         side into one row (default true).
+#   symbol_costs  — optional: per asset, keyed like symbol_bubble_presets,
+#                   what a paper (simulator) fill costs. Absent, fills are
+#                   free and land where the tape printed. A table:
+#                     commission          — per side, as a decimal string:
+#                                           points per contract, or a
+#                                           fraction of notional ("0.0004").
+#                     commission_basis    — "contract" (the default) or
+#                                           "notional".
+#                     slippage_ticks      — market, stop and close fills land
+#                                           this many ticks worse (default 0).
+#                     conservative_limits — a limit or take profit fills only
+#                                           on a print one tick through its
+#                                           price, not on a touch (default
+#                                           false).
+#                   Ticks are symbol_widgets' `tick` for the same key, which
+#                   slippage and conservative limits require. Fees are in
+#                   points; the report shows gross, fees and net. E.g.
+#                   symbol_costs = { "WIN*" = { commission = "1.25", slippage_ticks = 1 } }
 #   symbol_icons  — optional: per asset, keyed like symbol_bubble_presets,
 #                   the market tab's icon: { glyph = "B", colour = "#F7931A" },
 #                   one or two characters on a disc of that #RRGGBB colour

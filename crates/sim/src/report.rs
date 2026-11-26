@@ -20,7 +20,9 @@ const EXIT_REASONS: [ExitReason; 5] = [
 ];
 
 /// The report the UI renders. All point values follow the crate's honesty
-/// rule: points (price units × quantity), not currency.
+/// rule: points (price units × quantity), not currency. Every metric reads a
+/// trade after its fees ([`ClosedTrade::net_points`]): a trade that won less
+/// than it paid is a loss. With a free fill model gross and net agree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PerformanceReport {
     pub trades: u64,
@@ -32,8 +34,10 @@ pub struct PerformanceReport {
     pub scratches: u64,
     pub long_trades: u64,
     pub short_trades: u64,
-    /// Sum of every trade's points, signed.
+    /// Sum of every trade's points after fees, signed.
     pub net_points: Decimal,
+    /// Sum of every trade's fees (≥ 0); see [`Self::gross_points`].
+    pub fees_points: Decimal,
     /// Sum of winning trades' points (≥ 0).
     pub gross_profit: Decimal,
     /// Magnitude of losing trades' points (≥ 0).
@@ -181,6 +185,13 @@ fn mean_ms(sum: i128, count: u64) -> Option<i64> {
 }
 
 impl PerformanceReport {
+    /// Sum of every trade's points before fees, signed: the net with the
+    /// fees put back.
+    #[must_use]
+    pub fn gross_points(&self) -> Decimal {
+        self.net_points.saturating_add(self.fees_points)
+    }
+
     /// Aggregate `trades` in the order given — drawdown, run-up and streaks
     /// depend on it, and the caller keeps history in closing order.
     #[must_use]
@@ -216,9 +227,11 @@ impl PerformanceReport {
         let mut losers_with_mfe = 0u64;
 
         let mut reason_tallies: [(u64, Decimal); EXIT_REASONS.len()] = Default::default();
+        let mut fees_points = Decimal::ZERO;
 
         for (index, trade) in trades.iter().enumerate() {
-            let points = trade.pnl_points;
+            let points = trade.net_points();
+            fees_points = fees_points.saturating_add(trade.fees_points);
             all.add(points);
             match trade.side {
                 Side::Buy => long.add(points),
@@ -310,6 +323,7 @@ impl PerformanceReport {
             long_trades: long.trades,
             short_trades: short.trades,
             net_points: all.net,
+            fees_points,
             gross_profit: all.gross_profit,
             gross_loss: all.gross_loss,
             win_rate_pct: ratio(
@@ -361,7 +375,7 @@ fn stddev(trades: &[ClosedTrade], net: Decimal, total: Decimal) -> Option<Decima
     let mean = net / total;
     let mut sum_squares = Decimal::ZERO;
     for trade in trades {
-        let deviation = trade.pnl_points.saturating_sub(mean);
+        let deviation = trade.net_points().saturating_sub(mean);
         sum_squares = sum_squares.saturating_add(deviation.saturating_mul(deviation));
     }
     let variance = sum_squares / Decimal::from(trades.len() - 1);
@@ -387,6 +401,7 @@ mod tests {
             exit_agg_id: None,
             mae_points: None,
             mfe_points: None,
+            fees_points: Decimal::ZERO,
         }
     }
 
@@ -413,6 +428,7 @@ mod tests {
             exit_agg_id: Some(2),
             mae_points: mae.map(Decimal::from),
             mfe_points: mfe.map(Decimal::from),
+            fees_points: Decimal::ZERO,
         }
     }
 
@@ -633,6 +649,25 @@ mod tests {
         // Sample stddev of {10, 2, -5, -12, 0, 6}: variance 11118/180,
         // sqrt ≈ 7.859176, rounded to four places.
         assert_eq!(report.stddev_points, Some(Decimal::new(78_592, 4)));
+    }
+
+    #[test]
+    fn fees_turn_gross_into_net_and_a_thin_win_into_a_loss() {
+        let mut thin = trade(Side::Buy, 1);
+        thin.fees_points = Decimal::from(2);
+        let mut clear = trade(Side::Sell, 10);
+        clear.fees_points = Decimal::from(2);
+        let report = PerformanceReport::from_trades(&[thin, clear]);
+        assert_eq!(report.gross_points(), Decimal::from(11));
+        assert_eq!(report.fees_points, Decimal::from(4));
+        assert_eq!(report.net_points, Decimal::from(7));
+        assert_eq!(
+            (report.wins, report.losses),
+            (1, 1),
+            "1 won, 2 paid: a loss"
+        );
+        assert_eq!(report.largest_loss, Decimal::ONE);
+        assert_eq!(report.long.net_points, Decimal::from(-1));
     }
 
     #[test]

@@ -208,7 +208,7 @@ pub fn prepare(
     let mut net_points = Decimal::ZERO;
     for row in history.rows.iter().filter(|row| request.admits(row, tz)) {
         trades += 1;
-        net_points = net_points.saturating_add(row.trade.pnl_points);
+        net_points = net_points.saturating_add(row.trade.net_points());
     }
     let title = request.title(&history, tz);
     if trades == 0 && !matches!(request, ReportRequest::Session { .. }) {

@@ -13,8 +13,8 @@ use std::path::PathBuf;
 use quantick_engine::Trade;
 use quantick_sim::history;
 use quantick_trading::{
-    Bracket, BracketTarget, BrokerVenue, CloseAmount, ClosedTrade, Order, OrderId, OrderIntent,
-    Position, RejectReason, TradeMode, TradingVenue, VenueEvent, VenueNotice,
+    Bracket, BracketTarget, BrokerVenue, CloseAmount, ClosedTrade, FillCosts, Order, OrderId,
+    OrderIntent, Position, RejectReason, TradeMode, TradingVenue, VenueEvent, VenueNotice,
 };
 use rust_decimal::Decimal;
 
@@ -474,6 +474,13 @@ impl PaperAccount {
         self.session_journal_paths()
             .iter()
             .chain(self.broker_journal.path.iter())
+    }
+
+    /// Price the simulator's fills with `costs` from the next print on: the
+    /// host's `symbol_costs` for this symbol, free where it declares none. A
+    /// broker route charges its own fees and is never told.
+    pub fn set_fill_costs(&mut self, costs: FillCosts) {
+        self.venue.sim.set_fill_costs(costs);
     }
 
     /// The in-memory ledger tail is always the simulator's. Broker rows are read

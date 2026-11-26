@@ -150,14 +150,17 @@ pub fn elide_path(path: &Path) -> String {
 /// beside the venue epoch, decimals always use `.`, and the running
 /// equity is a column so a spreadsheet shows it without a formula.
 ///
-/// The last three columns are what the report reads the trade as: the move
-/// per contract in the instrument's unit, and the money it made with its
-/// currency - empty where no point value is known, never a guessed zero.
+/// `pnl_per_unit`, `pnl_money` and `currency` are what the report reads the
+/// gross trade as: the move per contract in the instrument's unit, and the
+/// money it made with its currency - empty where no point value is known,
+/// never a guessed zero. The last two columns are the commission the round
+/// trip paid and the points it kept after it.
 pub fn export_csv(rows: &[HistoryRow], book: &PnlBook<'_>) -> String {
     let mut text = String::from(
         "symbol,side,quantity,opened_ms,opened_utc,entry_price,closed_ms,closed_utc,\
          exit_price,pnl_points,cum_pnl_points,duration_ms,exit_reason,entry_agg_id,\
-         exit_agg_id,mae_points,mfe_points,source,pnl_per_unit,pnl_money,currency\n",
+         exit_agg_id,mae_points,mfe_points,source,pnl_per_unit,pnl_money,currency,\
+         fees_points,net_points\n",
     );
     let mut cumulative = Decimal::ZERO;
     let opt_u64 = |value: Option<u64>| value.map(|value| value.to_string()).unwrap_or_default();
@@ -175,7 +178,7 @@ pub fn export_csv(rows: &[HistoryRow], book: &PnlBook<'_>) -> String {
             &book.units(&row.symbol),
         ));
         text.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             row.symbol.replace(',', "_"),
             side,
             fmt_exact(trade.quantity),
@@ -198,6 +201,8 @@ pub fn export_csv(rows: &[HistoryRow], book: &PnlBook<'_>) -> String {
             per_unit,
             money,
             currency,
+            fmt_exact(trade.fees_points),
+            fmt_exact(trade.net_points()),
         ));
     }
     text
