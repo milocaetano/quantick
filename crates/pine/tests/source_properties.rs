@@ -146,6 +146,17 @@ fn nested(kind: &str, depth: usize) -> String {
         "ternary" => format!("{}0", "true ? 1 : ".repeat(depth)),
         "ternary_middle" => format!("{}0{}", "true ? ".repeat(depth), " : 1".repeat(depth)),
         "history" => format!("close{}", "[1]".repeat(depth)),
+        "members" => format!("close{}", ".a".repeat(depth)),
+        "binary" => format!("1{}", " + 1".repeat(depth)),
+        "else_if" => {
+            let mut source =
+                String::from("//@version=5\nindicator(\"t\")\nx = 0\nif false\n x := 1\n");
+            for _ in 0..depth {
+                source.push_str("else if false\n x := 1\n");
+            }
+            source.push_str("plot(x)\n");
+            return source;
+        }
         "blocks" => {
             let mut source = String::from("//@version=5\nindicator(\"t\")\nx = 0\n");
             for level in 0..depth {
@@ -161,7 +172,7 @@ fn nested(kind: &str, depth: usize) -> String {
     format!("//@version=5\nindicator(\"t\")\nx = {body}\nplot(x)\n")
 }
 
-const NESTINGS: [&str; 8] = [
+const NESTINGS: [&str; 11] = [
     "parens",
     "calls",
     "negation",
@@ -169,7 +180,10 @@ const NESTINGS: [&str; 8] = [
     "ternary",
     "ternary_middle",
     "history",
+    "members",
+    "binary",
     "blocks",
+    "else_if",
 ];
 
 /// Far past any script a person writes, and deep enough that unbounded
@@ -192,10 +206,6 @@ fn nesting_far_past_the_bound_is_an_error_not_a_stack_overflow() {
         if let Ok(lexed) = &lexed {
             let _ = parse(&lexed.tokens);
         }
-        if kind == "history" {
-            // A postfix chain is a loop, not a descent: any length parses.
-            continue;
-        }
         let Err(errors) = compile(&source, "t") else {
             panic!("{kind}: {depth} levels compiled");
         };
@@ -212,7 +222,8 @@ fn nesting_far_past_the_bound_is_an_error_not_a_stack_overflow() {
 /// Ordinary depths still compile: the bound refuses only hostile input.
 #[test]
 fn nesting_a_person_writes_still_compiles() {
-    for kind in NESTINGS {
+    // A member chain on a series is a type error at any depth.
+    for kind in NESTINGS.into_iter().filter(|kind| *kind != "members") {
         let source = nested(kind, 16);
         if let Err(errors) = compile(&source, "t") {
             panic!("{kind}: {}", render_errors(&errors, "p.pine", &source));

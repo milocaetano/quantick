@@ -17,7 +17,6 @@ name = "interp"
 harness = false
 
 [dev-dependencies]
-# The property tests feed generated untrusted input to every decoder.
 proptest = { workspace = true }
 
 [lints]

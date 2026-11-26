@@ -22,7 +22,6 @@ futures-util = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-# The property tests feed generated untrusted input to every decoder.
 proptest = { workspace = true }
 # `test-util` gives the tests a pausable clock: the page-budget test walks 512
 # pages, each paying the inter-page delay, which is thirteen real seconds of

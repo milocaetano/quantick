@@ -262,6 +262,15 @@ proptest! {
             Err(error) => {
                 // Each bound the frame breaks must be one the codec reports;
                 // it is only free to report another failure first.
+                if longest_string(&value) > SMALL_STRING_BYTES && nesting(&value) <= SMALL_DEPTH {
+                    prop_assert!(
+                        matches!(
+                            error,
+                            CodecError::StringTooLarge { .. } | CodecError::PayloadTooLarge { .. }
+                        ),
+                        "{error:?}"
+                    );
+                }
                 if nesting(&value) > SMALL_DEPTH && longest_string(&value) <= SMALL_STRING_BYTES {
                     prop_assert!(
                         matches!(
