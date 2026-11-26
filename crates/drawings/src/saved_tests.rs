@@ -177,6 +177,79 @@ fn both_kinds_survive_a_save_and_a_load() {
     );
 }
 
+/// Print `slot` of a one-print-per-bar tape that starts at print 0.
+fn print_time(slot: f32) -> i64 {
+    1_700_000_000_000 + (slot as i64) * 1_000
+}
+
+/// The series a reopened app holds: prints `first..=last`, one bar each.
+fn tape_slot(first: i64, last: i64) -> impl Fn(i64) -> Option<f32> {
+    move |time| {
+        let print = (time - 1_700_000_000_000) / 1_000;
+        (first..=last)
+            .contains(&print)
+            .then(|| (print - first) as f32)
+    }
+}
+
+/// A volume profile from a bar with history to one dropped past the newest
+/// bar, on a ten-bar tape, saved to the file and read back.
+fn reopened_profile() -> (Drawings<DrawingTool>, [f32; 2]) {
+    let mut live = Drawings::default();
+    let profile = tool("fixed-range-profile");
+    assert!(!live.place(
+        profile,
+        ChartPoint::at_time(4.0, 100.0, Some(print_time(4.0)))
+    ));
+    assert!(live.place(profile, ChartPoint::at(11.0, 110.0)));
+    let before = [live.items()[0].points[0].bar, live.items()[0].points[1].bar];
+
+    let mut settings = MarketSettings::default();
+    let key = flow("BTCUSDT");
+    store_marks(&mut settings, &key, "tick:100", live.items(), &[]);
+    let file = parse_settings(&to_text(&settings).unwrap()).unwrap();
+    let mut reopened = Drawings::default();
+    reopened.adopt(pane_marks(&file, &key, "tick:100"));
+    (reopened, before)
+}
+
+fn bars(drawings: &Drawings<DrawingTool>) -> [f32; 2] {
+    let points = &drawings.items()[0].points;
+    [points[0].bar, points[1].bar]
+}
+
+/// The reopen a trader sees: the pane adopts the file before its first
+/// print, the live tape arrives first (prints 7..=9, missing the profile's
+/// start), then the history in front of it. The profile must span the bars
+/// it spanned before the close, not run from its start to thousands of bars
+/// past the newest one.
+#[test]
+fn a_profile_dropped_past_the_newest_bar_reopens_where_it_was_closed() {
+    let (mut reopened, before) = reopened_profile();
+
+    // The pane's first bars settle the re-anchor the adoption deferred: the
+    // saved series' length is unknown there, so it is asked as zero.
+    reopened.reanchor(0, 3, tape_slot(7, 9));
+    assert!(reopened.items()[0].off_series, "print 4 is not loaded yet");
+    reopened.shift_bars(7);
+    reopened.resettle_off_series(tape_slot(0, 9));
+
+    assert_eq!(bars(&reopened), before);
+    assert!(!reopened.items()[0].off_series);
+}
+
+/// The same file adopted by a pane that already holds bars — and more of
+/// them in front, because the reopened history reaches further back.
+#[test]
+fn a_profile_dropped_past_the_newest_bar_keeps_its_span_on_a_longer_history() {
+    let (mut reopened, before) = reopened_profile();
+
+    // Five older prints in front: print 4 now sits on slot 9.
+    reopened.reanchor(15, 15, tape_slot(-5, 9));
+
+    assert_eq!(bars(&reopened), [before[0] + 5.0, before[1] + 5.0]);
+}
+
 /// Whether a mark's look follows its pane's ground survives the file, and a
 /// mark written before the flag reads back as the trader's own look.
 #[test]
