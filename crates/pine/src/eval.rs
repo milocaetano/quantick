@@ -49,8 +49,9 @@ mod pure;
 #[path = "semantics/runtime.rs"]
 mod semantic_runtime;
 
-/// Iteration budget per `for`/`while` per bar — a runaway loop errors the
-/// indicator instead of freezing the worker (§3.5).
+/// Iteration budget shared by every `for`/`while` in one bar run — a
+/// runaway or nested loop errors the indicator instead of freezing the
+/// worker (§3.5).
 pub const LOOP_BUDGET: u32 = 10_000;
 
 pub use crate::types::{ObjKind, Value};
@@ -171,6 +172,8 @@ pub(crate) struct Eval<'a> {
     register_base: usize,
     global_base: usize,
     semantic_run: crate::semantics::Run<Vec<u64>>,
+    /// Loop iterations this run may still spend.
+    loop_budget: u32,
 }
 
 impl<'a> Eval<'a> {
@@ -221,6 +224,7 @@ impl<'a> Eval<'a> {
             type_context: 0,
             prepared_arguments: false,
             semantic_run: crate::semantics::Run::default(),
+            loop_budget: LOOP_BUDGET,
         }
     }
 
