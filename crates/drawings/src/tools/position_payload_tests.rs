@@ -73,8 +73,8 @@ fn an_unreadable_look_is_refused_and_changes_nothing() {
 
 #[test]
 fn colours_read_and_write_as_hex() {
-    assert_eq!(rgb_hex(FACTORY_TARGET_RGB), "#2EA064");
-    assert_eq!(parse_rgb_hex("#d63031"), Some(FACTORY_STOP_RGB));
+    assert_eq!(rgb_hex(FACTORY_TARGET_RGB), "#388E3C");
+    assert_eq!(parse_rgb_hex("#388e3c"), Some(FACTORY_TARGET_RGB));
     for bad in ["d63031", "#d6303", "#d630311", "#zz3031", "#d63é1"] {
         assert_eq!(parse_rgb_hex(bad), None, "{bad}");
     }

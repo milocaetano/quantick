@@ -5,7 +5,7 @@
 
 pub use quantick_appearance::{Ground, PaneCanvas};
 
-use crate::position_text::{RatioButton, custom_row, preset_rows, ratio_button};
+use crate::position_text::{custom_row, preset_rows, ratio_button};
 use crate::{
     Drawing, DrawingTool, PositionPayload, PositionRefusal, PositionSide, PresetHost, Rgb,
     new_drawing_from_defaults, position_plan, position_preset_of, position_side,
@@ -123,7 +123,8 @@ pub struct RatioRow {
 /// What the bar shows for a position's ratio: the button and the menu.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RatioMenu {
-    pub button: RatioButton,
+    /// `Risk/reward 1:2`, `Custom · Risk/reward 1:1.3`.
+    pub button: String,
     /// The checked, read-only `Custom 1:N` row on top while the plan is no
     /// preset, then the presets, none checked in that case.
     pub rows: Vec<RatioRow>,

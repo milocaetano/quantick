@@ -19,12 +19,16 @@ pub const RATIO_PRESETS: [f64; 3] = [1.0, 2.0, 3.0];
 /// The ratio a fresh position opens with, until the trader saves another
 /// as the tool's default.
 pub const DEFAULT_RATIO: f64 = 1.0;
-/// Factory zone colours, the same on every theme: a position is the
-/// trader's own plan, not candle ink, so it never takes `Buy`/`Sell`.
-pub const FACTORY_TARGET_RGB: Rgb = [0x2E, 0xA0, 0x64];
-pub const FACTORY_STOP_RGB: Rgb = [0xD6, 0x30, 0x31];
-/// Factory zone opacity, in percent.
-pub const FACTORY_ZONE_OPACITY_PCT: u8 = 10;
+/// Factory zone colours: a position is the trader's own plan, not candle
+/// ink, so it never takes `Buy`/`Sell`. A green target and a black stop,
+/// the stop a light grey where black would vanish ([`factory_stop_rgb`]).
+pub const FACTORY_TARGET_RGB: Rgb = [0x38, 0x8E, 0x3C];
+pub const FACTORY_STOP_RGB: Rgb = [0x00, 0x00, 0x00];
+pub const FACTORY_STOP_RGB_ON_DARK: Rgb = [0xB2, 0xB5, 0xBE];
+/// Factory zone opacity, in percent: one for both zones.
+pub const FACTORY_ZONE_OPACITY_PCT: u8 = 25;
+/// The least contrast black keeps on a canvas that counts as a light ground.
+const LIGHT_GROUND_CONTRAST: f32 = 3.0;
 /// The most a zone may be filled, in percent: a solid zone hides the bars.
 pub const MAX_ZONE_OPACITY_PCT: u8 = 100;
 /// Two ratios this close are one preset.
@@ -88,6 +92,24 @@ impl PositionRefusal {
 
 pub(super) fn valid_ratio(ratio: f64) -> bool {
     (MIN_RATIO..=MAX_RATIO).contains(&ratio)
+}
+
+/// Whether black reads on `theme`'s canvas: a light ground.
+#[must_use]
+pub fn light_ground(theme: &quantick_appearance::ResolvedTheme) -> bool {
+    let black = crate::rgba_unmultiplied(0, 0, 0, u8::MAX);
+    let canvas = theme.color(quantick_appearance::Token::Canvas);
+    quantick_appearance::contrast::contrast_ratio(black, canvas) >= LIGHT_GROUND_CONTRAST
+}
+
+/// The stop colour a fresh position takes on `theme`.
+#[must_use]
+pub fn factory_stop_rgb(theme: &quantick_appearance::ResolvedTheme) -> Rgb {
+    if light_ground(theme) {
+        FACTORY_STOP_RGB
+    } else {
+        FACTORY_STOP_RGB_ON_DARK
+    }
 }
 
 /// The preset `ratio` is, if it is one.
@@ -279,6 +301,9 @@ impl PositionPayload {
 }
 
 impl DrawingPayload for PositionPayload {
+    fn apply_theme_defaults(&mut self, theme: &quantick_appearance::ResolvedTheme) {
+        self.stop_rgb = factory_stop_rgb(theme);
+    }
     fn clone_box(&self) -> Box<dyn DrawingPayload> {
         Box::new(self.clone())
     }

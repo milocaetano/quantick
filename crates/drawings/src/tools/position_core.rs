@@ -8,10 +8,13 @@
 //! (reward per unit of risk) until the trader drags it, which pins it.
 //!
 //! Unselected, a position is its two zones and their thin edges. Selected,
-//! it adds the Target plate beyond the target edge, the Stop plate beyond
-//! the stop edge, the plan plate at the entry and the width handles at the
-//! entry line's ends. Every colour is the drawing's own
-//! ([`PositionPayload`]), never the theme's buy and sell ink.
+//! it adds the entry line, the Target plate beyond the target edge, the Stop
+//! plate beyond the stop edge and the plan plate on the entry line, all three
+//! centred on the box and solid in their leg's colour, and the handles: a
+//! circle at the entry line's left end, squares at the target and stop
+//! corners and at the entry line's right end. Every zone and plate colour is
+//! the drawing's own ([`PositionPayload`]), never the theme's buy and sell
+//! ink.
 //!
 //! No tick count and no tick snap: a drawing does not know the instrument's
 //! tick size (`measure_core.rs` states the same honesty rule), so legs read
@@ -22,7 +25,7 @@ use quantick_chart::style::PremultipliedRgba;
 
 use crate::{Align2, FontSpec, MarkScene, Px, PxRect, Stroke, pos2, vec2};
 
-use super::position_payload::{PositionPayload, Rgb};
+use super::position_payload::{PositionPayload, Rgb, light_ground};
 use super::position_text::plan_plate;
 use super::{
     Constrain, DrawContext, DrawingPayload, DrawingStyle, Handles, MarkTool, PointerHint,
@@ -37,16 +40,22 @@ pub const MAX_RATIO: f64 = 20.0;
 /// leaves zones wide enough to read.
 pub const MIN_WIDTH_BARS: f32 = 14.0;
 
-/// The grab points are the entry line's two ends, which resize the width and
-/// nothing else. The anchors have no dot of their own: the entry anchor sits
-/// on one of those ends, so a dot there would take the press, and every
-/// price moves by its line instead.
-pub(super) const LEFT_EDGE_HANDLE: usize = 0;
+/// The grab points, in [`handles`] order. The circle at the entry line's left
+/// end moves the entry: its price and the left edge in time. The square at
+/// its right end resizes the width and nothing else. The squares at the
+/// projected and measured legs' left corners move that leg's price, as a
+/// press on its line does. The anchors have no dot of their own: the entry
+/// anchor sits on one end of the entry line, so a dot there would take the
+/// press.
+pub(super) const ENTRY_HANDLE: usize = 0;
 pub(super) const RIGHT_EDGE_HANDLE: usize = 1;
-/// The projected leg's line; the entry and measured edge lines follow.
 pub(super) const PROJECTED_HANDLE: usize = 2;
-pub(super) const ENTRY_LINE_HANDLE: usize = 3;
-pub(super) const MEASURED_LINE_HANDLE: usize = 4;
+pub(super) const MEASURED_LINE_HANDLE: usize = 3;
+/// The entry line itself, grabbed anywhere along it; no point of its own.
+pub(super) const ENTRY_LINE_HANDLE: usize = 4;
+/// The least contrast white text keeps on a plate before the theme's ink
+/// replaces it: white on the factory green and black plates.
+const WHITE_TEXT_CONTRAST: f32 = 3.0;
 
 const GRAB_PX: f32 = 5.0;
 /// The zones' edges and the entry line: thin, so the bars stay the subject.
@@ -279,6 +288,26 @@ fn points_text(delta: f64) -> String {
     )
 }
 
+/// White on a plate it reads on, else the theme's better ink for it.
+fn plate_ink(appearance: &ResolvedTheme, plate: PremultipliedRgba) -> PremultipliedRgba {
+    let white = crate::rgba_unmultiplied(u8::MAX, u8::MAX, u8::MAX, u8::MAX);
+    if quantick_appearance::contrast::contrast_ratio(white, plate) >= WHITE_TEXT_CONTRAST {
+        white
+    } else {
+        appearance.ink_on(plate)
+    }
+}
+
+/// The entry line: black on a light ground, the theme's text ink on a dark
+/// one, where black would vanish.
+fn entry_ink(appearance: &ResolvedTheme) -> PremultipliedRgba {
+    if light_ground(appearance) {
+        crate::rgba_unmultiplied(0, 0, 0, u8::MAX)
+    } else {
+        appearance.color(Token::TextPrimary)
+    }
+}
+
 fn label(
     painter: &mut MarkScene,
     ctxt: &DrawContext<'_>,
@@ -297,7 +326,7 @@ fn label(
         Align2::LEFT_TOP,
         text,
         font,
-        appearance.ink_on(plate),
+        plate_ink(appearance, plate),
     );
 }
 
@@ -346,28 +375,17 @@ pub(super) fn paint(
     if ctxt.halo || !ctxt.primary_band || !ctxt.selected {
         return;
     }
-    let plate = ctxt.appearance.color(Token::DrawingReadoutPlate);
     painter.line_segment(
         [pos2(left, frame.entry_y), pos2(right, frame.entry_y)],
-        Stroke::new(EDGE_PX, plate),
+        Stroke::new(EDGE_PX, entry_ink(ctxt.appearance)),
     );
     paint_leg_plates(painter, chart_rect, &frame, &legs, ctxt, &payload);
+    // Centred on the entry line, in the target's colour; the handles paint
+    // over it at the line's ends.
     let tag = plan_plate(side, legs.ratio(), legs.entry);
-    // Outside the box, clear of the width handles at the entry line's ends:
-    // to its left, else to its right, else inside, resting on the entry line
-    // above the handles centred on it, when the pane has room on neither side.
-    let font = FontSpec::themed(ctxt.appearance, FontRole::Monospace, LABEL_TEXT_PX);
-    let width = ctxt.text.size(&tag, font).x + 2.0 * LABEL_PAD_X_PX;
-    let gap = LABEL_INSET_PX + crate::SELECTED_ANCHOR_RADIUS_PX;
-    let (at, anchor) = if left - gap - width >= chart_rect.left() {
-        (pos2(left - gap, frame.entry_y), Align2::RIGHT_CENTER)
-    } else if right + gap + width <= chart_rect.right() {
-        (pos2(right + gap, frame.entry_y), Align2::LEFT_CENTER)
-    } else {
-        let above = frame.entry_y - crate::SELECTED_ANCHOR_RADIUS_PX - 1.0;
-        (pos2(left + gap, above), Align2::LEFT_BOTTOM)
-    };
-    label(painter, ctxt, at, anchor, &tag, plate);
+    let at = pos2((left + right) / 2.0, frame.entry_y);
+    let plate = ink(payload.target_rgb, u8::MAX);
+    label(painter, ctxt, at, Align2::CENTER_CENTER, &tag, plate);
 }
 
 /// The Target plate beyond the target edge and the Stop plate beyond the
@@ -447,13 +465,19 @@ pub(super) fn hit_test(
         .contains(position)
 }
 
-/// The entry line's two ends, where the width handles sit.
+/// The entry line's two ends, then the projected and measured legs' left
+/// corners; a flat measurement, no plan, has only the entry line's ends.
 pub(super) fn handles(points: &[Px], ctxt: &DrawContext<'_>, side: Side) -> Option<Handles> {
     let frame = frame(points, ctxt, side)?;
-    Some(Handles::from_slice(&[
+    let mut handles = Handles::from_slice(&[
         pos2(frame.left, frame.entry_y),
         pos2(frame.right, frame.entry_y),
-    ]))
+    ]);
+    if let (Some(projected), Some(measured)) = (frame.projected_y(), frame.measured_y()) {
+        handles.push(pos2(frame.left, projected));
+        handles.push(pos2(frame.left, measured));
+    }
+    Some(handles)
 }
 
 /// The line under `position`, as the handle a press there grabs: the
@@ -485,9 +509,9 @@ pub(super) fn pointer_hint(
     line_at(points, position, ctxt, side).map(|handle| PointerHint::ResizeSide { handle })
 }
 
-/// A press on a line or a width handle announces what it grabs.
+/// A press on a line or a handle announces what it grabs.
 pub(super) fn line_hint(handle: usize) -> Option<PointerHint> {
-    (LEFT_EDGE_HANDLE..=MEASURED_LINE_HANDLE)
+    (ENTRY_HANDLE..=ENTRY_LINE_HANDLE)
         .contains(&handle)
         .then_some(PointerHint::ResizeSide { handle })
 }
@@ -496,10 +520,11 @@ pub(super) fn line_hint(handle: usize) -> Option<PointerHint> {
 /// measured edge keep their bars, so a press mid-line never jumps an anchor
 /// sideways to the pointer.
 ///
-/// A width handle moves the anchor on its side in time and nothing else:
-/// the width lives in the anchors, so it keeps its length in market time on
-/// any timeframe and on a pane mirroring the drawing. The other edge holds,
-/// never closer than [`MIN_WIDTH_BARS`].
+/// The width handle moves the right-hand anchor in time and nothing else;
+/// the entry circle moves the entry's price and the left-hand anchor in
+/// time. The width lives in the anchors, so it keeps its length in market
+/// time on any timeframe and on a pane mirroring the drawing. The other edge
+/// holds, never closer than [`MIN_WIDTH_BARS`].
 fn drag_line(points: &[Px], handle: usize, to: Px, px_per_bar: f32) -> Option<Handles> {
     let [a, b, ..] = points else {
         return None;
@@ -511,7 +536,10 @@ fn drag_line(points: &[Px], handle: usize, to: Px, px_per_bar: f32) -> Option<Ha
     match handle {
         ENTRY_LINE_HANDLE => moved.get_mut(0)?.y = to.y,
         MEASURED_LINE_HANDLE => moved.get_mut(1)?.y = to.y,
-        LEFT_EDGE_HANDLE => moved.get_mut(left_anchor)?.x = to.x.min(right - floor),
+        ENTRY_HANDLE => {
+            moved.get_mut(0)?.y = to.y;
+            moved.get_mut(left_anchor)?.x = to.x.min(right - floor);
+        }
         RIGHT_EDGE_HANDLE => moved.get_mut(right_anchor)?.x = to.x.max(left + floor),
         _ => return None,
     }
@@ -683,8 +711,8 @@ impl MarkTool for PositionTool {
     fn price_band_only(&self) -> bool {
         true
     }
-    fn square_handles(&self) -> bool {
-        true
+    fn square_handle(&self, handle: usize) -> bool {
+        handle != ENTRY_HANDLE
     }
     fn default_payload(&self) -> Box<dyn DrawingPayload> {
         Box::new(PositionPayload::default())

@@ -30,39 +30,12 @@ pub fn custom_row(ratio: f64) -> String {
     format!("Custom 1:{}", ratio_number(ratio))
 }
 
-/// The risk/reward button, in pieces so the host can ink the risk digit in
-/// the stop colour and the reward digit in the target colour.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RatioButton {
-    /// `Custom · ` for a plan that is no preset, else empty.
-    pub lead: &'static str,
-    /// `R/R `.
-    pub prefix: &'static str,
-    pub risk: &'static str,
-    pub colon: &'static str,
-    pub reward: String,
-}
-
-impl RatioButton {
-    /// The button as one string: `R/R 1:2`, `Custom · R/R 1:1.3`.
-    #[must_use]
-    pub fn text(&self) -> String {
-        format!(
-            "{}{}{}{}{}",
-            self.lead, self.prefix, self.risk, self.colon, self.reward
-        )
-    }
-}
-
+/// The risk/reward button: `Risk/reward 1:2`, led by `Custom · ` for a plan
+/// that is no preset.
 #[must_use]
-pub fn ratio_button(ratio: f64, custom: bool) -> RatioButton {
-    RatioButton {
-        lead: if custom { "Custom · " } else { "" },
-        prefix: "R/R ",
-        risk: "1",
-        colon: ":",
-        reward: ratio_number(ratio),
-    }
+pub fn ratio_button(ratio: f64, custom: bool) -> String {
+    let lead = if custom { "Custom · " } else { "" };
+    format!("{lead}Risk/reward 1:{}", ratio_number(ratio))
 }
 
 /// The plate at the entry: `Long · risk 1 : reward 2 · entry 165461.58`.

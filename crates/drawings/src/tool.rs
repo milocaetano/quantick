@@ -345,9 +345,9 @@ pub trait MarkTool: Sync {
     ) -> Option<Handles> {
         None
     }
-    /// Whether the grab points paint as squares: a handle that resizes a
-    /// box's side rather than moving a point. Circles otherwise.
-    fn square_handles(&self) -> bool {
+    /// Whether grab point `handle` paints as a square: a handle that resizes
+    /// a box's side rather than moving a point. Circles otherwise.
+    fn square_handle(&self, _handle: usize) -> bool {
         false
     }
     /// Handle target radius, or no target when the affordance is unavailable.
@@ -768,8 +768,12 @@ impl DrawingTool {
             );
             let fill = ctxt.appearance.color(Token::Canvas);
             let side = Px::splat(2.0 * SELECTED_ANCHOR_RADIUS_PX);
-            for point in self.handles(chart_rect, points, ctxt) {
-                if self.0.square_handles() {
+            for (handle, point) in self
+                .handles(chart_rect, points, ctxt)
+                .into_iter()
+                .enumerate()
+            {
+                if self.0.square_handle(handle) {
                     let square = PxRect::from_center_size(point, side);
                     painter.rect_filled(square, 0.0, fill);
                     painter.rect_stroke(square, 0.0, ring);

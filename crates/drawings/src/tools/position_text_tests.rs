@@ -17,7 +17,7 @@ fn bare_ratio(text: &str) -> bool {
 fn the_detector_catches_a_bare_ratio() {
     assert!(bare_ratio("Plan long · 2:1 · entry 100"));
     assert!(bare_ratio("2.38:1"));
-    assert!(!bare_ratio("R/R 1:2"));
+    assert!(!bare_ratio("Risk/reward 1:2"));
 }
 
 /// Every ratio surface, at presets, custom ratios and one under 1:1, names
@@ -28,8 +28,8 @@ fn no_surface_prints_a_bare_ratio() {
         let surfaces = [
             menu_row(ratio),
             custom_row(ratio),
-            ratio_button(ratio, false).text(),
-            ratio_button(ratio, true).text(),
+            ratio_button(ratio, false),
+            ratio_button(ratio, true),
             plan_plate(Side::Long, ratio, 100.0),
             plan_plate(Side::Short, ratio, 100.0),
         ];
@@ -38,7 +38,7 @@ fn no_surface_prints_a_bare_ratio() {
             assert!(
                 text.contains("Risk 1")
                     || text.contains("risk 1")
-                    || text.contains("R/R 1:")
+                    || text.contains("Risk/reward 1:")
                     || text.starts_with("Custom 1:"),
                 "{text} names its order"
             );
@@ -57,10 +57,8 @@ fn each_surface_reads_as_the_spec_writes_it() {
             "Risk 1 : Reward 3"
         ]
     );
-    assert_eq!(ratio_button(2.0, false).text(), "R/R 1:2");
-    assert_eq!(ratio_button(1.3, true).text(), "Custom · R/R 1:1.3");
-    let button = ratio_button(2.0, false);
-    assert_eq!((button.risk, button.reward.as_str()), ("1", "2"));
+    assert_eq!(ratio_button(2.0, false), "Risk/reward 1:2");
+    assert_eq!(ratio_button(1.3, true), "Custom · Risk/reward 1:1.3");
     assert_eq!(custom_row(1.3), "Custom 1:1.3");
     assert_eq!(
         plan_plate(Side::Long, 2.0, 165_461.58),

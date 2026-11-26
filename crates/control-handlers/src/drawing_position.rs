@@ -173,7 +173,7 @@ fn look(payload: &PositionPayload, ratio: f64) -> Result<PositionLook, ControlEr
         zone_opacity_pct: payload.zone_opacity_pct,
         ratio: measure(ratio)?,
         custom,
-        ratio_text: ratio_button(ratio, custom).text(),
+        ratio_text: ratio_button(ratio, custom),
     })
 }
 
