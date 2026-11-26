@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use rust_decimal::Decimal;
@@ -111,14 +112,18 @@ impl OrderBook {
             });
         }
 
-        let mut next_bids = self.bids.clone();
-        let mut next_asks = self.asks.clone();
-        let changed_levels =
-            apply_levels(&mut next_bids, delta.bids()) + apply_levels(&mut next_asks, delta.asks());
-        validate_not_crossed(&next_bids, &next_asks)?;
+        // Every check reads the current book plus the delta, so nothing below
+        // can fail once the first level is written.
+        let best_bid = best_after(&self.bids, delta.bids(), BookSide::Bid);
+        let best_ask = best_after(&self.asks, delta.asks(), BookSide::Ask);
+        if let (Some(best_bid), Some(best_ask)) = (best_bid, best_ask)
+            && best_bid >= best_ask
+        {
+            return Err(BookError::CrossedBook { best_bid, best_ask });
+        }
 
-        self.bids = next_bids;
-        self.asks = next_asks;
+        let changed_levels =
+            apply_levels(&mut self.bids, delta.bids()) + apply_levels(&mut self.asks, delta.asks());
         self.last_update_id = Some(delta.final_update_id());
         Ok(ApplyOutcome::Applied {
             first_update_id: delta.first_update_id(),
@@ -210,9 +215,16 @@ fn validate_delta(delta: &BookDelta) -> Result<(), BookError> {
 }
 
 fn validate_updates(side: BookSide, levels: &[BookLevel]) -> Result<(), BookError> {
-    let mut seen = BTreeSet::new();
     for &level in levels {
         validate_level(side, level)?;
+    }
+    // A strictly monotone list holds no duplicate: the hot path proves that
+    // without allocating.
+    if price_order(levels).is_some() {
+        return Ok(());
+    }
+    let mut seen = BTreeSet::new();
+    for &level in levels {
         if !seen.insert(level.price) {
             return Err(BookError::DuplicatePrice {
                 side,
@@ -234,6 +246,80 @@ fn apply_levels(book: &mut BTreeMap<Decimal, Decimal>, levels: &[BookLevel]) -> 
         }
     }
     changed
+}
+
+/// The best price `side` would hold after `levels` were applied to `book`,
+/// read without writing: the best positive update, or the best stored level
+/// the update leaves standing, whichever is better.
+fn best_after(
+    book: &BTreeMap<Decimal, Decimal>,
+    levels: &[BookLevel],
+    side: BookSide,
+) -> Option<Decimal> {
+    let better = |a: Decimal, b: Decimal| match side {
+        BookSide::Bid => a > b,
+        BookSide::Ask => a < b,
+    };
+    let mut best: Option<Decimal> = None;
+    for level in levels.iter().filter(|level| level.quantity > Decimal::ZERO) {
+        if best.is_none_or(|current| better(level.price, current)) {
+            best = Some(level.price);
+        }
+    }
+    let order = price_order(levels);
+    let updated = |price: Decimal| holds_price(levels, order, price);
+    match side {
+        BookSide::Bid => best_standing(book.keys().rev(), updated, best, better),
+        BookSide::Ask => best_standing(book.keys(), updated, best, better),
+    }
+}
+
+/// Walk stored prices from the best and return the better of `best` and the
+/// first stored price the update leaves standing. Only removed levels are
+/// skipped, so the walk ends one level past the last level it removes.
+fn best_standing<'a>(
+    stored: impl Iterator<Item = &'a Decimal>,
+    updated: impl Fn(Decimal) -> bool,
+    best: Option<Decimal>,
+    better: impl Fn(Decimal, Decimal) -> bool,
+) -> Option<Decimal> {
+    for &price in stored {
+        if best.is_some_and(|current| !better(price, current)) {
+            break;
+        }
+        // An update at a price better than `best` is a removal: a positive
+        // one would be `best`.
+        if !updated(price) {
+            return Some(price);
+        }
+    }
+    best
+}
+
+/// `Less` when `levels` rise strictly by price, `Greater` when they fall
+/// strictly, the orders venues send; `None` otherwise.
+fn price_order(levels: &[BookLevel]) -> Option<Ordering> {
+    if levels.windows(2).all(|pair| pair[0].price < pair[1].price) {
+        Some(Ordering::Less)
+    } else if levels.windows(2).all(|pair| pair[0].price > pair[1].price) {
+        Some(Ordering::Greater)
+    } else {
+        None
+    }
+}
+
+/// Whether `levels` updates `price`: a binary search on a sorted list, so
+/// a delta clearing many top levels stays linear in its size.
+fn holds_price(levels: &[BookLevel], order: Option<Ordering>, price: Decimal) -> bool {
+    match order {
+        Some(Ordering::Less) => levels
+            .binary_search_by(|level| level.price.cmp(&price))
+            .is_ok(),
+        Some(Ordering::Greater) => levels
+            .binary_search_by(|level| price.cmp(&level.price))
+            .is_ok(),
+        _ => levels.iter().any(|level| level.price == price),
+    }
 }
 
 fn validate_not_crossed(

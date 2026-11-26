@@ -101,6 +101,9 @@ jsonschema = { version = "=0.49.9", default-features = false }
 libc = "0.2"
 libm = "0.2"
 png = "0.18"
+# Property tests only. Without default features it drops the fork and
+# timeout runners and their process-spawning dependencies.
+proptest = { version = "1", default-features = false, features = ["std"] }
 raw-window-handle = "0.6"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
