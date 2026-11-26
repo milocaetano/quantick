@@ -515,6 +515,7 @@ fn hint_cursor(hint: PointerHint) -> GestureCursor {
     match hint {
         PointerHint::ExtendSide => GestureCursor::ExtendSide,
         PointerHint::ResizeSide { .. } => GestureCursor::ResizeHorizontal,
+        PointerHint::ResizeLevel { .. } => GestureCursor::ResizeVertical,
     }
 }
 

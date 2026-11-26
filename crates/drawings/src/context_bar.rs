@@ -91,8 +91,12 @@ pub fn slots(caps: Capabilities) -> SmallVec<[Slot; 14]> {
     }
     slots.push(Slot::Separator);
     slots.push(Slot::Duplicate);
-    slots.push(Slot::Lock);
-    if caps.magnet {
+    // A position is a plan the trader reshapes, not a level to pin or snap:
+    // its bar stays small, with no lock and no magnet.
+    if !caps.position {
+        slots.push(Slot::Lock);
+    }
+    if caps.magnet && !caps.position {
         slots.push(Slot::Magnet);
     }
     slots.push(Slot::Hide);
@@ -127,8 +131,8 @@ mod tests {
         }
     }
 
-    /// A position's bar is its two colours and its risk/reward, and no gear:
-    /// every setting it has lives on the bar.
+    /// A position's bar is its two colours and its risk/reward, with no gear,
+    /// lock or magnet: every setting it has lives on the bar, kept small.
     #[test]
     fn a_position_trades_colour_width_and_gear_for_its_own_three_cells() {
         let position = slots(caps(true));
@@ -136,11 +140,18 @@ mod tests {
             &position[1..4],
             &[Slot::TargetColor, Slot::StopColor, Slot::RiskReward]
         );
-        for gone in [Slot::Color, Slot::Width, Slot::Settings] {
+        for gone in [
+            Slot::Color,
+            Slot::Width,
+            Slot::Settings,
+            Slot::Lock,
+            Slot::Magnet,
+        ] {
             assert!(!position.contains(&gone), "{gone:?}");
         }
         let other = slots(caps(false));
         assert!(other.contains(&Slot::Settings) && other.contains(&Slot::Color));
+        assert!(other.contains(&Slot::Lock) && other.contains(&Slot::Magnet));
         assert!(!other.contains(&Slot::RiskReward));
     }
 }

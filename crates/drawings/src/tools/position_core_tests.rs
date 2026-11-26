@@ -110,7 +110,7 @@ fn dragging_the_projected_leg_pins_it_and_leaves_the_rest() {
     let target_y = scale.y(120.0);
     assert_eq!(
         pointer_hint(&points, pos2(200.0, target_y), &ctxt, Side::Long),
-        Some(PointerHint::ResizeSide {
+        Some(PointerHint::ResizeLevel {
             handle: PROJECTED_HANDLE
         })
     );
@@ -178,14 +178,7 @@ fn a_selected_position_names_its_legs_and_its_ratio_risk_first() {
             _ => None,
         })
         .collect();
-    assert_eq!(
-        texts,
-        [
-            "Target 120 · +20 pts",
-            "Stop 90 · -10 pts",
-            "Long · risk 1 : reward 2 · entry 100"
-        ],
-    );
+    assert_eq!(texts, ["TP 120 · +20", "SL 90 · -10", "L R/R 1:2 · 100"],);
 }
 
 /// A long plan entered at 100 with its stop measured at 95: target 110.
@@ -299,7 +292,7 @@ fn a_target_projected_off_the_chart_keeps_its_chip_on_it() {
         .shapes
         .iter()
         .find_map(|shape| match shape {
-            crate::MarkShape::Text { text, at, .. } if text.starts_with("Target") => Some(*at),
+            crate::MarkShape::Text { text, at, .. } if text.starts_with("TP ") => Some(*at),
             _ => None,
         })
         .unwrap();
@@ -326,7 +319,7 @@ fn a_plan_entirely_off_the_chart_paints_no_chip() {
     );
     assert!(!scene.shapes.iter().any(|shape| matches!(
         shape,
-        crate::MarkShape::Text { text, .. } if text.starts_with("Target") || text.starts_with("Stop")
+        crate::MarkShape::Text { text, .. } if text.starts_with("TP ") || text.starts_with("SL ")
     )));
 }
 
@@ -409,7 +402,7 @@ fn an_unselected_position_is_two_zones_in_its_own_colours_and_no_words() {
         [zone(payload.stop_rgb), zone(payload.target_rgb)],
         "the zones take the drawing's colours, never the theme's buy and sell ink"
     );
-    assert_eq!(payload.zone_alpha(), 25, "10 % opacity");
+    assert_eq!(payload.zone_alpha(), 63, "25 % opacity");
     let edges = scene
         .shapes
         .iter()
@@ -445,9 +438,9 @@ fn a_fresh_position_opens_at_one_to_one_in_the_factory_colours() {
     let payload = payload.as_any().downcast_ref::<PositionPayload>().unwrap();
     assert_eq!(payload.ratio, 1.0);
     assert_eq!(DEFAULT_RATIO, 1.0);
-    assert_eq!(payload.target_rgb, [0x2E, 0xA0, 0x64]);
-    assert_eq!(payload.stop_rgb, [0xD6, 0x30, 0x31]);
-    assert_eq!(payload.zone_opacity_pct, 10);
+    assert_eq!(payload.target_rgb, [0x38, 0x8E, 0x3C]);
+    assert_eq!(payload.stop_rgb, [0x00, 0x00, 0x00]);
+    assert_eq!(payload.zone_opacity_pct, 25);
     assert!(crate::position_preset_of(payload.ratio).is_some());
     let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 95.0)];
     let plan = plan_of(Side::Long, &anchors, payload).unwrap();
@@ -499,7 +492,7 @@ fn a_ratio_outside_the_readable_range_or_a_flat_plan_changes_nothing() {
 }
 
 #[test]
-fn the_width_handles_sit_at_the_entry_lines_ends() {
+fn the_handles_sit_at_the_entry_ends_and_the_leg_corners() {
     let scale = scale();
     let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 90.0)];
     let points = screen(&scale, &anchors);
@@ -509,7 +502,13 @@ fn the_width_handles_sit_at_the_entry_lines_ends() {
     let entry_y = scale.y(100.0);
     assert_eq!(
         handles.as_slice(),
-        &[pos2(100.0, entry_y), pos2(300.0, entry_y)]
+        &[
+            pos2(100.0, entry_y),
+            pos2(300.0, entry_y),
+            pos2(100.0, scale.y(120.0)),
+            pos2(100.0, scale.y(90.0)),
+        ],
+        "the entry line's ends, then the target and stop corners"
     );
 }
 
@@ -534,15 +533,15 @@ fn a_dragged_measured_edge_makes_the_plan_custom_at_the_ratio_it_shows() {
 fn the_plan_plate_names_the_side_and_the_ratio_risk_first() {
     assert_eq!(
         plan_plate(Side::Short, 1.5, 165_461.58),
-        "Short · risk 1 : reward 1.5 · entry 165461.58"
+        "S R/R 1:1.5 · 165461.58"
     );
 }
 
-/// The handles a selected position shows are squares — the entry line's two
-/// width ends — and the halo traces its edges in the
-/// selection's ink, never in a zone colour.
+/// A selected position shows one circle, the entry, and three squares —
+/// the width end and the two leg corners — and the halo traces its edges in
+/// the selection's ink, never in a zone colour.
 #[test]
-fn a_selected_position_shows_square_handles_and_a_halo_in_selection_ink() {
+fn a_selected_position_shows_its_handles_and_a_halo_in_selection_ink() {
     let scale = scale();
     let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 90.0)];
     let points = screen(&scale, &anchors);
@@ -567,13 +566,18 @@ fn a_selected_position_shows_square_handles_and_a_halo_in_selection_ink() {
             |shape| matches!(shape, crate::MarkShape::Rect { stroke, .. } if stroke.width == ring),
         )
         .count();
-    assert_eq!(squares, 2);
-    assert!(
-        !scene
-            .shapes
-            .iter()
-            .any(|shape| matches!(shape, crate::MarkShape::Circle { .. }))
-    );
+    assert_eq!(squares, 3);
+    let circles: Vec<_> = scene
+        .shapes
+        .iter()
+        .filter_map(|shape| match shape {
+            crate::MarkShape::Circle { center, stroke, .. } if stroke.width == ring => {
+                Some(*center)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(circles, [points[0]], "the circle is the entry's left end");
     let halo = ctxt.appearance.color(Token::DrawingSelectionHalo);
     let halo_edges = scene
         .shapes
@@ -585,36 +589,199 @@ fn a_selected_position_shows_square_handles_and_a_halo_in_selection_ink() {
     assert_eq!(halo_edges, 2);
 }
 
-/// The plan plate sits outside the box, so no width handle at the entry
-/// line's ends covers its words: left of the box, or right of it when the
-/// pane has no room on the left.
+/// The plan plate is centred on the box and on the entry line, solid in the
+/// target's colour; the Target and Stop plates are centred on the box beyond
+/// their edges.
 #[test]
-fn the_plan_plate_never_sits_under_a_width_handle() {
+fn the_plates_are_centred_on_the_box() {
     let payload = two_to_one();
     let scene = painted(&payload, true);
-    let plan_at = |scene: &MarkScene| {
-        scene
-            .shapes
-            .iter()
-            .find_map(|shape| match shape {
-                crate::MarkShape::Text { text, at, .. } if text.starts_with("Long") => Some(*at),
-                _ => None,
-            })
-            .unwrap()
+    let plates: Vec<_> = scene
+        .shapes
+        .iter()
+        .filter_map(|shape| match shape {
+            crate::MarkShape::Rect {
+                rect,
+                fill,
+                rounding_px,
+                ..
+            } if *rounding_px > 0.0 => Some((*rect, *fill)),
+            _ => None,
+        })
+        .collect();
+    let [(target, _), (stop, _), (plan, plan_fill)] = plates.as_slice() else {
+        panic!("three plates: {plates:?}");
     };
-    // The box spans x 100 to 300; its handles sit on those two columns.
-    let x = plan_at(&scene).x;
-    let handle = crate::SELECTED_ANCHOR_RADIUS_PX;
+    // The box spans x 100 to 300: entry 100, target 120, stop 90.
+    let y = |price: f64| scale().y(price);
+    for rect in [target, stop, plan] {
+        assert_eq!(
+            (rect.left + rect.right) / 2.0,
+            200.0,
+            "{rect:?} centred on the box"
+        );
+    }
+    assert_eq!(
+        (plan.top + plan.bottom) / 2.0,
+        y(100.0),
+        "on the entry line"
+    );
     assert!(
-        x < 100.0 - handle || x > 300.0 + handle,
-        "the plate's words start outside the box and its handles: {x}"
+        target.bottom <= y(120.0) && stop.top >= y(90.0),
+        "beyond the edges"
+    );
+    assert_eq!(
+        *plan_fill,
+        crate::rgba_unmultiplied(0x38, 0x8E, 0x3C, u8::MAX)
     );
 }
 
-/// A press on the entry anchor's corner grabs the width handle there: the
-/// anchor has no dot of its own to take the press instead.
+/// A box running off the pane's edge keeps its plan plate on the pane.
 #[test]
-fn a_press_on_the_entry_corner_grabs_the_width_handle() {
+fn the_plan_plate_stays_on_the_pane() {
+    let payload = two_to_one();
+    let scale = scale();
+    let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 90.0)];
+    let points = screen(&scale, &anchors);
+    let ctxt = context(&payload, &anchors, &scale);
+    let mut scene = MarkScene::default();
+    // The box spans x 100 to 300; the pane ends at 150.
+    let chart = PxRect::from_min_max(pos2(0.0, 0.0), pos2(150.0, 2000.0));
+    paint(
+        &mut scene,
+        chart,
+        DrawingStyle::default(),
+        &points,
+        &ctxt,
+        Side::Long,
+    );
+    let plan = scene
+        .shapes
+        .iter()
+        .rev()
+        .find_map(|shape| match shape {
+            crate::MarkShape::Rect {
+                rect, rounding_px, ..
+            } if *rounding_px > 0.0 => Some(*rect),
+            _ => None,
+        })
+        .unwrap();
+    assert!(plan.right <= 150.0 && plan.left >= 0.0, "{plan:?}");
+}
+
+/// The factory look on each ground: on Light a black stop, black entry line
+/// and white words on every plate; on Dark a light grey stop whose plate
+/// takes the theme's ink, and the entry line in the theme's text ink.
+#[test]
+fn the_factory_look_reads_on_light_and_dark() {
+    use quantick_appearance::ResolvedTheme;
+    let tool = crate::DrawingTool::by_id("long-position").unwrap();
+    let white = crate::rgba_unmultiplied(u8::MAX, u8::MAX, u8::MAX, u8::MAX);
+    for dark in [false, true] {
+        let theme = ResolvedTheme::bundled(dark);
+        let opening = crate::defaults::factory_opening(Some(theme), tool);
+        let payload = opening
+            .payload
+            .as_any()
+            .downcast_ref::<PositionPayload>()
+            .unwrap()
+            .clone();
+        let stop = if dark { [0xB2, 0xB5, 0xBE] } else { [0, 0, 0] };
+        assert_eq!(payload.target_rgb, [0x38, 0x8E, 0x3C], "dark {dark}");
+        assert_eq!(payload.stop_rgb, stop, "dark {dark}");
+        assert_eq!(payload.zone_opacity_pct, 25, "dark {dark}");
+
+        let scale = scale();
+        let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 90.0)];
+        let points = screen(&scale, &anchors);
+        let mut ctxt = context(&payload, &anchors, &scale);
+        ctxt.appearance = theme;
+        let mut scene = MarkScene::default();
+        let chart = PxRect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 2000.0));
+        paint(
+            &mut scene,
+            chart,
+            DrawingStyle::default(),
+            &points,
+            &ctxt,
+            Side::Long,
+        );
+        let entry_line = scene
+            .shapes
+            .iter()
+            .find_map(|shape| match shape {
+                crate::MarkShape::Line { from, to, stroke }
+                    if from.y == points[0].y && to.y == points[0].y =>
+                {
+                    Some(stroke.color)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let entry_ink = if dark {
+            theme.color(Token::TextPrimary)
+        } else {
+            crate::rgba_unmultiplied(0, 0, 0, u8::MAX)
+        };
+        assert_eq!(entry_line, entry_ink, "dark {dark}");
+        let words = |prefix: &str| {
+            scene
+                .shapes
+                .iter()
+                .find_map(|shape| match shape {
+                    crate::MarkShape::Text { text, color, .. } if text.starts_with(prefix) => {
+                        Some(*color)
+                    }
+                    _ => None,
+                })
+                .unwrap()
+        };
+        assert!(
+            scene.shapes.iter().all(|shape| !matches!(
+                shape,
+                crate::MarkShape::Text {
+                    on_plate: false,
+                    ..
+                }
+            )),
+            "every word sits on its plate, inked against it"
+        );
+        assert_eq!(words("TP "), white, "dark {dark}");
+        assert_eq!(words("L R/R"), white, "dark {dark}");
+        let stop_plate = crate::rgba_unmultiplied(stop[0], stop[1], stop[2], u8::MAX);
+        if dark {
+            assert_eq!(
+                words("SL "),
+                theme.ink_on(stop_plate),
+                "white fails on grey"
+            );
+            assert_ne!(words("SL "), white);
+        } else {
+            assert_eq!(words("SL "), white);
+        }
+    }
+}
+
+/// The factory stop reads on every bundled canvas.
+#[test]
+fn the_factory_stop_shows_on_every_ground() {
+    use quantick_appearance::{ResolvedTheme, contrast::contrast_ratio};
+    for dark in [false, true] {
+        let theme = ResolvedTheme::bundled(dark);
+        let [r, g, b] = crate::tools::position_payload::factory_stop_rgb(theme);
+        let stop = crate::rgba_unmultiplied(r, g, b, u8::MAX);
+        assert!(
+            contrast_ratio(stop, theme.color(Token::ChartCanvas)) >= 3.0,
+            "dark {dark}: the stop reads on the canvas"
+        );
+    }
+}
+
+/// A press on the entry anchor's corner grabs the entry circle there, the
+/// right end the width square and each leg's corner its leg: the anchors
+/// have no dot of their own to take the press instead.
+#[test]
+fn a_press_on_a_handle_grabs_what_it_moves() {
     let scale = scale();
     let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 90.0)];
     let points = screen(&scale, &anchors);
@@ -624,32 +791,43 @@ fn a_press_on_the_entry_corner_grabs_the_width_handle() {
     let tool = crate::DrawingTool::by_id("long-position").unwrap();
     assert_eq!(
         tool.hit_handle(chart, &points, points[0], 6.0, &ctxt),
-        Some(LEFT_EDGE_HANDLE)
+        Some(ENTRY_HANDLE)
     );
     let right = pos2(300.0, scale.y(100.0));
     assert_eq!(
         tool.hit_handle(chart, &points, right, 6.0, &ctxt),
         Some(RIGHT_EDGE_HANDLE)
     );
+    // 1 : 2 long measured to the stop: the target is the projected leg.
+    let target_corner = pos2(100.0, scale.y(120.0));
+    assert_eq!(
+        tool.hit_handle(chart, &points, target_corner, 6.0, &ctxt),
+        Some(PROJECTED_HANDLE)
+    );
+    let stop_corner = pos2(100.0, scale.y(90.0));
+    assert_eq!(
+        tool.hit_handle(chart, &points, stop_corner, 6.0, &ctxt),
+        Some(MEASURED_LINE_HANDLE)
+    );
 }
 
-/// A width handle moves the anchor on its side in time and nothing else:
-/// both prices hold, the other edge holds, and the width never drops under
-/// the floor.
+/// The width square moves the right-hand anchor in time and nothing else;
+/// the entry circle moves the entry's price and the left-hand anchor in
+/// time. The other edge holds and the width never drops under the floor.
 #[test]
-fn an_edge_drag_moves_one_anchor_in_time_and_no_price() {
+fn an_edge_drag_moves_one_anchor_in_time() {
     // Entry at x 100, edge at x 300: 20 bars at 10 px a bar.
     let points = [pos2(100.0, 200.0), pos2(300.0, 300.0)];
     let wider = drag_line(&points, RIGHT_EDGE_HANDLE, pos2(500.0, 0.0), 10.0).unwrap();
     assert_eq!(wider.as_slice(), &[pos2(100.0, 200.0), pos2(500.0, 300.0)]);
-    let narrowest = drag_line(&points, LEFT_EDGE_HANDLE, pos2(290.0, 900.0), 10.0).unwrap();
+    let narrowest = drag_line(&points, ENTRY_HANDLE, pos2(290.0, 250.0), 10.0).unwrap();
     assert_eq!(
         narrowest.as_slice(),
         &[
-            pos2(300.0 - MIN_WIDTH_BARS * 10.0, 200.0),
+            pos2(300.0 - MIN_WIDTH_BARS * 10.0, 250.0),
             pos2(300.0, 300.0)
         ],
-        "the floor holds the left edge 14 bars from the right"
+        "the entry takes the price; the floor holds the left edge 14 bars from the right"
     );
     // Drawn right to left, the entry is the right-hand anchor.
     let mirrored = [pos2(300.0, 200.0), pos2(100.0, 300.0)];
@@ -690,4 +868,46 @@ fn a_width_set_in_bars_moves_the_right_anchor_in_time() {
             Err(crate::PositionRefusal::WidthOutOfRange)
         );
     }
+}
+
+/// The cursor says what a press moves: the box's sides and the width square
+/// sideways, the TP, SL and entry levels up or down, and a press anywhere
+/// along a side grabs it, not only at the square.
+#[test]
+fn every_side_resizes_and_the_cursor_names_the_axis() {
+    let scale = scale();
+    let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 90.0)];
+    let points = screen(&scale, &anchors);
+    let payload = two_to_one();
+    let ctxt = context(&payload, &anchors, &scale);
+    let hint = |at: Px| pointer_hint(&points, at, &ctxt, Side::Long);
+    // Box x 100 to 300; target 120, entry 100, stop 90.
+    let mid_target = (scale.y(120.0) + scale.y(100.0)) / 2.0;
+    assert_eq!(
+        hint(pos2(100.0, mid_target)),
+        Some(PointerHint::ResizeSide {
+            handle: LEFT_SIDE_HANDLE
+        })
+    );
+    assert_eq!(
+        hint(pos2(300.0, scale.y(95.0))),
+        Some(PointerHint::ResizeSide {
+            handle: RIGHT_SIDE_HANDLE
+        })
+    );
+    for (price, handle) in [
+        (120.0, PROJECTED_HANDLE),
+        (100.0, ENTRY_LINE_HANDLE),
+        (90.0, MEASURED_LINE_HANDLE),
+    ] {
+        assert_eq!(
+            hint(pos2(200.0, scale.y(price))),
+            Some(PointerHint::ResizeLevel { handle })
+        );
+    }
+    assert_eq!(line_hint(ENTRY_HANDLE), None, "the circle moves both ways");
+    let left = drag_line(&points, LEFT_SIDE_HANDLE, pos2(50.0, 0.0), 10.0).unwrap();
+    assert_eq!(left.as_slice(), &[pos2(50.0, points[0].y), points[1]]);
+    let right = drag_line(&points, RIGHT_SIDE_HANDLE, pos2(400.0, 0.0), 10.0).unwrap();
+    assert_eq!(right.as_slice(), &[points[0], pos2(400.0, points[1].y)]);
 }

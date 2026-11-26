@@ -19,12 +19,14 @@ pub const RATIO_PRESETS: [f64; 3] = [1.0, 2.0, 3.0];
 /// The ratio a fresh position opens with, until the trader saves another
 /// as the tool's default.
 pub const DEFAULT_RATIO: f64 = 1.0;
-/// Factory zone colours, the same on every theme: a position is the
-/// trader's own plan, not candle ink, so it never takes `Buy`/`Sell`.
-pub const FACTORY_TARGET_RGB: Rgb = [0x2E, 0xA0, 0x64];
-pub const FACTORY_STOP_RGB: Rgb = [0xD6, 0x30, 0x31];
-/// Factory zone opacity, in percent.
-pub const FACTORY_ZONE_OPACITY_PCT: u8 = 10;
+/// Factory zone colours: a position is the trader's own plan, not candle
+/// ink, so it never takes `Buy`/`Sell`. A green target and a black stop,
+/// the stop a light grey where black would vanish ([`factory_stop_rgb`]).
+pub const FACTORY_TARGET_RGB: Rgb = [0x38, 0x8E, 0x3C];
+pub const FACTORY_STOP_RGB: Rgb = [0x00, 0x00, 0x00];
+pub const FACTORY_STOP_RGB_ON_DARK: Rgb = [0xB2, 0xB5, 0xBE];
+/// Factory zone opacity, in percent: one for both zones.
+pub const FACTORY_ZONE_OPACITY_PCT: u8 = 25;
 /// The most a zone may be filled, in percent: a solid zone hides the bars.
 pub const MAX_ZONE_OPACITY_PCT: u8 = 100;
 /// Two ratios this close are one preset.
@@ -88,6 +90,24 @@ impl PositionRefusal {
 
 pub(super) fn valid_ratio(ratio: f64) -> bool {
     (MIN_RATIO..=MAX_RATIO).contains(&ratio)
+}
+
+/// Whether `theme`, a pane's drawing palette, paints on a light ground: the
+/// ground its saved defaults are read from too.
+#[must_use]
+pub fn light_ground(theme: &quantick_appearance::ResolvedTheme) -> bool {
+    use quantick_appearance::{Ground, Token};
+    Ground::of_canvas(theme.color(Token::ChartCanvas)) == Ground::Light
+}
+
+/// The stop colour a fresh position takes on `theme`.
+#[must_use]
+pub fn factory_stop_rgb(theme: &quantick_appearance::ResolvedTheme) -> Rgb {
+    if light_ground(theme) {
+        FACTORY_STOP_RGB
+    } else {
+        FACTORY_STOP_RGB_ON_DARK
+    }
 }
 
 /// The preset `ratio` is, if it is one.
@@ -252,21 +272,23 @@ impl PositionPayload {
             zone_opacity_pct: Some(self.zone_opacity_pct),
         }
     }
-    /// The look `data` states, or `None` for one this version cannot read.
-    fn read_look(data: &PresetData) -> Option<(f64, Rgb, Rgb, u8)> {
-        let colour = |text: &Option<String>, factory| match text {
+    /// The look `data` states, or `None` for one this version cannot read. A
+    /// field it never wrote keeps this payload's, which opened on the pane's
+    /// ground: a dark pane's stop, not black.
+    fn read_look(&self, data: &PresetData) -> Option<(f64, Rgb, Rgb, u8)> {
+        let colour = |text: &Option<String>, held| match text {
             Some(text) => parse_rgb_hex(text),
-            None => Some(factory),
+            None => Some(held),
         };
-        let opacity = data.zone_opacity_pct.unwrap_or(FACTORY_ZONE_OPACITY_PCT);
+        let opacity = data.zone_opacity_pct.unwrap_or(self.zone_opacity_pct);
         (data.version == FORMAT_VERSION
             && valid_ratio(data.ratio)
             && opacity <= MAX_ZONE_OPACITY_PCT)
             .then_some(())?;
         Some((
             data.ratio,
-            colour(&data.target_color, FACTORY_TARGET_RGB)?,
-            colour(&data.stop_color, FACTORY_STOP_RGB)?,
+            colour(&data.target_color, self.target_rgb)?,
+            colour(&data.stop_color, self.stop_rgb)?,
             opacity,
         ))
     }
@@ -279,6 +301,23 @@ impl PositionPayload {
 }
 
 impl DrawingPayload for PositionPayload {
+    /// A mark that keeps the factory look has no colour or opacity of the
+    /// trader's (an edit to one makes the look the trader's), so it wears the whole
+    /// factory look of its ground; its ratio is the plan's, never reset.
+    fn apply_theme_defaults(&mut self, theme: &quantick_appearance::ResolvedTheme) {
+        self.target_rgb = FACTORY_TARGET_RGB;
+        self.stop_rgb = factory_stop_rgb(theme);
+        self.zone_opacity_pct = FACTORY_ZONE_OPACITY_PCT;
+    }
+    /// The look is the colours and the opacity. The ratio is the plan's: a
+    /// preset pick or a leg drag leaves the mark following its ground, so a
+    /// light pane's black stop still turns grey on a dark one.
+    fn same_look(&self, other: &dyn DrawingPayload) -> bool {
+        other.as_any().downcast_ref::<Self>().is_some_and(|other| {
+            (self.target_rgb, self.stop_rgb, self.zone_opacity_pct)
+                == (other.target_rgb, other.stop_rgb, other.zone_opacity_pct)
+        })
+    }
     fn clone_box(&self) -> Box<dyn DrawingPayload> {
         Box::new(self.clone())
     }
@@ -302,7 +341,7 @@ impl DrawingPayload for PositionPayload {
     fn import_preset(&mut self, value: &toml::Value) -> bool {
         let Some(look) = PresetData::deserialize(value.clone())
             .ok()
-            .and_then(|data| Self::read_look(&data))
+            .and_then(|data| self.read_look(&data))
         else {
             return false;
         };
@@ -320,7 +359,7 @@ impl DrawingPayload for PositionPayload {
         let Ok(data) = SavedData::deserialize(value.clone()) else {
             return false;
         };
-        let Some(look) = Self::read_look(&data.look) else {
+        let Some(look) = self.read_look(&data.look) else {
             return false;
         };
         if data

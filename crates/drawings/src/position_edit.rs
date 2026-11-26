@@ -5,7 +5,7 @@
 
 pub use quantick_appearance::Ground;
 
-use crate::position_text::{RatioButton, custom_row, preset_rows, ratio_button};
+use crate::position_text::{custom_row, preset_rows, ratio_button};
 use crate::{
     Drawing, DrawingTool, PositionPayload, PositionRefusal, PositionSide, PresetContext,
     PresetHost, Rgb, position_plan, position_preset_of, position_side, set_plan_ratio,
@@ -122,7 +122,8 @@ pub struct RatioRow {
 /// What the bar shows for a position's ratio: the button and the menu.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RatioMenu {
-    pub button: RatioButton,
+    /// `R/R 1:2`.
+    pub button: String,
     /// The checked, read-only `Custom 1:N` row on top while the plan is no
     /// preset, then the presets, none checked in that case.
     pub rows: Vec<RatioRow>,
@@ -148,7 +149,7 @@ pub fn ratio_menu(drawing: &Drawing<DrawingTool>) -> Option<RatioMenu> {
         checked: preset == Some(value),
     }));
     Some(RatioMenu {
-        button: ratio_button(ratio, preset.is_none()),
+        button: ratio_button(ratio),
         rows,
     })
 }

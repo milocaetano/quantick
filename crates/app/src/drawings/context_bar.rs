@@ -73,8 +73,8 @@ const WIDTH_PREVIEW_LEN_PX: f32 = 18.0;
 const POPOVER_ROW_WIDTH_PX: f32 = 132.0;
 /// Height of one row inside the width and size popovers.
 const POPOVER_ROW_HEIGHT_PX: f32 = 26.0;
-/// Room for the widest risk/reward button, `Custom · R/R 1:12.5`.
-const RISK_REWARD_WIDTH_PX: f32 = 124.0;
+/// Room for the widest risk/reward button, `R/R 1:12.5`.
+const RISK_REWARD_WIDTH_PX: f32 = 72.0;
 
 /// Opacity while the pointer is elsewhere. It never reaches zero: the object
 /// is selected, and this bar is the proof of that on screen.
@@ -713,8 +713,7 @@ fn leg_color(face: &PositionFace, leg: PositionLeg) -> egui::Color32 {
     egui::Color32::from_rgb(r, g, b)
 }
 
-/// `R/R 1:2`, the risk digit in the stop colour and the reward digit in the
-/// target colour, led by `Custom · ` when the plan is no preset.
+/// `R/R 1:2` in one colour.
 fn draw_ratio_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'_>) {
     let Some(face) = object.position.as_ref() else {
         return;
@@ -726,22 +725,11 @@ fn draw_ratio_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'
             .on_hover_text("A flat plan states no risk/reward");
         return;
     };
-    let mut job = egui::text::LayoutJob::default();
-    for (text, color) in [
-        (button.lead, palette.text_muted()),
-        (button.prefix, palette.text_muted()),
-        (button.risk, leg_color(face, PositionLeg::Stop)),
-        (button.colon, palette.text_muted()),
-        (button.reward.as_str(), leg_color(face, PositionLeg::Target)),
-    ] {
-        job.append(
-            text,
-            0.0,
-            egui::TextFormat::simple(palette.body_font(12.0), color),
-        );
-    }
+    let text = egui::RichText::new(button)
+        .font(palette.body_font(12.0))
+        .color(palette.text_primary());
     let response = ui
-        .add_sized(size, egui::Button::new(job).frame(false))
+        .add_sized(size, egui::Button::new(text).frame(false))
         .on_hover_text("Risk/reward");
     if response.clicked() {
         bar.toggle(Popover::RiskReward, response.rect);

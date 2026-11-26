@@ -16,6 +16,12 @@ pub trait DrawingPayload: fmt::Debug {
     fn eq_dyn(&self, other: &dyn DrawingPayload) -> bool;
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
+    /// Whether `other` wears the same look, so an edit from it to this one
+    /// leaves a factory-look mark following its ground: by default the same
+    /// payload or the same preset export.
+    fn same_look(&self, other: &dyn DrawingPayload) -> bool {
+        self.eq_dyn(other) || self.export_preset() == other.export_preset()
+    }
     /// Serialize the payload for a named preset. Coordinates, lock and
     /// visibility never travel with a preset, only the tool-owned config.
     fn export_preset(&self) -> Option<toml::Value> {

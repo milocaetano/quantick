@@ -30,11 +30,13 @@ fn colours_opacity_and_ratio_round_trip_through_a_preset_and_a_save() {
 }
 
 /// A drawing saved before colours existed: `ratio = 2.0` and nothing else.
-/// It keeps its ratio and takes the factory colours.
+/// It keeps its ratio and the colours of the payload it loads into, which
+/// opened in the factory look of its pane's ground: a dark pane's stop, not
+/// black.
 #[test]
 fn a_payload_saved_before_colours_still_loads() {
     let old: toml::Value = toml::from_str("version = 1\nratio = 2.0\n").unwrap();
-    let mut saved = custom_look();
+    let mut saved = PositionPayload::default();
     assert!(saved.import_saved(&old));
     assert_eq!(
         saved,
@@ -43,14 +45,59 @@ fn a_payload_saved_before_colours_still_loads() {
             ..PositionPayload::default()
         }
     );
+    let mut on_dark = PositionPayload::default();
+    on_dark.apply_theme_defaults(quantick_appearance::ResolvedTheme::bundled(true));
+    let opened = on_dark.clone();
+    assert!(on_dark.import_preset(&old));
+    assert_eq!(on_dark.stop_rgb, FACTORY_STOP_RGB_ON_DARK);
+    assert_eq!(
+        on_dark,
+        PositionPayload {
+            ratio: 2.0,
+            ..opened
+        }
+    );
     let pinned: toml::Value =
         toml::from_str("version = 1\nratio = 2.0\nprojected_offset = 12.5\n").unwrap();
     let mut saved = PositionPayload::default();
     assert!(saved.import_saved(&pinned));
     assert_eq!(saved.projected_offset, Some(12.5));
-    let mut preset = custom_look();
+    let mut preset = PositionPayload::default();
     assert!(preset.import_preset(&old));
     assert_eq!((preset.ratio, preset.target_rgb), (2.0, FACTORY_TARGET_RGB));
+}
+
+/// A mark that keeps the factory look wears the whole factory look of its
+/// ground, so one saved under older factory colours is never half old and
+/// half new; its ratio is the plan's and stays.
+#[test]
+fn a_factory_look_mark_wears_the_whole_factory_look_of_its_ground() {
+    for dark in [false, true] {
+        let mut old = PositionPayload {
+            ratio: 2.0,
+            target_rgb: [0x2E, 0xA0, 0x64],
+            stop_rgb: [0xD6, 0x30, 0x31],
+            zone_opacity_pct: 10,
+            ..PositionPayload::default()
+        };
+        old.apply_theme_defaults(quantick_appearance::ResolvedTheme::bundled(dark));
+        let stop = if dark {
+            FACTORY_STOP_RGB_ON_DARK
+        } else {
+            FACTORY_STOP_RGB
+        };
+        assert_eq!(
+            old,
+            PositionPayload {
+                ratio: 2.0,
+                target_rgb: FACTORY_TARGET_RGB,
+                stop_rgb: stop,
+                zone_opacity_pct: FACTORY_ZONE_OPACITY_PCT,
+                ..PositionPayload::default()
+            },
+            "dark {dark}"
+        );
+    }
 }
 
 #[test]
@@ -73,8 +120,8 @@ fn an_unreadable_look_is_refused_and_changes_nothing() {
 
 #[test]
 fn colours_read_and_write_as_hex() {
-    assert_eq!(rgb_hex(FACTORY_TARGET_RGB), "#2EA064");
-    assert_eq!(parse_rgb_hex("#d63031"), Some(FACTORY_STOP_RGB));
+    assert_eq!(rgb_hex(FACTORY_TARGET_RGB), "#388E3C");
+    assert_eq!(parse_rgb_hex("#388e3c"), Some(FACTORY_TARGET_RGB));
     for bad in ["d63031", "#d6303", "#d630311", "#zz3031", "#d63é1"] {
         assert_eq!(parse_rgb_hex(bad), None, "{bad}");
     }

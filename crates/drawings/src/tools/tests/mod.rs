@@ -1855,8 +1855,8 @@ fn a_tool_that_declares_no_handles_is_still_grabbed_by_its_anchors() {
         if drawing_tool.id().ends_with("-position") {
             assert_eq!(
                 handles.len(),
-                2,
-                "a position is resized by its entry line's ends"
+                4,
+                "a position's entry line ends and its two leg corners"
             );
             continue;
         }

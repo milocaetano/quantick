@@ -156,6 +156,8 @@ pub enum GestureCursor {
     Resize,
     /// A side line a drag would move sideways.
     ResizeHorizontal,
+    /// A level line a drag would move up or down.
+    ResizeVertical,
     /// A band one click would run out to the chart edge. Its own cursor,
     /// never the side line's: the two zones sit side by side.
     ExtendSide,
