@@ -224,10 +224,12 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // run one. It sits above the three `feed-*` venue crates and `replay` —
     // a recorded session is a source like any other — and below `app`. It is
     // the one crate below `app` that owns runtimes, threads and the wall
-    // clock; nothing it reaches does.
+    // clock; nothing it reaches does. `control-local` for the private
+    // directory the execution bridge's per-run secret is published in.
     (
         "feed",
         &[
+            "control-local",
             "engine",
             "operability",
             "orderbook",

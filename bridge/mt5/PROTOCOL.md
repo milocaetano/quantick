@@ -600,7 +600,27 @@ is `crates/broker-mt5/src/wire.rs`; its tests parse the example lines below.
 is a security property rather than an MQL5 limitation: a local process that
 dials quantick's port can at worst show it a false account, while a bridge that
 listened would place orders for any local process that connected. Quantick
-binds `127.0.0.1` only. No credentials exist on either side.
+binds `127.0.0.1` only.
+
+**The bridge proves this run's secret first.** Loopback does not say which
+local process dialed, so each quantick run draws 32 random bytes and writes
+them, as 64 lowercase hex characters, to `mt5-exec-<pid>.secret` in the same
+private per-user directory as the control-plane descriptor (owner-only mode
+or ACL). Quantick passes the file's path to the bridge it launches as
+`--secret-file`, never the secret itself; a bridge started by hand takes the
+path quantick logs as `MT5_EXEC_SECRET_PUBLISHED`. The bridge's first line on
+every connection is the hex alone:
+
+```
+3f9c…64 hex characters…a1
+```
+
+Quantick compares it in constant time. A connection whose first line is
+anything else, that sends no line, or that has not sent the whole line within
+2 seconds (or sends more than 128 bytes without a line end) is closed. It is
+never written to, and nothing it sent is read as a bridge line. Quantick
+logs `BROKER_EXEC_BRIDGE_REFUSED` and takes the next connection. When the
+secret cannot be published, quantick does not listen at all.
 
 Prices and volumes travel as **decimal strings** both ways (`"124900"`,
 `"2"`); a protective price that is absent is `null`, never `0`.
@@ -608,7 +628,8 @@ Prices and volumes travel as **decimal strings** both ways (`"124900"`,
 ### Session shape
 
 ```
-exec_hello                   bridge → quantick, exactly once, first line
+<secret hex>                 bridge → quantick, first line, not JSON
+exec_hello                   bridge → quantick, exactly once, next line
   ◀─ watch                   quantick → bridge: the symbol to report
 reply | state × …            until the session ends
   ◀─ submit | cancel | modify | sltp | close

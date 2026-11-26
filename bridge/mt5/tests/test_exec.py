@@ -14,8 +14,10 @@ in this folder.
 from __future__ import annotations
 
 import json
+import shutil
 import socket
 import sys
+import tempfile
 import time
 import types
 from pathlib import Path
@@ -29,6 +31,7 @@ sys.path.insert(0, str(BRIDGE_DIR))
 import quantick_bridge_exec as exe  # noqa: E402
 
 SYMBOL = "WINZ26"
+SECRET = "0123456789abcdef" * 4
 MAGIC = 7_710_001
 
 
@@ -121,7 +124,7 @@ class FakeBroker:
 
 def session(broker: FakeBroker, cache: exe.ReplyCache | None = None) -> exe.ExecSession:
     """A session with no socket: what it sends is collected in `sent`."""
-    s = exe.ExecSession(None, broker, cache or exe.ReplyCache(), "instance-a", SYMBOL)
+    s = exe.ExecSession(None, broker, cache or exe.ReplyCache(), "instance-a", SECRET, SYMBOL)
     s.lines = []
     s.send = s.lines.append
     return s
@@ -437,15 +440,17 @@ def test_a_socket_round_trip_answers_and_pushes_state():
     broker = FakeBroker()
     ours, theirs = socket.socketpair()
     try:
-        s = exe.ExecSession(ours, broker, exe.ReplyCache(), "instance-z", SYMBOL)
+        s = exe.ExecSession(ours, broker, exe.ReplyCache(), "instance-z", SECRET, SYMBOL)
         s.hello()
         theirs.sendall((json.dumps(submit("market")) + "\n").encode("utf-8"))
         s.pump()
         theirs.settimeout(2)
         received = b""
-        while received.count(b"\n") < 3:
+        while received.count(b"\n") < 4:
             received += theirs.recv(65536)
-        lines = [json.loads(line) for line in received.decode("utf-8").splitlines()]
+        first, *rest = received.decode("utf-8").splitlines()
+        check("the secret first, alone on its line", first == SECRET, first)
+        lines = [json.loads(line) for line in rest]
         check("hello first, with the instance", lines[0]["type"] == "exec_hello" and lines[0]["instance"] == "instance-z", lines[0])
         check("the schema version", lines[0]["schema"] == exe.EXEC_SCHEMA_VERSION, lines[0])
         check("then the reply", lines[1]["type"] == "reply" and lines[1]["retcode"] == 10009, lines[1])
@@ -457,6 +462,24 @@ def test_a_socket_round_trip_answers_and_pushes_state():
 
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def test_the_secret_file_is_read_and_its_shape_checked():
+    directory = Path(tempfile.mkdtemp(prefix="quantick-exec-secret-"))
+    try:
+        good = directory / "good.secret"
+        good.write_bytes((SECRET + "\n").encode("ascii"))
+        check("a published secret reads back", exe.read_secret(str(good)) == SECRET)
+        for name, body in [("short", SECRET[:-1]), ("upper", SECRET.upper()), ("empty", ""), ("long", SECRET + "0")]:
+            bad = directory / f"{name}.secret"
+            bad.write_bytes(body.encode("ascii"))
+            try:
+                exe.read_secret(str(bad))
+            except ValueError:
+                continue
+            check(f"a {name} secret is refused", False)
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 def test_a_request_reached_at_or_past_its_expiry_is_refused_and_never_executed():

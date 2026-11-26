@@ -42,6 +42,7 @@
 //! [`VenueNotice::OutcomeUnknown`]: quantick_trading::VenueNotice::OutcomeUnknown
 
 pub mod account;
+pub mod auth;
 pub mod fake;
 pub mod link;
 pub mod machine;
@@ -50,6 +51,7 @@ pub mod venue;
 pub mod wire;
 
 pub use account::{AccountFacts, MarginMode, TradeMode};
+pub use auth::BridgeSecret;
 pub use link::{BridgeLink, LinkEvent};
 pub use machine::{
     BrokerConfig, BrokerCore, ForeignExposure, ForeignOrder, ForeignPosition, LinkState,

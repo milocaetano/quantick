@@ -45,7 +45,7 @@ fn revive_relaunches_only_an_ended_bridge_behind_a_listener() {
 
 #[test]
 fn an_empty_command_launches_nothing() {
-    assert!(ExecBridge::launch(&[], 1, "WINZ26").is_none());
+    assert!(ExecBridge::launch(&[], 1, "WINZ26", std::path::Path::new("unused.secret")).is_none());
 }
 
 #[test]
@@ -54,7 +54,9 @@ fn a_missing_script_launches_nothing() {
         "python".to_owned(),
         "no/such/quantick_bridge_exec.py".to_owned(),
     ];
-    assert!(ExecBridge::launch(&command, 1, "WINZ26").is_none());
+    assert!(
+        ExecBridge::launch(&command, 1, "WINZ26", std::path::Path::new("unused.secret")).is_none()
+    );
 }
 
 /// Every line the bridge prints reaches the log once and verbatim, blank

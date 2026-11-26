@@ -12,6 +12,8 @@
 //!   gateway and exchanges framed envelopes with it. It is the client side of
 //!   the handshake and framing `quantick-control` defines; the server side is
 //!   the gateway inside the application.
+//! - [`secret_file`]: a per-run secret a launched helper reads to prove
+//!   itself, published in the same private directory with the same checks.
 //!
 //! The crate depends only on `quantick-control`. It never starts the
 //! application, never binds a listener, and knows nothing about MCP, egui or
@@ -22,3 +24,4 @@ pub mod discovery;
 mod retry;
 #[cfg(test)]
 mod scratch;
+pub mod secret_file;

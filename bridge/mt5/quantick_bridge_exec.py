@@ -8,7 +8,12 @@ things — answers each order request with the terminal's verbatim reply, and
 pushes the account, the positions, the working orders and the deals of the
 watched symbol whenever they change.
 
-    python bridge/mt5/quantick_bridge_exec.py --port 9180
+    python bridge/mt5/quantick_bridge_exec.py --port 9180 --secret-file <path>
+
+``--secret-file`` names the file quantick publishes this run's secret in
+(the ``MT5_EXEC_SECRET_PUBLISHED`` log line gives the path when you start
+the bridge yourself). Quantick refuses a connection whose first line is not
+that secret.
 
 The wire contract is the "Execution channel" section of PROTOCOL.md, and
 ``crates/broker-mt5`` is its executable counterpart.
@@ -17,8 +22,9 @@ Three promises shape this file:
 
 - **quantick listens and this bridge dials.** A local process that connects to
   quantick's port can at worst show it a false account; a bridge that listened
-  would let any local process place orders. No credentials exist anywhere in
-  this path, and nothing leaves ``127.0.0.1``.
+  would let any local process place orders. Nothing leaves ``127.0.0.1``,
+  and quantick takes only a connection that first sends the per-run secret
+  from ``--secret-file``.
 - **A request id is answered once.** Every reply is remembered by the request's
   id, and a request whose id was already answered — quantick resending after a
   dropped link — gets the remembered reply again. It never reaches
@@ -64,6 +70,9 @@ EXEC_BRIDGE_VERSION = "0.1.0"
 #: quantick's execution listener when nothing else is configured. Mirrors the
 #: default `exec_port` of `[broker.metatrader]` in `crates/app/config/feeds.toml`.
 DEFAULT_EXEC_PORT = 9180
+
+#: The per-run secret's length on the wire: 32 bytes as lowercase hex.
+SECRET_HEX_LENGTH = 64
 
 #: Answered request ids remembered for an idempotent retry. A retry follows its
 #: original within one reconnect, so this only has to outlast a burst of
@@ -180,8 +189,9 @@ class RequestError(Exception):
 class ExecSession(TransportMixin):
     """One connection to quantick's execution listener."""
 
-    def __init__(self, sock, terminal, cache: ReplyCache, instance: str, symbol: str = "") -> None:
+    def __init__(self, sock, terminal, cache: ReplyCache, instance: str, secret: str, symbol: str = "") -> None:
         self.sock = sock
+        self.secret = secret
         self.terminal = terminal
         self.cache = cache
         self.instance = instance
@@ -209,6 +219,9 @@ class ExecSession(TransportMixin):
     # -- framing -----------------------------------------------------------
 
     def hello(self) -> None:
+        # The secret goes first and alone: quantick reads nothing else from a
+        # connection until it has seen it.
+        self.outbox += self.secret.encode("ascii") + b"\n"
         self.send(
             {
                 "type": "exec_hello",
@@ -711,10 +724,19 @@ def need_int(request: dict, key: str) -> int:
 # -- loop ---------------------------------------------------------------------
 
 
-def run_session(args: argparse.Namespace, cache: ReplyCache, instance: str) -> None:
+def read_secret(path: str) -> str:
+    """The per-run secret quantick published at `path`, checked for shape."""
+    with open(path, encoding="ascii") as file:
+        secret = file.read(SECRET_HEX_LENGTH + 2).strip()
+    if len(secret) != SECRET_HEX_LENGTH or any(c not in "0123456789abcdef" for c in secret):
+        raise ValueError(f"expected {SECRET_HEX_LENGTH} lowercase hex characters")
+    return secret
+
+
+def run_session(args: argparse.Namespace, cache: ReplyCache, instance: str, secret: str) -> None:
     with socket.create_connection((args.host, args.port), timeout=10) as sock:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        session = ExecSession(sock, mt5, cache, instance, args.symbol or "")
+        session = ExecSession(sock, mt5, cache, instance, secret, args.symbol or "")
         session.hello()
         log("EXEC_SESSION_STARTED", host=args.host, port=args.port, instance=instance)
         interval = args.poll_ms / 1000.0
@@ -737,7 +759,22 @@ def main() -> int:
     parser.add_argument("--symbol", default=None, help="symbol to watch until quantick names one")
     parser.add_argument("--poll-ms", type=float, default=50.0, help="how often requests and state are pumped")
     parser.add_argument("--retry-seconds", type=float, default=2.0)
+    parser.add_argument(
+        "--secret-file",
+        required=True,
+        help="file holding quantick's per-run secret (quantick passes it; its log names it)",
+    )
     args = parser.parse_args()
+    try:
+        secret = read_secret(args.secret_file)
+    except (OSError, ValueError) as error:
+        log(
+            "EXEC_SECRET_UNREADABLE",
+            path=args.secret_file,
+            reason=str(error),
+            hint="start the bridge with the path quantick logged as MT5_EXEC_SECRET_PUBLISHED",
+        )
+        return 2
     if mt5 is None:
         log("BRIDGE_NO_MT5_PACKAGE", hint="pip install MetaTrader5")
         return 2
@@ -751,7 +788,7 @@ def main() -> int:
     try:
         while True:
             try:
-                run_session(args, cache, instance)
+                run_session(args, cache, instance, secret)
             except BridgeExit:
                 return 2
             except (ConnectionError, OSError, socket.timeout) as error:
