@@ -495,7 +495,7 @@ else
     git -C "$root/readcost" config core.autocrlf false
     git -C "$root/readcost" config core.safecrlf false
     mkdir -p "$root/readcost/crates/core/src" \
-        "$root/readcost/docs/quality/read-cost" \
+        "$root/readcost/docs/quality/read-cost/ledger.d" \
         "$root/readcost/tools/read_cost" \
         "$root/readcost/tools/outside_score"
     # Every module, not the three the advisory needed on the day this was
@@ -517,10 +517,10 @@ else
     git -C "$root/readcost" add -A
     git -C "$root/readcost" commit -qm "touch one file that reads another"
 
-    # set_ceiling <number> — the whole ledger the advisory reads.
+    # set_ceiling <number> — the ledger README, all the advisory reads.
     set_ceiling() {
         printf '<!-- read-cost-ceiling:v1 %s -->\n' "$1" \
-            > "$root/readcost/docs/quality/read-cost/ledger.md"
+            > "$root/readcost/docs/quality/read-cost/ledger.d/README.md"
     }
 
     set_ceiling 1
@@ -544,7 +544,7 @@ else
         pr-gate "$(json_bash "$root/readcost" "gh pr create --draft --fill")" silent
     git -C "$root/readcost" checkout -q feat/readcost
 
-    rm -f "$root/readcost/docs/quality/read-cost/ledger.md"
+    rm -f "$root/readcost/docs/quality/read-cost/ledger.d/README.md"
     run "no recorded ceiling is silence, not a finding" \
         pr-gate "$(json_bash "$root/readcost" "gh pr create --draft --fill")" silent
 

@@ -397,7 +397,7 @@ jobs:
         run: |
           python3 tools/read_cost/report.py comment \
             --json artifacts/read-cost.json \
-            --ledger docs/quality/read-cost/ledger.md > artifacts/read-cost.md
+            --ledger docs/quality/read-cost/ledger.d > artifacts/read-cost.md
           python3 - <<'PY' > artifacts/read-cost-comment.json
           import json, pathlib
           body = pathlib.Path("artifacts/read-cost.md").read_text(encoding="utf-8")
@@ -449,7 +449,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: read-cost-ledger-${{ github.sha }}
-          path: docs/quality/read-cost/ledger.md
+          path: docs/quality/read-cost/ledger.d/
 
   ci:
     needs: classify

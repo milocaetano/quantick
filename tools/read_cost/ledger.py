@@ -2,15 +2,18 @@
 """The committed record of what each merged pull request cost to read.
 
 One row per merged pull request, so the trend is in the repository rather
-than in thirty expired artifact downloads. The same file carries the ceiling
-the feature-branch warning is measured against, as a marker line, because a
+than in thirty expired artifact downloads. The ledger is a directory: each row
+is its own ``<pr>.md``, so two pull requests that each record a row write
+disjoint paths and never conflict. Its ``README.md`` carries the ceiling the
+feature-branch warning is measured against, as a marker line, because a
 number that lives in two places drifts and the first symptom is a warning
 nobody can reproduce.
 
 Rows are generated from the first-parent history of ``origin/main`` after
-merging, never by feature pull requests. ``backfill`` preserves existing
-rows and the manually chosen ceiling; CI publishes the updated file as an
-artifact, and a separate maintenance PR can retain it in the repository.
+merging, never by feature pull requests. ``backfill`` only adds row files: it
+never rewrites an existing one or the README with the manually chosen
+ceiling; CI publishes the updated directory as an artifact, and a separate
+maintenance PR can retain it in the repository.
 
 The ceiling is not computed here on every run. It was chosen once from the
 backfill — the median of the ``feat/`` and ``fix/`` rows, rounded to the
@@ -31,7 +34,12 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_PATH = "docs/quality/read-cost/ledger.md"
+DEFAULT_PATH = "docs/quality/read-cost/ledger.d"
+# The ledger's prose and ceiling. Never a row file, so no backfill touches it.
+CEILING_FILE = "README.md"
+# A row file is named by its pull request's number and nothing else; any other
+# file in the directory is not read for rows.
+ROW_FILE = re.compile(r"^(\d+)\.md$")
 # The recorded ceiling, as data on its own line. A marker rather than prose so
 # the hook reads the same bytes a person does and neither has to guess which
 # sentence held the number.
@@ -67,14 +75,15 @@ def read(path):
         return stream.read()
 
 
-def ceiling_or_none(path):
+def ceiling_or_none(directory):
     """The recorded ceiling, or ``None`` when there is not one to read.
 
-    Missing file, unreadable file and missing marker all answer ``None``. The
-    callers are advisory and must not turn their own absence into a finding.
+    Missing directory, unreadable README and missing marker all answer
+    ``None``. The callers are advisory and must not turn their own absence
+    into a finding.
     """
     try:
-        found = CEILING_MARKER.search(read(path))
+        found = CEILING_MARKER.search(read(os.path.join(directory, CEILING_FILE)))
     except OSError:
         return None
     return int(found.group(1)) if found else None
@@ -93,6 +102,28 @@ def parse_rows(text):
         row["read_cost"] = int(row["read_cost"])
         row["changed"] = int(row["changed"])
         rows.append(row)
+    return rows
+
+
+def row_path(directory, pr):
+    return os.path.join(directory, f"{int(pr)}.md")
+
+
+def load_rows(directory):
+    """Every recorded row, in pull-request order.
+
+    Read from the row files alone, so prose in the README can never be
+    mistaken for a row, and ordered by number rather than by name, so 999
+    stays before 1000.
+    """
+    numbers = sorted(
+        int(found.group(1))
+        for found in map(ROW_FILE.match, os.listdir(directory))
+        if found
+    )
+    rows = []
+    for number in numbers:
+        rows.extend(parse_rows(read(row_path(directory, number))))
     return rows
 
 
@@ -119,20 +150,20 @@ def row_from_report(report, pr, branch, base_ref, date):
     }
 
 
-def append_row(path, row):
-    """Append one row, unless that pull request already has one.
+def write_row(directory, row):
+    """Write one pull request's row file, unless that file already exists.
 
     Idempotent on the pull-request number because a workflow re-run is an
     ordinary event and a ledger that double-counts a merge misreports the
-    median that the ceiling comes from.
+    median that the ceiling comes from. Only this pull request's own path is
+    written, so a second pull request's row never touches it.
     """
-    text = read(path)
-    if any(existing["pr"] == row["pr"] for existing in parse_rows(text)):
+    try:
+        with open(row_path(directory, row["pr"]), "x", encoding="utf-8",
+                  newline="\n") as stream:
+            stream.write(f"{HEADING}\n{RULE}\n{format_row(row)}\n")
+    except FileExistsError:
         return False
-    if not text.endswith("\n"):
-        text += "\n"
-    with open(path, "w", encoding="utf-8", newline="\n") as stream:
-        stream.write(text + format_row(row) + "\n")
     return True
 
 
@@ -214,13 +245,13 @@ def merged_pull_for_commit(repo, sha):
     return None
 
 
-def backfill(repo, path, limit):
+def backfill(repo, directory, limit):
     # Pin the history before consulting GitHub. Unmerged branches and merges
     # into integration branches cannot add their own rows.
     commits = MEASURE.git(
         repo, "rev-list", "--first-parent", f"--max-count={limit}", "origin/main"
     ).splitlines()
-    existing = {row["pr"] for row in parse_rows(read(path))}
+    existing = {row["pr"] for row in load_rows(directory)}
     rows = []
     for sha in reversed(commits):
         pull = merged_pull_for_commit(repo, sha)
@@ -238,13 +269,13 @@ def backfill(repo, path, limit):
         print(f"#{number}: {report['production_lines']} lines measured", file=sys.stderr)
     # A failed lookup or measurement leaves the ledger untouched.
     for row in rows:
-        append_row(path, row)
+        write_row(directory, row)
     return len(rows)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ledger", default=DEFAULT_PATH, help="the ledger file")
+    parser.add_argument("--ledger", default=DEFAULT_PATH, help="the ledger directory")
     modes = parser.add_subparsers(dest="mode", required=True)
 
     fill = modes.add_parser("backfill", help="record merged PRs from the last N origin/main commits")
@@ -266,7 +297,7 @@ def main(argv=None):
             return 1
         return 0
     if args.mode == "median":
-        suggestion = suggested_ceiling(parse_rows(read(args.ledger)))
+        suggestion = suggested_ceiling(load_rows(args.ledger))
         if suggestion is None:
             parser.exit(2, "error: the ledger holds no feature rows\n")
         print(

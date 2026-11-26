@@ -69,7 +69,7 @@ def comment(report, ceiling=None):
         lines += [
             f"Feature-branch ceiling: {ceiling} — this change is {verdict} it. "
             "The ceiling never blocks; it is the median of the feature pull "
-            "requests in `docs/quality/read-cost/ledger.md`.",
+            "requests in `docs/quality/read-cost/ledger.d/`.",
             "",
         ]
     if top:
@@ -110,7 +110,7 @@ def ceiling_warning(report, ceiling, branch):
         f"Read cost: this branch asks a reader to hold "
         f"{report['production_lines']} production lines, over the "
         f"{ceiling} ceiling for feature branches in "
-        "docs/quality/read-cost/ledger.md. Nothing is blocked. The largest "
+        "docs/quality/read-cost/ledger.d/. Nothing is blocked. The largest "
         "files it pulls in by reference alone, which is what detaching "
         f"something would remove:{detail}"
     )
@@ -122,14 +122,14 @@ def main(argv=None):
 
     body = modes.add_parser("comment", help="render the sticky PR comment")
     body.add_argument("--json", required=True, help="a measure.py report")
-    body.add_argument("--ledger", help="ledger to read the ceiling from")
+    body.add_argument("--ledger", help="ledger directory to read the ceiling from")
 
     warn = modes.add_parser("warn", help="the pr-gate advisory, as a JSON string")
     warn.add_argument("--repo", required=True, help="path to the Git repository")
     warn.add_argument("--base", required=True, help="base revision")
     warn.add_argument("--head", required=True, help="head revision")
     warn.add_argument("--branch", required=True, help="the branch being shipped")
-    warn.add_argument("--ledger", help="ledger to read the ceiling from")
+    warn.add_argument("--ledger", help="ledger directory to read the ceiling from")
 
     modes.add_parser("marker", help="print the sticky comment's key")
 

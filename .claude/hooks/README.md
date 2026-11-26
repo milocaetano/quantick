@@ -342,7 +342,7 @@ including on a draft, where it decides nothing at all — it asks
 `tools/read_cost/report.py` how many production lines this branch asks a
 reader to hold: the files it changed, plus the files those directly
 reference. If the branch is a `feat/` or `fix/` branch and the number is over
-the ceiling recorded in `docs/quality/read-cost/ledger.md`, the hook prints
+the ceiling recorded in `docs/quality/read-cost/ledger.d/README.md`, the hook prints
 that number and the largest files the branch pulls in *by reference alone* —
 the ones it never edits and a reader still has to open, which is the only part
 of the number detaching something would lower.
@@ -369,7 +369,8 @@ it finds.
 
 CI posts the measurement as one sticky PR comment. After main pushes, the
 existing `read-cost-ledger` job generates rows from main history and uploads
-the ledger as an artifact for a separate maintenance PR. Feature PRs never
+the ledger directory as an artifact for a separate maintenance PR. Each row is
+its own `<pr>.md`, so two such PRs never touch one path. Feature PRs never
 owe a ledger row. The ceiling moves only in its own deliberate change;
 `python tools/read_cost/ledger.py median` prints what the rows suggest.
 

@@ -131,10 +131,13 @@ class Command(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = self.tmp.name
 
-    def ledger(self, text=CEILING_FILE, name="ledger.md"):
-        path = os.path.join(self.root, name)
-        write(path, text)
-        return path
+    def ledger(self, text=CEILING_FILE, name="ledger.d", rows=()):
+        """A ledger directory: ``text`` as its README, one file per row."""
+        directory = os.path.join(self.root, name)
+        write(os.path.join(directory, "README.md"), text)
+        for number, row in rows:
+            write(os.path.join(directory, f"{number}.md"), row + "\n")
+        return directory
 
     def json_report(self, data):
         path = os.path.join(self.root, "read-cost.json")
@@ -209,9 +212,8 @@ class Command(unittest.TestCase):
             measured([("crates/core/src/lib.rs", 10, ["touched"])])
         )
         recorded = self.ledger(
-            CEILING_FILE
-            + "\n| 42 | 2026-09-19 | feat/thing | main | 10 | 1 | \u2014 |\n",
-            name="recorded.md",
+            name="recorded.d",
+            rows=[(42, "| 42 | 2026-09-19 | feat/thing | main | 10 | 1 | \u2014 |")],
         )
 
         _, missing = captured(
@@ -281,7 +283,7 @@ class Command(unittest.TestCase):
         )
         absent = captured(
             arguments
-            + ["--branch", "feat/thing", "--ledger", os.path.join(self.root, "none.md")]
+            + ["--branch", "feat/thing", "--ledger", os.path.join(self.root, "none.d")]
         )
         broken = captured(
             [
