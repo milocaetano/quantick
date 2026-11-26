@@ -1,7 +1,7 @@
 # Delivery without repeated reconstruction
 
 This contract owns requirement reconciliation, review progress and validation.
-It changes no review role, merge authority, outcome or score rubric.
+It changes no review role, merge authority or outcome.
 
 ## Keep execution evidence out of Git
 

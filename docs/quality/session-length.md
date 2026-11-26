@@ -3,8 +3,8 @@
 Whether one live pane's per-print, per-depth-update and per-frame work grows
 as the session gets longer, measured by counting the work rather than timing
 it, and kept as a regression check that runs in the ordinary test step. It is
-the evidence for rubric criterion SE6 and, beside
-[the live envelope](live-envelope.md), for A+ gate 6.
+the evidence, beside [the live envelope](live-envelope.md), that the
+hot path stays flat as a session grows.
 
 Measured on `DESKTOP-BTVJFFR` (Intel Core i5-12400F, 31.8 GB, Windows 11 Pro)
 at `3013f342` of `perf/hot-path-session-length`, the last commit that changed

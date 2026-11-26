@@ -5,7 +5,7 @@ appending a print never copies the tape already held. That removes the
 UI-thread stall the contiguous `Vec<Trade>` put on the chart each time it
 doubled — 25 ms at print 2,097,152 and 52 ms at 4,194,304 on this host — and
 every consumer's output stays byte for byte what it was. It is the evidence
-for rubric criterion SE6 beside [the session-length page](session-length.md),
+beside [the session-length page](session-length.md), for
 the mission Q12 of campaign #367 (issue #423, the trader's decision D21: "no
 change visible to the trader").
 

@@ -175,9 +175,9 @@ The foreign-object tests prove real filesystem ownership checks used before
 directory enumeration and descriptor parsing. They **do not prove a
 foreign-created valid JSON descriptor traversing enumeration and connection**.
 No connection is attempted by these policy fixtures. Optional null/missing-DACL
-and missing-user-read variants are not included or claimed. This evidence does
-not automatically raise AP3; the integrated SHA must be reassessed under the
-unchanged rubric, retaining any stronger foreign-descriptor evidence gap.
+and missing-user-read variants are not included or claimed. This evidence
+proves only these fixtures; the integrated SHA still needs its own assessment,
+retaining any stronger foreign-descriptor evidence gap.
 
 The first source patch preceded persistence of the mission archive, despite
 completed arming, an earlier written preparation plan and a coordinator-recorded
