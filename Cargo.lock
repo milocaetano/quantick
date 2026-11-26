@@ -3006,6 +3006,7 @@ dependencies = [
  "quantick-replay",
  "quantick-sim",
  "quantick-strategy",
+ "quantick-trading",
  "rust_decimal",
 ]
 

@@ -163,6 +163,14 @@ fn push_metrics(out: &mut String, report: &PerformanceReport) {
             "  {left_label:<LABEL_WIDTH$}{left:<VALUE_WIDTH$}{right_label:<LABEL_WIDTH$}{right}"
         );
     };
+    // Every metric below reads a trade after its fees; this line is where
+    // the gross and the fees that made the net are shown.
+    row(
+        "gross points",
+        signed(report.gross_points),
+        "fees",
+        decimal(report.fees_points),
+    );
     row(
         "net points",
         signed(report.net_points),

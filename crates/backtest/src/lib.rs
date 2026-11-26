@@ -62,5 +62,7 @@ pub mod strategy;
 
 pub use bars::BarSpec;
 pub use report::{render_aggregate, render_run, render_session};
-pub use run::{Anomalies, Distribution, RunOutcome, SessionRun, run_session};
+pub use run::{
+    Anomalies, Distribution, RunOutcome, SessionRun, run_session, run_session_with_costs,
+};
 pub use strategy::{Account, BarView, Signals, SimPort, Strategy};

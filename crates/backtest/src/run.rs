@@ -17,6 +17,7 @@ use quantick_engine::{BarBuilderDiagnostics, Side};
 use quantick_indicators::{IndicatorHost, InstanceId};
 use quantick_replay::Session;
 use quantick_sim::{ClosedTrade, PerformanceReport, RejectReason, Simulator, VenueEvent};
+use quantick_trading::FillCosts;
 use rust_decimal::Decimal;
 
 use crate::strategy::{Account, Signals, SimPort, Strategy};
@@ -286,6 +287,21 @@ pub fn run_session(
     spec: impl Into<BarConfiguration>,
     strategy: &mut dyn Strategy,
 ) -> SessionRun {
+    run_session_with_costs(session, spec, strategy, FillCosts::default())
+}
+
+/// [`run_session`] on a simulator whose fills pay `costs`: slippage on
+/// market-style fills, conservative limits, a commission per side.
+///
+/// # Panics
+///
+/// As [`run_session`].
+pub fn run_session_with_costs(
+    session: &Session,
+    spec: impl Into<BarConfiguration>,
+    strategy: &mut dyn Strategy,
+    costs: FillCosts,
+) -> SessionRun {
     let spec = spec.into();
     assert!(
         BarInputAvailability::PRINTS
@@ -302,7 +318,7 @@ pub fn run_session(
         .into_iter()
         .map(|indicator| host.add(indicator))
         .collect();
-    let mut sim = Simulator::new();
+    let mut sim = Simulator::with_costs(costs);
     let mut anomalies = Anomalies::default();
     let mut bars = 0usize;
     let mut closed = Vec::new();

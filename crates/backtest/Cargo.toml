@@ -17,6 +17,7 @@ quantick-pine = { path = "../pine" }
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
 quantick-strategy = { path = "../strategy" }
+quantick-trading = { path = "../trading" }
 rust_decimal = { workspace = true }
 
 # The paper account's second consumer is proved by a test here

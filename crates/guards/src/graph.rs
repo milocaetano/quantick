@@ -304,6 +304,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "replay",
             "sim",
             "strategy",
+            "trading",
         ],
     ),
     // The repository guards. Empty for the same reason `control` is, but

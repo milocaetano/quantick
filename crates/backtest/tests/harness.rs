@@ -10,7 +10,7 @@ use std::path::Path;
 
 use quantick_backtest::bars::BarSpec;
 use quantick_backtest::report::{NOT_AVAILABLE, render_run, render_session};
-use quantick_backtest::run::{RunOutcome, run_session};
+use quantick_backtest::run::{RunOutcome, run_session, run_session_with_costs};
 use quantick_backtest::strategies::{EmaCross, ForceRegion, PlotSignal, Protection};
 use quantick_backtest::strategy::{BarView, Strategy};
 use quantick_engine::{Side, Trade};
@@ -21,6 +21,7 @@ use quantick_indicators::{
 use quantick_replay::format::{self, ParseOptions, UtcOffset, WriteHeader};
 use quantick_replay::session::Session;
 use quantick_sim::{Command, ExitReason};
+use quantick_trading::{Commission, FillCosts};
 use rust_decimal::Decimal;
 
 /// The 34-print opening auction the replay crate keeps as its own fixture.
@@ -952,4 +953,64 @@ fn a_deal_count_spec_is_refused_by_the_run_itself() {
     let session = synthetic(&tape_of(&["100", "101", "102"]));
     let mut strategy = EmaCross::new(3, 9, Decimal::ONE, Protection::default(), false);
     let _ = run_session(&session, BarSpec::Trades(10), &mut strategy);
+}
+
+/// Costs on: the entry slips two ticks, the conservative target waits for a
+/// print one tick through, both sides pay a commission, and the report
+/// shows the gross, the fees and the net they make.
+#[test]
+fn a_run_with_costs_books_slipped_fills_and_reports_gross_fees_and_net() {
+    let session = synthetic(&rising_tape(100, 60));
+    let order = || {
+        ScriptedOrders::new(vec![(
+            0,
+            Command::PlaceMarket {
+                side: Side::Buy,
+                quantity: Decimal::from(2),
+                bracket: quantick_sim::Bracket::whole(
+                    Some(Decimal::from(50)),
+                    Some(Decimal::from(130)),
+                ),
+            },
+        )])
+    };
+    let costs = FillCosts::new(
+        Commission::PerContract("0.5".parse().expect("fixture fee")),
+        2,
+        Some(Decimal::ONE),
+        true,
+    )
+    .expect("valid costs");
+
+    let run = run_session_with_costs(&session, BarSpec::Tick(10), &mut order(), costs);
+    let trade = &run.trades[0];
+    // Bar 0 closes on print 10; the order fills on print 11 at 110, two
+    // ticks worse. The target at 130 is touched by print 31 and filled by
+    // print 32 at 131, at its own price.
+    assert_eq!(trade.entry_price, Decimal::from(112));
+    assert_eq!(trade.exit_price, Decimal::from(130));
+    assert_eq!(trade.exit_reason, ExitReason::TakeProfit);
+    assert_eq!(trade.closed_ms - trade.opened_ms, 21_000);
+    assert_eq!(run.report.gross_points, Decimal::from(36));
+    assert_eq!(run.report.fees_points, Decimal::from(2));
+    assert_eq!(run.report.net_points, Decimal::from(34));
+    let text = render_session(&run);
+    assert!(text.contains("gross points      +36"), "{text}");
+    assert!(text.contains("fees              2"), "{text}");
+    assert!(text.contains("net points        +34"), "{text}");
+
+    let free = run_session_with_costs(
+        &session,
+        BarSpec::Tick(10),
+        &mut order(),
+        FillCosts::default(),
+    );
+    let plain = run_session(&session, BarSpec::Tick(10), &mut order());
+    assert_eq!(
+        format!("{free:?}"),
+        format!("{plain:?}"),
+        "free costs change nothing"
+    );
+    assert_eq!(plain.report.fees_points, Decimal::ZERO);
+    assert_eq!(plain.trades[0].entry_price, Decimal::from(110));
 }
