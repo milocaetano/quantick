@@ -23,6 +23,10 @@ pub enum ReportChange {
     /// Set the picked days outright; an empty set clears them.
     Days(DaySet),
     Period(ReportPeriod),
+    /// The symbols the report reads; empty reads them all.
+    Symbols(std::collections::BTreeSet<String>),
+    /// Merge every curve into one currency; `None` reads per asset.
+    Merge(Option<quantick_trading::Currency>),
 }
 
 /// Owned inspection of the current report without exposing its trade rows.
@@ -33,6 +37,10 @@ pub struct ReportReadout {
     pub loaded: bool,
     pub source: SourceSelection,
     pub symbol: Option<String>,
+    /// The symbols chosen; empty reads every symbol.
+    pub symbols: Vec<String>,
+    /// The merge in force and what it converted, with the currencies on offer.
+    pub merge: super::merge::MergeView,
     pub window: String,
     pub scope: Option<String>,
     pub trade_count: usize,

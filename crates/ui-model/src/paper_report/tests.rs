@@ -12,6 +12,7 @@ use quantick_trading::{ClosedTrade, ExitReason};
 use rust_decimal::Decimal;
 
 mod date_context;
+mod merge_controls;
 mod source_selection;
 
 #[test]
@@ -36,7 +37,10 @@ fn scoped_open_replaces_stale_filters_and_reloads_keep_the_exact_session() {
     rows[0].session = Some(key.clone());
     rows[1].session = Some(SessionKey::parse("X/other.csv").unwrap());
     let mut state = State::default();
-    Model::update(&mut state, Intent::Symbol(Some("X".to_owned())));
+    Model::update(
+        &mut state,
+        Intent::Symbols(BTreeSet::from(["X".to_owned()])),
+    );
     Model::update(&mut state, Intent::Source(SourceFilter::Replay.into()));
     Model::update(&mut state, Intent::Days(DaySet::single(day.offset_days(1))));
     let scoped = |rows| {
@@ -66,7 +70,7 @@ fn scoped_open_replaces_stale_filters_and_reloads_keep_the_exact_session() {
     );
     assert_eq!(
         Model::update(&mut state, Intent::JournalChanged).load,
-        Some(Load::Report(None))
+        Some(Load::Report(BTreeSet::new()))
     );
     rows[0].trade.pnl_points = Decimal::from(7);
     Model::update(&mut state, loaded_report(rows.clone()));
@@ -89,7 +93,7 @@ fn scoped_open_replaces_stale_filters_and_reloads_keep_the_exact_session() {
         };
         assert_eq!(
             Model::update(&mut state, intent).load,
-            Some(Load::Report(Some(symbol)))
+            Some(Load::Report(BTreeSet::from([symbol])))
         );
         assert!(state.report_open());
         assert!(state.report_scope().is_none());
@@ -135,11 +139,13 @@ fn both_ledger_gesture_paths_request_the_same_scoped_load_and_closes_refresh_the
 fn delivered_effects_keep_import_and_latest_present_outputs_after_local_loads() {
     let mut output = Effects::default();
     output.append_delivered(Effects {
-        load: Some(Load::Report(None)),
+        load: Some(Load::Report(BTreeSet::new())),
         start_import: true,
         toast: Some("first".to_owned()),
         ledger: Some(LedgerAction::OpenTicket),
-        pnl_primary: Some(quantick_paper::pnl::PnlPrimary::Money),
+        pnl_pick: Some(quantick_paper::pnl::PnlPick::Primary(
+            quantick_paper::pnl::PnlPrimary::Money,
+        )),
     });
     output.append_delivered(Effects::default());
     assert_eq!(
@@ -148,7 +154,9 @@ fn delivered_effects_keep_import_and_latest_present_outputs_after_local_loads() 
             start_import: true,
             toast: Some("first".to_owned()),
             ledger: Some(LedgerAction::OpenTicket),
-            pnl_primary: Some(quantick_paper::pnl::PnlPrimary::Money),
+            pnl_pick: Some(quantick_paper::pnl::PnlPick::Primary(
+                quantick_paper::pnl::PnlPrimary::Money
+            )),
             ..Default::default()
         }
     );
@@ -163,7 +171,9 @@ fn delivered_effects_keep_import_and_latest_present_outputs_after_local_loads() 
             start_import: true,
             toast: Some("latest".to_owned()),
             ledger: Some(LedgerAction::Navigate(10, 20)),
-            pnl_primary: Some(quantick_paper::pnl::PnlPrimary::Money),
+            pnl_pick: Some(quantick_paper::pnl::PnlPick::Primary(
+                quantick_paper::pnl::PnlPrimary::Money
+            )),
             ..Default::default()
         }
     );
@@ -340,7 +350,7 @@ fn the_report_reports_itself_as_data() {
     });
     Model::update(
         paper.report_state_mut(),
-        Intent::Symbol(Some("WINV26".to_owned())),
+        Intent::Symbols(BTreeSet::from(["WINV26".to_owned()])),
     );
 
     // The pills in force, no dates picked.
@@ -558,7 +568,10 @@ fn an_empty_report_names_why_and_offers_clear_only_when_narrowed() {
     let tz = TzOffset::new(0);
     let day = CivilDate::from_ymd(2026, 8, 12);
     let mut state = State::default();
-    Model::update(&mut state, Intent::Symbol(Some("X".to_owned())));
+    Model::update(
+        &mut state,
+        Intent::Symbols(BTreeSet::from(["X".to_owned()])),
+    );
     Model::update(&mut state, Intent::Period(ReportPeriod::All));
     assert!(
         !state.filters_narrowed("X"),
@@ -770,6 +783,7 @@ fn loaded_report(rows: Vec<HistoryRow>) -> Intent {
     Intent::LoadedReport(LoadedReport {
         history: history_rows(rows),
         symbols: vec!["X".to_owned()],
+        rates: Default::default(),
     })
 }
 fn loaded_ledger(rows: Vec<HistoryRow>) -> Intent {
@@ -802,7 +816,7 @@ fn paper_report_filters_calendar_and_snapshot_keep_one_owner() {
             session.with_local_effects(
                 &mut |mut effects| {
                     let receipt = effects.load.take().map(|request| {
-                        assert_eq!(request, Load::Report(Some("X".to_owned())));
+                        assert_eq!(request, Load::Report(BTreeSet::from(["X".to_owned()])));
                         requests += 1;
                         loaded.take().expect("one moved load")
                     });
@@ -940,16 +954,16 @@ fn paper_report_lifecycle_requests_reload_only_at_existing_boundaries() {
     }
     assert_eq!(
         Model::update(&mut state, Intent::Open("X".to_owned())).load,
-        Some(Load::Report(Some("X".to_owned())))
+        Some(Load::Report(BTreeSet::from(["X".to_owned()])))
     );
     assert_eq!(
         Model::update(&mut state, loaded_report(vec![])),
         Effects::default()
     );
-    Model::update(&mut state, Intent::Symbol(None));
+    Model::update(&mut state, Intent::Symbols(BTreeSet::new()));
     assert_eq!(
         Model::update(&mut state, Intent::Open("Y".to_owned())).load,
-        Some(Load::Report(None)),
+        Some(Load::Report(BTreeSet::new())),
         "later opens retain scope"
     );
     for intent in [
@@ -960,7 +974,7 @@ fn paper_report_lifecycle_requests_reload_only_at_existing_boundaries() {
     ] {
         assert_eq!(
             Model::update(&mut state, intent).load,
-            Some(Load::Report(None))
+            Some(Load::Report(BTreeSet::new()))
         );
     }
     Model::update(&mut state, Intent::Ledger(LedgerIntent::Pages(4)));

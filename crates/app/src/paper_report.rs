@@ -40,13 +40,6 @@ fn draw_history_warning(ui: &mut egui::Ui, history: &LoadedHistory) {
 }
 
 #[derive(Default)]
-pub(crate) struct ReportResponse {
-    pub start_import: bool,
-    pub toast: Option<String>,
-    pub pnl_primary: Option<quantick_paper::pnl::PnlPrimary>,
-}
-
-#[derive(Default)]
 struct NativeView {
     report_table_layout: Option<(egui::FontId, f32, f32, Vec<f32>)>,
     report_layout_revision: u64,
@@ -93,14 +86,6 @@ impl Paint<'_, '_> {
     fn ensure_report_view(&mut self, tz: TzOffset, pnl: PnlReader<'_>) {
         if let Some(receipt) = self.project_report(tz, pnl) {
             self.update(Intent::InstallReport(receipt));
-            if let Some(snapshot) = self.snapshot() {
-                tracing::info!(target: "quantick::app", schema_version = 1_u8,
-                    event_code = "PAPER_REPORT_CUT", symbol = snapshot.symbol.unwrap_or("*"),
-                    source = snapshot.source.label(), window = %snapshot.window.label(),
-                    trades = snapshot.rows.len(), hidden_outside = snapshot.hidden_outside,
-                    hidden_by_source_or_scope = snapshot.hidden_by_source_or_scope, net_points = %snapshot.report.net_points,
-                    "the trading performance report was re-cut");
-            }
         }
         if self.native.report_layout_revision != self.report_layout_revision() {
             self.native.report_table_layout = None;
@@ -195,13 +180,8 @@ impl ReportAdapter {
         ctx: &egui::Context,
         tz: TzOffset,
         env: &ReportEnv<'_>,
-    ) -> ReportResponse {
-        let (_, effects) = self.with(env, |paint| paint.draw_window(ctx, tz, env));
-        ReportResponse {
-            start_import: effects.start_import,
-            toast: effects.toast,
-            pnl_primary: effects.pnl_primary,
-        }
+    ) -> Effects {
+        self.with(env, |paint| paint.draw_window(ctx, tz, env)).1
     }
     pub(crate) fn draw_trades_tab(
         &mut self,
@@ -219,7 +199,7 @@ impl ReportAdapter {
 #[cfg(any(feature = "scenario-harness", test))]
 impl ReportAdapter {
     pub(crate) fn autostart_report(&mut self, env: &ReportEnv<'_>) {
-        self.update(Intent::Symbol(None));
+        self.update(Intent::Symbols(Default::default()));
         self.open(env);
     }
     pub(crate) fn autostart_calendar(&mut self, days: DaySet, env: &ReportEnv<'_>) {

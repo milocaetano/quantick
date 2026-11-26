@@ -593,8 +593,8 @@ impl PaperTrading {
         if let Some(message) = asked.toast {
             self.show_toast(message);
         }
-        if let Some(primary) = asked.pnl_primary {
-            self.paper.account.set_pnl_primary(primary);
+        if let Some(pick) = asked.pnl_pick {
+            self.paper.account.pick_pnl(pick);
             self.paper.desk.note_pnl_pick();
         }
     }

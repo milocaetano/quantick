@@ -30,12 +30,12 @@ pub(crate) fn restore_money(account: &mut quantick_paper::PaperAccount, state: &
         &state.instrument_money,
     ));
     let trader = (!cfg!(test)).then(|| crate::store_home::resolve(INSTRUMENTS_FILE));
-    let chosen = state.pnl_primary.as_deref();
-    account.set_pnl_settings(quantick_paper::pnl::PnlSettings::load(
-        INSTRUMENTS,
-        trader.as_deref(),
-        chosen,
-    ));
+    let pnl = quantick_paper::pnl::PnlSettings::restored(INSTRUMENTS, trader.as_deref(), state);
+    if !cfg!(test) {
+        let rates = quantick_paper::rates::store_path(account.trades_dir());
+        quantick_feed::rates::refresh_in_background(rates, pnl.catalog.currencies().pairs());
+    }
+    account.set_pnl_settings(pnl);
 }
 
 /// The paper-state file the app opens with and writes back to. Under test

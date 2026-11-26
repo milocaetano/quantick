@@ -58,9 +58,9 @@ const GRID_CORRECTION_STEPS: usize = 4;
 ///
 /// Carried with every money amount rather than beside it: an unlabelled
 /// currency figure is the data-honesty failure this whole module risks, and
-/// two amounts in different currencies must never be added. There is no
-/// exchange rate anywhere in this workspace, and this type is what makes
-/// that absence enforceable rather than merely intended.
+/// two amounts in different currencies must never be added. The one
+/// conversion is a merged report's, at a rate from [`crate::rates`] the
+/// trader asked for; this type is what keeps every other sum in one currency.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Currency(String);
 

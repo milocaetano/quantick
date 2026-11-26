@@ -54,3 +54,26 @@ pub fn load(dir: &Path, symbol: Option<&str>, exclude: &[PathBuf]) -> LoadedHist
         .sort_by_key(|row| (row.trade.closed_ms, row.trade.opened_ms));
     history
 }
+
+/// The report's symbol filter read from disk: every folder of each chosen
+/// symbol, in both journals, merged into one closing-order timeline; an
+/// empty choice reads them all.
+pub fn load_symbols(dir: &Path, symbols: &std::collections::BTreeSet<String>) -> LoadedHistory {
+    let mut chosen = symbols.iter();
+    let Some(first) = chosen.next() else {
+        return load(dir, None, &[]);
+    };
+    let mut history = load(dir, Some(first), &[]);
+    for symbol in chosen {
+        let more = load(dir, Some(symbol), &[]);
+        history.files += more.files;
+        history.unreadable_files += more.unreadable_files;
+        history.problem_rows += more.problem_rows;
+        history.rows.extend(more.rows);
+        history.sessions.extend(more.sessions);
+    }
+    history
+        .rows
+        .sort_by_key(|row| (row.trade.closed_ms, row.trade.opened_ms));
+    history
+}

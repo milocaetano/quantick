@@ -6,17 +6,23 @@ use quantick_control::{
 };
 use quantick_control_host::{admission::known_error, journal::NewEvent, wire::canonical_decimal};
 use quantick_control_schema::session_reports::{
-    EVENT_KIND, ReportInput, ReportOrigin as WireOrigin, ReportOutput, ReportResult, descriptor,
+    EVENT_KIND, MergedWire, RateUsedWire, ReportInput, ReportOrigin as WireOrigin, ReportOutput,
+    ReportResult, UnconvertedWire, descriptor,
 };
+use quantick_paper::pnl::PnlPick;
+use quantick_paper::rates::Currency;
 use quantick_paper::report::{
     ReportPeriod,
     calendar::{DaySet, MAX_LISTED_DAYS},
+    journals,
+    merge::{MAX_LISTED, MergeReadout, Unconvertible},
     parse_period,
     scope::{self, ReportOrigin, ReportRequest},
     session_edit::SessionEditError,
     sessions::SessionKey,
-    snapshot::ReportChange,
+    snapshot::{ReportChange, ReportReadout},
 };
+use quantick_session::paper::SharedChange;
 use serde_json::{Value, json};
 
 use crate::{dock::ActionDock, notify::NotifyAccess, trade::PaperHost};
@@ -54,6 +60,7 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
         input,
         ReportInput::Sources { sources: None } | ReportInput::Inspect {}
     );
+    let mut picked = None;
     let output = match input {
         ReportInput::Sources { sources } => {
             if sources.as_ref().is_some_and(|sources| sources.len() > 5) {
@@ -72,6 +79,40 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
             report(desk, "sources", sources.map(ReportChange::Sources), tz)?
         }
         ReportInput::Inspect {} => report(desk, "inspect", None, tz)?,
+        ReportInput::Symbols { symbols } => {
+            let known = journals::symbols(&dir);
+            if let Some(unknown) = symbols.iter().find(|symbol| !known.contains(symbol)) {
+                let mut error = invalid("unknown_symbol", &format!("no journal holds {unknown}"));
+                error.context.details = Some(json!({"code": "unknown_symbol", "symbols": known}));
+                return Err(error);
+            }
+            let change = ReportChange::Symbols(symbols.into_iter().collect());
+            report(desk, "symbols", Some(change), tz)?
+        }
+        ReportInput::Merge { currency: None } => {
+            report(desk, "merge", Some(ReportChange::Merge(None)), tz)?
+        }
+        ReportInput::Merge {
+            currency: Some(code),
+        } => {
+            let before = desk.report_change(None, tz).merge.request;
+            let currency = Currency::new(&code);
+            let view = desk.report_change(Some(ReportChange::Merge(currency.clone())), tz);
+            let Some(currency) =
+                currency.filter(|currency| view.merge.currencies.contains(currency))
+            else {
+                desk.report_change(Some(ReportChange::Merge(before)), tz);
+                let offered: Vec<&str> = view.merge.currencies.iter().map(Currency::code).collect();
+                let mut error = invalid("invalid_currency", &format!("{code} is not on offer"));
+                error.context.details =
+                    Some(json!({"code": "invalid_currency", "currencies": offered}));
+                return Err(error);
+            };
+            desk.account_mut()
+                .pick_pnl(PnlPick::MergeCurrency(currency.clone()));
+            picked = Some(currency);
+            readout(view, "merge", tz)
+        }
         ReportInput::Days { days } => {
             let days = DaySet::parse_list(&days)
                 .map_err(|error| invalid("invalid_dates", &error.to_string()))?;
@@ -137,6 +178,10 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
             scoped(desk, &dir, tz, ReportRequest::Tag { origin, tag })?
         }
     };
+    if picked.is_some() {
+        // Merge all's next default, saved and fanned out like the ticket's switch.
+        owner.persist(SharedChange::RiskSettings);
+    }
     let result = serde_json::to_value(output)
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     if !inspect_only {
@@ -162,7 +207,10 @@ fn report(
     change: Option<ReportChange>,
     tz: quantick_civil::TzOffset,
 ) -> Result<ReportOutput, ControlError> {
-    let view = desk.report_change(change, tz);
+    Ok(readout(desk.report_change(change, tz), action, tz))
+}
+
+fn readout(view: ReportReadout, action: &str, tz: quantick_civil::TzOffset) -> ReportOutput {
     use quantick_control_schema::journal_sessions::JournalSourceFilter as WireSource;
     let sources = [WireSource::Broker, WireSource::Real, WireSource::Replay]
         .into_iter()
@@ -171,7 +219,7 @@ fn report(
                 .contains(crate::journal_sessions::source_filter(*source))
         })
         .collect();
-    Ok(ReportOutput::Sources {
+    ReportOutput::Sources {
         action: action.to_owned(),
         // The newest days, still oldest first: the edge of a long pick is
         // the one a caller acts on, and the count says how many came before.
@@ -183,6 +231,21 @@ fn report(
             .collect(),
         applied_day_count: WireU64::new(view.days.len() as u64),
         timezone: tz.label(),
+        symbols: view.symbols,
+        currencies: (view.merge.currencies.iter())
+            .map(|currency| currency.code().to_owned())
+            .collect(),
+        merge: view
+            .merge
+            .request
+            .as_ref()
+            .map(|currency| currency.code().to_owned()),
+        merged: view
+            .merge
+            .readout
+            .as_ref()
+            .map(|readout| Box::new(merged(readout))),
+        merge_note: view.merge.note.map(str::to_owned),
         sources,
         open: view.open,
         loaded: view.loaded,
@@ -193,7 +256,46 @@ fn report(
         unreadable_files: WireU64::new(view.unreadable_files as u64),
         skipped_rows: WireU64::new(view.skipped_rows as u64),
         net_points: canonical_decimal(view.net_points),
-    })
+    }
+}
+
+/// A merge's readout on the wire: rates per day, newest kept past the cap.
+fn merged(readout: &MergeReadout) -> MergedWire {
+    let skip = readout.rates.len().saturating_sub(MAX_LISTED);
+    MergedWire {
+        currency: readout.currency.code().to_owned(),
+        assets: (readout.assets.iter())
+            .map(|(symbol, currency)| [symbol.clone(), currency.code().to_owned()])
+            .collect(),
+        rates: (readout.rates.iter().skip(skip))
+            .map(|rate| RateUsedWire {
+                day: rate.day.iso(),
+                from: rate.from.code().to_owned(),
+                to: rate.to.code().to_owned(),
+                rate: canonical_decimal(rate.rate),
+            })
+            .collect(),
+        rate_count: WireU64::new(readout.rates.len() as u64),
+        unconverted: (readout.unconverted.iter().take(MAX_LISTED))
+            .map(|entry| UnconvertedWire {
+                symbol: entry.symbol.clone(),
+                day: entry.day.iso(),
+                reason: match entry.why {
+                    Unconvertible::PointValueUnset => "point_value_unset",
+                    Unconvertible::NoRate(_) => "no_rate",
+                }
+                .to_owned(),
+                from: match &entry.why {
+                    Unconvertible::NoRate(from) => Some(from.code().to_owned()),
+                    Unconvertible::PointValueUnset => None,
+                },
+                trades: WireU64::new(entry.trades as u64),
+            })
+            .collect(),
+        unconverted_count: WireU64::new(readout.unconverted.len() as u64),
+        net: canonical_decimal(readout.net),
+        caption: readout.caption(),
+    }
 }
 
 fn key(session: String) -> Result<SessionKey, ControlError> {

@@ -7,6 +7,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# The civil day a stored exchange rate belongs to.
+quantick-civil = { path = "../civil" }
 quantick-engine = { path = "../engine" }
 rust_decimal = { workspace = true }
 # The order vocabulary as the trade calls' wire says it (`wire`).
