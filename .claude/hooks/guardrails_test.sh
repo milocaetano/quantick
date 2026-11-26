@@ -784,6 +784,86 @@ for read in \
         pr-gate "$(json_bash "$root/wt" "$read")" silent
 done
 
+# The cases below are written as the shell reads them; `json_cmd` escapes
+# them into the payload, so a quote or backslash in a case is the shell's.
+json_cmd() {
+    json_bash "$1" "$(printf '%s' "$2" |
+        sed 's/\\/\\\\/g; s/"/\\"/g' |
+        awk 'BEGIN { ORS = "" } { if (NR > 1) printf "\\n"; print }')"
+}
+
+# Spellings the shell runs as a merge that a word-level reading misses: a
+# quoted heredoc delimiter, bare arithmetic, `$'...'`, a leading redirect, a
+# function body, `coproc`, long wrapper options, `-c --`, shell option
+# arguments, `env --split-string` and `cmd //c`. Each still reaches the
+# main-merge refusal.
+for spelling in \
+    'cat <<\EOF
+hi
+EOF
+gh pr merge 42 --admin' \
+    'cat <<E"O"F
+hi
+EOF
+gh pr merge 42' \
+    '((a=1<<2))
+gh pr merge 42 --admin' \
+    "echo \$'it\\'s' ; gh pr merge 42 --admin" \
+    '>/dev/null gh pr merge 42 --admin' \
+    '2>&1 gh pr merge 42' \
+    'function f { gh pr merge 42; }; f' \
+    'coproc gh pr merge 42' \
+    'env --unset FOO gh pr merge 42' \
+    'env --chdir /tmp gh pr merge 42' \
+    'timeout --signal KILL 5 gh pr merge 42' \
+    "bash -c -- 'gh pr merge 42'" \
+    "bash -O extglob -c 'gh pr merge 42'" \
+    "env --split-string='gh pr merge 42'" \
+    "cmd //c 'gh pr merge 42'" \
+    "pwsh -Command 'gh pr merge 42'"; do
+    run "the gate sees the merge in: $spelling" \
+        pr-gate "$(json_cmd "$root/wt" "$spelling")" deny "reserved exclusively"
+done
+
+run "gh pr new is gh pr create" \
+    pr-gate "$(json_cmd "$root/wt" 'gh pr new --title x --body y')" deny "code-review-ok"
+
+for write in \
+    "touch $wt_git_dir/code-revi''ew-ok" \
+    "exec 3>$wt_git_dir/code-review-ok; echo k >&3" \
+    "sh -c \"echo k >&2\" 2>$wt_git_dir/code-review-ok" \
+    "echo k >| $wt_git_dir/code-review-ok" \
+    "echo k >&$wt_git_dir/code-review-ok" \
+    "touch $wt_git_dir/code-review-o{k,}" \
+    "curl -so $wt_git_dir/code-review-ok file:///tmp/k" \
+    "sort -o $wt_git_dir/code-review-ok /tmp/k"; do
+    run "an agent cannot write the marker: $write" \
+        pr-gate "$(json_cmd "$root/wt" "$write")" deny "An agent never writes it"
+done
+
+for api in \
+    "g\$'h' api -X PUT repos/o/r/pulls/42/merge" \
+    "gh api graphql -f query='mutation{merge''PullRequest(input:{})}'" \
+    'gh api graphql -f query="$(cat /tmp/m.graphql)"' \
+    'gh api graphql -f query="$Q"' \
+    "gh api /graphql -f query='mutation{mergePullRequest(input:{})}'" \
+    "gh api https://api.github.com/graphql -f query='mutation{enqueuePullRequest(input:{})}'"; do
+    run "gh api cannot ship a PR: $api" \
+        pr-gate "$(json_cmd "$root/wt" "$api")" deny "gh api"
+done
+
+# Recognition is not proof: a gated spelling left in text the splitter did not
+# read as a statement asks the user, and beside a gated statement it refuses.
+# Text inside a `git` statement is a commit message and passes.
+run "an unrecognised mention of a gated call asks" \
+    pr-gate "$(json_cmd "$root/wt" 'echo "gh pr merge 42"')" ask "cannot tell"
+run "an unrecognised marker write asks" \
+    pr-gate "$(json_cmd "$root/wt" 'echo "touch code-review-ok" | xargs -I{} sh -c {}')" ask "cannot tell"
+run "an unrecognised gated call beside a gated statement is refused" \
+    pr-gate "$(json_cmd "$root/wt" 'gh pr create --draft --fill; echo "gh pr ready 42"')" deny "Run the gated command alone"
+run "a git statement's own text is a commit message" \
+    pr-gate "$(json_cmd "$root/wt" 'git commit -m "mentions gh pr merge 42 and code-review-ok > x"')" silent
+
 # A merge to main is refused before the marker is read or `gh` runs, so the
 # hook's timeout cannot let it through: no marker, a `gh` that would hang, and
 # the denial still names the user.

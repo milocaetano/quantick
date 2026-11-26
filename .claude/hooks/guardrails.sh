@@ -198,31 +198,30 @@ json_command() {
 # wherever the shell would run it and nowhere it is merely mentioned:
 #
 #   split on `&&`, `||`, `;`, `|`, `&`, `(`, `)`, a backtick and a line break,
-#     but never inside quotes or `$((...))`, so a commit message naming
+#     but never inside quotes (`$'...'` too), arithmetic `((...))` or a
+#     redirect such as `>|`, `>&` or `&>`, so a commit message naming
 #     `gh pr merge` stays one statement that runs `git`;
-#   a heredoc body is data and is dropped, inside `"$(...)"` too, unless a
-#     shell or `source` named unquoted on the same line could read it;
-#   `{`, `!`, `if`, `then`, `else`, `elif`, `do`, `while`, `until`, `time`,
-#     `nohup`, `winpty`, `exec`, `command`, `builtin`, `sudo`, `env`,
-#     `timeout`, `nice`, `stdbuf` with their options (and the option
-#     arguments and duration they take) and `VAR=value` words are stripped
-#     from the front;
-#   a command word spelled with quotes, as a path or with `.exe` is reduced to
-#     its lower-case name, and `gh`'s flags before its subcommand move after it;
-#   `bash -c '...'`, `sh -lc "..."` (any shell, any option cluster with `c`),
-#     `env -S '...'` and `eval ...` are unwrapped and their script split the
+#   a heredoc body is data, inside `"$(cat <<EOF ...)"` too, unless a shell
+#     or `source` named unquoted on the same line could read it; it is printed
+#     as `#data <owner> <body>` for the caller's fallback;
+#   control-flow keywords, `{`, `!`, `function NAME`, `coproc`, leading
+#     redirects, the wrappers `time`, `nohup`, `winpty`, `exec`, `command`,
+#     `builtin`, `sudo`, `env`, `timeout`, `nice`, `stdbuf` with their options,
+#     option arguments and duration, and `VAR=value` words are stripped;
+#   a command word spelled with quotes, `$'...'`, as a path or with `.exe` is
+#     reduced to its lower-case name, `gh`'s flags before its subcommand move
+#     after it, and `gh pr new` reads as `gh pr create`;
+#   `bash -c '...'` (any shell, any option cluster with `c`), `env -S`,
+#     `cmd /c`, `pwsh -c` and `eval` are unwrapped and their script split the
 #     same way.
 #
 # A statement that writes the review marker also prints `#writes-marker`: a
-# redirect of stdout to it, a file-writing tool or interpreter naming it, or an
-# assignment naming it. The name is compared unquoted and case-insensitively,
-# and a glob on the `code-review` stem counts as naming it.
+# redirect to it, a file-writing tool or interpreter naming it, or an
+# assignment naming it. The name is compared unquoted, without braces and
+# case-insensitively, and a glob on the `code-review` stem counts.
 #
-# What it cannot see, by design: a program read from a file, from a pipe into
-# a shell, or by another interpreter (`echo ... | sh`, `python -c`, `xargs`), a
-# command substitution inside double quotes, a command word or marker name
-# built by expansion (`$G pr merge`, `$'\x67h'`), aliases and functions. The
-# markers are workflow evidence, not a security boundary; see README.md.
+# This is recognition, not proof: `pr_gate` asks rather than passes when a
+# gated spelling survives in text this did not recognise as a statement.
 shell_statements() {
     printf '%s' "$1" | awk '
         function trim(t) { sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t); return t }
@@ -234,6 +233,8 @@ shell_statements() {
             return w
         }
         function is_shell(w) { return w ~ /^(sh|bash|dash|zsh|ksh|ash)$/ }
+        # The character that closes quote state `q`; `$` is `$'"'"'...'"'"'`.
+        function closer(q) { return q == "$" ? "\047" : q }
         # Split `t` into words[1..nw], quotes kept, quote-aware.
         function words_of(t,    i, n, c, q, w, nw) {
             delete words
@@ -241,11 +242,12 @@ shell_statements() {
             for (i = 1; i <= n; i++) {
                 c = substr(t, i, 1)
                 if (q != "") {
-                    if (q == "\"" && c == "\\" && i < n) { w = w c substr(t, ++i, 1); continue }
-                    if (c == q) q = ""
+                    if (q != "\047" && c == "\\" && i < n) { w = w c substr(t, ++i, 1); continue }
+                    if (c == closer(q)) q = ""
                     w = w c; continue
                 }
                 if (c == "\\" && i < n) { w = w c substr(t, ++i, 1); continue }
+                if (c == "$" && substr(t, i + 1, 1) == "\047") { q = "$"; w = w c "\047"; i++; continue }
                 if (c == "\047" || c == "\"") { q = c; w = w c; continue }
                 if (c == " " || c == "\t") { if (w != "") words[++nw] = w; w = ""; continue }
                 w = w c
@@ -254,7 +256,7 @@ shell_statements() {
             return nw
         }
         # What the shell passes for word `w`: quotes removed, escapes applied.
-        # `$'...'` keeps only what its escapes spell literally.
+        # `$'"'"'...'"'"'` keeps only what its escapes spell literally.
         function unquote(w,    i, n, c, q, out) {
             n = length(w); q = ""; out = ""
             for (i = 1; i <= n; i++) {
@@ -278,28 +280,33 @@ shell_statements() {
             return out
         }
         function names_marker(w) {
-            w = tolower(unquote(w))
+            w = tolower(unquote(w)); gsub(/[{},]/, "", w)
             return w ~ /code-review-ok/ || w ~ /code-review[^ ]*[*?[]/
         }
+        function is_redirect(w) { return w ~ /^[0-9]*(&?>>?|>[|&]|<&?|<>|&>>?)/ }
         # True when words[k..nw] write the marker.
-        function writes_marker(k, nw,    j, w, u, b, p, tgt, tool, inplace) {
+        function writes_marker(k, nw,    j, w, u, p, tgt, b, tool, inplace) {
             for (j = k; j <= nw; j++) {
                 w = words[j]
                 gsub("\"[^\"]*\"|\047[^\047]*\047", "", w)
                 if (!index(w, ">")) continue
                 u = unquote(words[j]); p = index(u, ">")
-                # Only stdout: `2>/dev/null` beside a read is not a write.
-                if (substr(u, 1, p - 1) ~ /[02-9]$/) continue
-                tgt = substr(u, p + 1); sub(/^[>|]/, "", tgt)
+                tgt = substr(u, p + 1); sub(/^[>|&]/, "", tgt)
                 if (tgt == "" && j < nw) tgt = words[j + 1]
                 if (names_marker(tgt)) return 1
             }
             b = base(unquote(words[k]))
-            tool = b ~ /^(tee|cp|mv|install|ln|touch|dd|truncate|rsync|python|python3|py|perl|ruby|node|pwsh|powershell|cmd)$/
+            tool = b ~ /^(tee|cp|mv|install|ln|touch|dd|truncate|rsync|curl|wget|sort|tar|unzip|cpio|python|python3|py|perl|ruby|node|pwsh|powershell|cmd)$/
             for (j = k + 1; j <= nw; j++) if (b == "sed" && words[j] ~ /^(-[a-z]*i|--in-place)/) inplace = 1
             if (!tool && !inplace) return 0
             for (j = k + 1; j <= nw; j++) if (names_marker(words[j])) return 1
             return 0
+        }
+        # The words after words[j] as one script, for an unwrapped wrapper.
+        function tail_from(j, nw,    rest) {
+            rest = ""
+            for (; j <= nw; j++) rest = rest " " words[j]
+            return rest
         }
         # Print statement `t` from its command word, or split what it unwraps.
         function emit(t, depth,    nw, k, w, b, o, cmd, j, j0, rest, opts, assign) {
@@ -309,20 +316,27 @@ shell_statements() {
             k = 1; assign = 0
             while (k <= nw) {
                 w = unquote(words[k]); b = base(w)
-                if (w ~ /^(\{|!|if|then|else|elif|do|while|until)$/) { k++; continue }
+                if (w ~ /^(\{|!|if|then|else|elif|do|while|until|coproc)$/) { k++; continue }
+                if (w == "function") { k += 2; continue }
+                if (is_redirect(words[k])) {
+                    if (names_marker(words[k]) || (words[k] ~ />$/ && names_marker(words[k + 1]))) assign = 1
+                    k += (words[k] ~ /[<>&]$/) ? 2 : 1
+                    continue
+                }
                 if (w ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { if (names_marker(w)) assign = 1; k++; continue }
                 if (b ~ /^(time|nohup|winpty|exec|command|builtin|sudo|env|timeout|nice|stdbuf)$/) {
                     k++
                     while (k <= nw && words[k] ~ /^-/) {
                         o = words[k]; k++
                         if (o == "--") break
-                        if (b == "env" && o ~ /^-S/) {
-                            rest = (o == "-S") ? unquote(words[k++]) : unquote(substr(o, 3))
-                            for (j = k; j <= nw; j++) rest = rest " " words[j]
-                            if (depth < 8) split_all(rest, depth + 1)
+                        if (b == "env" && (o ~ /^-S/ || o ~ /^--split-string/)) {
+                            if (o == "-S" || o == "--split-string") rest = unquote(words[k++])
+                            else { rest = o; sub(/^(-S|--split-string=)/, "", rest); rest = unquote(rest) }
+                            if (depth < 8) split_all(rest tail_from(k, nw), depth + 1)
                             return
                         }
-                        if ((b == "env" && o ~ /^-[uCP]$/) || (b == "exec" && o == "-a") ||
+                        if (o ~ /^--[a-z-]+$/ && o ~ /^--(unset|chdir|signal|kill-after|user|group|adjustment|input|output|error|prompt|other-user|close-from|host)$/) k++
+                        else if ((b == "env" && o ~ /^-[uCP]$/) || (b == "exec" && o == "-a") ||
                             (b == "sudo" && o ~ /^-[ugCDhprtU]$/) || (b == "timeout" && o ~ /^-[sk]$/) ||
                             (b == "nice" && o == "-n") || (b == "stdbuf" && o ~ /^-[ioe]$/)) k++
                     }
@@ -339,13 +353,21 @@ shell_statements() {
             if (depth < 8 && is_shell(cmd)) {
                 for (j = k + 1; j <= nw; j++) {
                     if (words[j] ~ /^-[A-Za-z]*c[A-Za-z]*$/) {
+                        if (words[j + 1] == "--") j++
                         if (j < nw) split_all(unquote(words[j + 1]), depth + 1)
                         return
                     }
-                    if (words[j] == "-o" || words[j] == "+o") { j++; continue }
+                    if (words[j] ~ /^([-+]o|[-+]O|--rcfile|--init-file)$/) { j++; continue }
                     if (words[j] !~ /^[-+]/) break
                 }
             }
+            # Windows shells: `cmd /c ...` and `pwsh -c ...` run their rest.
+            if (depth < 8 && cmd == "cmd")
+                for (j = k + 1; j <= nw; j++)
+                    if (tolower(unquote(words[j])) ~ /^\/\/?[ck]$/) { split_all(unquote(tail_from(j + 1, nw)), depth + 1); return }
+            if (depth < 8 && cmd ~ /^(pwsh|powershell)$/)
+                for (j = k + 1; j <= nw; j++)
+                    if (tolower(words[j]) ~ /^-(c|command)$/) { split_all(unquote(tail_from(j + 1, nw)), depth + 1); return }
             if (depth < 8 && cmd == "eval") {
                 rest = ""
                 for (j = k + 1; j <= nw; j++) rest = rest " " unquote(words[j])
@@ -367,52 +389,86 @@ shell_statements() {
             for (j = j0; j <= nw && j <= j0 + 1; j++) {
                 w = words[j]
                 if (unquote(w) !~ /[ \t]/) w = unquote(w)
+                # gh'"'"'s own alias for `gh pr create`.
+                if (cmd == "gh" && j == j0 + 1 && w == "new" && rest == "gh pr") w = "create"
                 rest = rest " " w
             }
             rest = rest opts
             for (j = j0 + 2; j <= nw; j++) rest = rest " " words[j]
             print rest
         }
-        # Record a heredoc opened at `s[i]`; return the index after its word.
-        function heredoc(s, i, n, depth,    j, ds, dw, dq) {
+        # Record a heredoc opened at `s[i]` by the statement `owner`; return
+        # the index after its delimiter word, which is unquoted as the shell does.
+        function heredoc(s, i, n, depth, owner,    j, ds, dw, c, q) {
             j = i + 2; ds = 0
             if (substr(s, j, 1) == "-") { ds = 1; j++ }
             while (substr(s, j, 1) == " " || substr(s, j, 1) == "\t") j++
-            dw = ""; dq = substr(s, j, 1)
-            if (dq == "\047" || dq == "\"") {
-                for (j++; j <= n && substr(s, j, 1) != dq; j++) dw = dw substr(s, j, 1)
-                j++
-            } else {
-                for (; j <= n && substr(s, j, 1) !~ /[ \t\n;&|<>()]/; j++) dw = dw substr(s, j, 1)
+            dw = ""; q = ""
+            for (; j <= n; j++) {
+                c = substr(s, j, 1)
+                if (q != "") { if (c == q) q = ""; dw = dw c; continue }
+                if (c == "\\" && j < n) { dw = dw c substr(s, ++j, 1); continue }
+                if (c == "\047" || c == "\"") { q = c; dw = dw c; continue }
+                if (c ~ /[ \t\n;&|<>()]/) break
+                dw = dw c
             }
-            if (dw != "") { hdn[depth]++; delim[depth, hdn[depth]] = dw; dstrip[depth, hdn[depth]] = ds }
+            dw = unquote(dw)
+            if (dw != "") {
+                hdn[depth]++
+                delim[depth, hdn[depth]] = dw; dstrip[depth, hdn[depth]] = ds
+                downer[depth, hdn[depth]] = owner
+            }
             return j
         }
-        # Skip the pending heredoc bodies after the newline at `s[i]`.
-        function skip_bodies(s, i, n, depth,    d, e, line) {
+        # Skip the pending heredoc bodies after the newline at `s[i]`, printing
+        # each as `#data <owner> <body>`.
+        function skip_bodies(s, i, n, depth,    d, e, line, body) {
             for (d = 1; d <= hdn[depth]; d++) {
+                body = ""
                 while (i < n) {
                     e = index(substr(s, i + 1), "\n")
                     line = e ? substr(s, i + 1, e - 1) : substr(s, i + 1)
                     i = e ? i + e : n
                     if (dstrip[depth, d]) sub(/^\t+/, "", line)
                     if (line == delim[depth, d]) break
+                    body = body " " line
                 }
+                print "#data " downer[depth, d] body
             }
             hdn[depth] = 0
             return i
         }
-        function split_all(s, depth,    n, i, c, q, cur, uq, line_shell, j, p) {
+        # The command word a statement in progress would run, for a heredoc.
+        function owner_of(t,    nw, k) {
+            nw = words_of(trim(t))
+            for (k = 1; k <= nw && unquote(words[k]) ~ /^([A-Za-z_][A-Za-z0-9_]*=|\{|!|if|then|do|while|until)/; k++) ;
+            return k <= nw ? base(unquote(words[k])) : "-"
+        }
+        # Arithmetic: return the index of the `)` closing the `((` at `s[i]`.
+        function arith_end(s, i, n,    j, p) {
+            p = 0
+            for (j = i; j <= n; j++) {
+                if (substr(s, j, 1) == "(") p++
+                else if (substr(s, j, 1) == ")" && --p == 0) return j
+            }
+            return n
+        }
+        function split_all(s, depth,    n, i, c, q, cur, uq, line_shell, j) {
             n = length(s); q = ""; cur = ""; uq = ""; line_shell = 0; hdn[depth] = 0
             for (i = 1; i <= n; i++) {
                 c = substr(s, i, 1)
                 if (q == "\047") { if (c == q) q = ""; cur = cur (c == "\n" ? " " : c); continue }
+                if (q == "$") {
+                    if (c == "\\" && i < n) { cur = cur c substr(s, ++i, 1); continue }
+                    if (c == "\047") q = ""
+                    cur = cur (c == "\n" ? " " : c); continue
+                }
                 if (q == "\"") {
                     if (c == "\\" && i < n) { cur = cur c substr(s, ++i, 1); continue }
                     # `"$(cat <<EOF ...)"`: the body is the message, never
                     # quotes. Only inside an open `$(`: a quoted `a << b` is text.
                     if (substr(s, i, 2) == "<<" && substr(s, i, 3) != "<<<" && cur ~ /\$\([^)]*$/) {
-                        j = heredoc(s, i, n, depth); cur = cur substr(s, i, j - i); i = j - 1; continue
+                        j = heredoc(s, i, n, depth, owner_of(cur)); cur = cur substr(s, i, j - i); i = j - 1; continue
                     }
                     if (c == "\n" && hdn[depth] > 0) { i = skip_bodies(s, i, n, depth); cur = cur " "; continue }
                     if (c == q) q = ""
@@ -422,14 +478,11 @@ shell_statements() {
                     if (substr(s, i + 1, 1) == "\n") { i++; cur = cur " "; continue }
                     cur = cur c substr(s, ++i, 1); uq = uq " "; continue
                 }
+                if (c == "$" && substr(s, i + 1, 1) == "\047") { q = "$"; cur = cur c "\047"; uq = uq " "; i++; continue }
                 if (c == "\047" || c == "\"") { q = c; cur = cur c; uq = uq " "; continue }
-                # Arithmetic is one word: `$((1<<1))` opens no heredoc.
-                if (substr(s, i, 3) == "$((") {
-                    p = 0
-                    for (j = i + 1; j <= n; j++) {
-                        if (substr(s, j, 1) == "(") p++
-                        else if (substr(s, j, 1) == ")" && --p == 0) break
-                    }
+                # Arithmetic is one word: `$((1<<1))` and `((a<<2))` open no heredoc.
+                if (substr(s, i, 3) == "$((" || (substr(s, i, 2) == "((" && trim(cur) == "")) {
+                    j = arith_end(s, i + (c == "$"), n)
                     cur = cur substr(s, i, j - i + 1); uq = uq " "; i = j; continue
                 }
                 if (c == "#" && (cur == "" || cur ~ /[ \t]$/)) {
@@ -437,7 +490,11 @@ shell_statements() {
                     continue
                 }
                 if (substr(s, i, 2) == "<<" && substr(s, i, 3) != "<<<") {
-                    j = heredoc(s, i, n, depth); cur = cur substr(s, i, j - i); i = j - 1; continue
+                    j = heredoc(s, i, n, depth, owner_of(cur)); cur = cur substr(s, i, j - i); i = j - 1; continue
+                }
+                # `>|`, `>&`, `<&` and `&>` are redirects, not separators.
+                if ((c == "|" || c == "&") && cur ~ /[<>]$/ || (c == "&" && substr(s, i + 1, 1) == ">")) {
+                    cur = cur c; uq = uq c; continue
                 }
                 if (c ~ /[;|&()`\n]/) {
                     if (uq ~ /(^|[ \/\\])(sh|bash|dash|zsh|ksh|ash|source|\.)(\.exe)?([ \t]|$)/) line_shell = 1
@@ -735,20 +792,32 @@ writes_marker() {
     printf '%s\n' "$1" | grep -qx '#writes-marker'
 }
 
+# True when statements `$1`, outside those already judged and outside `git`
+# statements and their heredocs, still spell a gated call or a marker write
+# once flattened. See its use in `pr_gate`.
+unknown_gated() {
+    printf '%s\n' "$1" |
+        grep -vE '^(git( |$)|#data git |#writes-marker$|gh pr (merge|ready|create)( |$)|gh api( |$))' |
+        tr -d "'\"\\\\\$\`{}," | tr 'A-Z\t' 'a-z ' |
+        sed 's/[0-9]*>>* *\/dev\/null//g; s/[0-9]*>&[0-9]//g' |
+        grep -qE 'gh +pr +(merge|ready|create|new)|gh +api.*(/merge|graphql|draft)|code-review-ok.*(>|(^| )(tee|cp|mv|install|ln|touch|dd|truncate|rsync|curl|wget|sort|tar|unzip|cpio|python3?|py|perl|ruby|node|pwsh|powershell|cmd|exec)( |$)|sed .*-i)|((>|(^| )(tee|cp|mv|install|ln|touch|dd|truncate|rsync|curl|wget|sort|tar|unzip|cpio|python3?|py|perl|ruby|node|pwsh|powershell|cmd|exec) ).*code-review-ok)'
+}
+
 # True when a `gh api` statement in `$1` merges, enqueues or un-drafts a PR: a
 # PUT to REST `pulls/<n>/merge`; a `draft=` field, or a PATCH with `--input`,
-# on `pulls/<n>`; or a GraphQL call naming the merge, auto-merge, enqueue or
-# ready mutations, or reading its query from a file the gate cannot see.
-# Reads stay ungated.
+# on `pulls/<n>`; or a GraphQL call (`graphql`, `/graphql` or a URL) naming
+# the merge, auto-merge, enqueue or ready mutations, or taking its query from
+# a file or an expansion the gate cannot read. Matched with quotes removed, so
+# `merge''PullRequest` is the mutation it spells. Reads stay ungated.
 api_ships_pr() {
     printf '%s\n' "$1" | awk '
         /^gh api([ \t]|$)/ {
-            s = tolower($0)
+            s = tolower($0); gsub(/["\047\\]/, "", s)
+            if (s ~ /[ \t](https?:\/\/[^ \t]*)?\/?graphql([ \t?]|$)/ && s ~ /mergepullrequest|enablepullrequestautomerge|enqueuepullrequest|markpullrequestreadyforreview|--input|query=@|\$/) hit = 1
             pull = s ~ /pulls\/[^\/ \t"\047?]+([ \t"\047?]|$)/
             if (s ~ /pulls\/[^\/ \t]+\/merge/ && s ~ /(-x|--method)[= ]?["\047]?put/) hit = 1
             if (pull && s ~ /(-f|--field|--raw-field)[= ]?["\047]?draft=/) hit = 1
             if (pull && s ~ /--input/ && s ~ /(-x|--method)[= ]?["\047]?patch/) hit = 1
-            if (s ~ /^gh api graphql/ && s ~ /mergepullrequest|enablepullrequestautomerge|enqueuepullrequest|markpullrequestreadyforreview|--input|query=@/) hit = 1
         }
         END { exit !hit }'
 }
@@ -898,11 +967,11 @@ pass_pr_gate() {
 pr_gate() {
     gate_raw=$(json_string_field command)
     # Every Bash call passes here, and each spawn costs tens of milliseconds on
-    # Windows. A command that never spells `gh`, the marker or a word broken
-    # by a quote or escape after a `g` (`g\h`, `"g"h`), nor the marker's
-    # `review` stem in any case, runs none of them.
+    # Windows. A command with no `gh` or `review` in any case, and no quote,
+    # escape, `$`, backtick, brace or glob that could build either, runs none
+    # of them. A JSON quote is `\"`, so it counts as an escape here.
     case "$gate_raw" in
-        *[gG][hH]* | *[gG][\\\"\']* | *[rR][eE][vV][iI][eE][wW]*) ;;
+        *[gG][hH]* | *[rR][eE][vV][iI][eE][wW]* | *[\\\'\$\`{?*[]*) ;;
         *) exit 0 ;;
     esac
     command=$(json_command "$gate_raw")
@@ -917,6 +986,16 @@ pr_gate() {
     # with none of the flags this gate reads, so it never carries them.
     api_ships_pr "$gate_lines" &&
         deny '"`gh api` does not merge, enqueue or un-draft a PR past this gate; use `gh pr merge` or `gh pr ready <number>`, which it checks."'
+
+    # Recognition is not proof. Text the splitter did not read as a gated
+    # statement, flattened (quotes, escapes, `$`, braces and commas removed,
+    # lower-cased), still spelling a gated call or a marker write means the
+    # gate cannot tell what runs, and unknown is not a pass: ask. Statements
+    # it already judged, and `git` statements with their heredocs, whose text
+    # is a commit message, are not rescanned. Beside a recognised gated
+    # statement it is a refusal, since the two cannot share one check.
+    gate_unknown=
+    unknown_gated "$gate_lines" && gate_unknown=1
 
     # Which of the three the command is, because they are gated differently:
     # `create` opens the PR that carries the findings, while `ready` and
@@ -933,9 +1012,13 @@ pr_gate() {
         gate_action=ready
     elif has_statement "$gate_lines" "gh pr create"; then
         gate_action=create
+    elif [ -n "$gate_unknown" ]; then
+        ask "\"pr-gate cannot tell whether this command runs \`gh pr merge|ready|create\`, a \`gh api\` merge or un-draft, or writes \`$IMPLEMENT_MARKER\`. Run a gated command as its own plain statement; approve only if the text merely mentions one.\""
     else
         exit 0
     fi
+    [ -z "$gate_unknown" ] ||
+        deny '"Run the gated command alone: something beside it spells another gated call or a marker write the gate cannot read, and the two cannot share one check."'
 
     # Phase one ends at a draft PR, and a draft ships nothing: it cannot be
     # merged, and `gh pr ready` below is where the review is wanted.
