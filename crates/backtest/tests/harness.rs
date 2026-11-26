@@ -991,7 +991,7 @@ fn a_run_with_costs_books_slipped_fills_and_reports_gross_fees_and_net() {
     assert_eq!(trade.exit_price, Decimal::from(130));
     assert_eq!(trade.exit_reason, ExitReason::TakeProfit);
     assert_eq!(trade.closed_ms - trade.opened_ms, 21_000);
-    assert_eq!(run.report.gross_points, Decimal::from(36));
+    assert_eq!(run.report.gross_points(), Decimal::from(36));
     assert_eq!(run.report.fees_points, Decimal::from(2));
     assert_eq!(run.report.net_points, Decimal::from(34));
     let text = render_session(&run);

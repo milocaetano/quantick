@@ -39,7 +39,7 @@ pub fn metric_rows(report: &PerformanceReport) -> Vec<MetricRow> {
         "gross / fees / net",
         format!(
             "{} / {} / {} pts",
-            fmt_signed_points(report.gross_points),
+            fmt_signed_points(report.gross_points()),
             fmt_points(report.fees_points),
             fmt_signed_points(report.net_points)
         ),

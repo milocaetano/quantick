@@ -34,12 +34,9 @@ pub struct PerformanceReport {
     pub scratches: u64,
     pub long_trades: u64,
     pub short_trades: u64,
-    /// Sum of every trade's points after fees, signed:
-    /// `gross_points − fees_points`.
+    /// Sum of every trade's points after fees, signed.
     pub net_points: Decimal,
-    /// Sum of every trade's points before fees, signed.
-    pub gross_points: Decimal,
-    /// Sum of every trade's fees (≥ 0).
+    /// Sum of every trade's fees (≥ 0); see [`Self::gross_points`].
     pub fees_points: Decimal,
     /// Sum of winning trades' points (≥ 0).
     pub gross_profit: Decimal,
@@ -188,6 +185,13 @@ fn mean_ms(sum: i128, count: u64) -> Option<i64> {
 }
 
 impl PerformanceReport {
+    /// Sum of every trade's points before fees, signed: the net with the
+    /// fees put back.
+    #[must_use]
+    pub fn gross_points(&self) -> Decimal {
+        self.net_points.saturating_add(self.fees_points)
+    }
+
     /// Aggregate `trades` in the order given — drawdown, run-up and streaks
     /// depend on it, and the caller keeps history in closing order.
     #[must_use]
@@ -223,12 +227,10 @@ impl PerformanceReport {
         let mut losers_with_mfe = 0u64;
 
         let mut reason_tallies: [(u64, Decimal); EXIT_REASONS.len()] = Default::default();
-        let mut gross_points = Decimal::ZERO;
         let mut fees_points = Decimal::ZERO;
 
         for (index, trade) in trades.iter().enumerate() {
             let points = trade.net_points();
-            gross_points = gross_points.saturating_add(trade.pnl_points);
             fees_points = fees_points.saturating_add(trade.fees_points);
             all.add(points);
             match trade.side {
@@ -321,7 +323,6 @@ impl PerformanceReport {
             long_trades: long.trades,
             short_trades: short.trades,
             net_points: all.net,
-            gross_points,
             fees_points,
             gross_profit: all.gross_profit,
             gross_loss: all.gross_loss,
@@ -657,7 +658,7 @@ mod tests {
         let mut clear = trade(Side::Sell, 10);
         clear.fees_points = Decimal::from(2);
         let report = PerformanceReport::from_trades(&[thin, clear]);
-        assert_eq!(report.gross_points, Decimal::from(11));
+        assert_eq!(report.gross_points(), Decimal::from(11));
         assert_eq!(report.fees_points, Decimal::from(4));
         assert_eq!(report.net_points, Decimal::from(7));
         assert_eq!(

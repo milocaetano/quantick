@@ -167,7 +167,7 @@ fn push_metrics(out: &mut String, report: &PerformanceReport) {
     // the gross and the fees that made the net are shown.
     row(
         "gross points",
-        signed(report.gross_points),
+        signed(report.gross_points()),
         "fees",
         decimal(report.fees_points),
     );
