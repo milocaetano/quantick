@@ -345,7 +345,7 @@ fn paper_report_immediate_journal_and_export_paths_use_nested_model() {
     paper.redirect_history_dir(dir.path().to_path_buf());
     paper.set_symbol("X");
     let saved = history::write_header("X", history::SessionSource::Live)
-        + "1000,2000,long,1,100,105,5,manual,,,,\n";
+        + "1000,2000,long,1,100,105,5,manual,,,,,0\n";
     dir.write("X/saved.csv", &saved);
     {
         let (report, env) = paper.report_parts();

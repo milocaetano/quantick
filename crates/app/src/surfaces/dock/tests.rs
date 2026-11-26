@@ -497,7 +497,7 @@ fn paper_report_composition_preserves_account_lifetime_and_tail_registration() {
         paper.set_symbol(symbol);
         let text =
             quantick_sim::history::write_header(symbol, quantick_sim::history::SessionSource::Live)
-                + "1000,2000,long,1,100,105,5,manual,,,,\n";
+                + "1000,2000,long,1,100,105,5,manual,,,,,0\n";
         dir.write(format!("{symbol}/saved.csv"), &text);
         let (report, env) = paper.report_parts();
         report.open(&env);
