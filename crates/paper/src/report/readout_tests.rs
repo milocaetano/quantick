@@ -78,6 +78,7 @@ impl World {
             settings: PnlSettings {
                 catalog: Arc::clone(&catalog),
                 chosen,
+                ..PnlSettings::default()
             },
             catalog,
         }

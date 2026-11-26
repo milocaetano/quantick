@@ -1,5 +1,6 @@
 //! Synchronous journal loads shared by native and headless report hosts.
 use quantick_paper::report::snapshot::{ReportChange, ReportEnv, ReportReadout};
+use quantick_paper::rates;
 use quantick_paper::report::{journals, scope};
 
 use super::{Effects, Intent, Load, LoadedLedger, LoadedReport};
@@ -16,6 +17,8 @@ pub fn report(
             ReportChange::Sources(sources) => Intent::Source(sources),
             ReportChange::Days(days) => Intent::Days(days),
             ReportChange::Period(period) => Intent::Period(period),
+            ReportChange::Symbols(symbols) => Intent::Symbols(symbols),
+            ReportChange::Merge(currency) => Intent::Merge(currency),
         };
         updates.update(intent);
         if reload || !updates.state().report_open() || updates.state().report().is_none() {
@@ -35,7 +38,9 @@ pub fn report(
         open: state.report_open(),
         loaded: state.report().is_some(),
         source: state.report_source(),
-        symbol: state.report_symbol().clone(),
+        symbol: state.report_symbol().map(str::to_owned),
+        symbols: state.report_symbols_chosen().iter().cloned().collect(),
+        merge: view.map(|view| view.merge.clone()).unwrap_or_default(),
         window: if state.picked_days().is_empty() {
             state.report_period().phrase()
         } else {
@@ -61,9 +66,10 @@ pub fn local_effects(mut effects: Effects, env: &ReportEnv<'_>) -> (Effects, Opt
             Ok(prepared) => Intent::Scoped(Box::new(prepared)),
             Err(error) => Intent::Toast(format!("Report: {error}")),
         },
-        Load::Report(symbol) => Intent::LoadedReport(LoadedReport {
-            history: journals::load(env.dir, symbol.as_deref(), &[]),
+        Load::Report(symbols) => Intent::LoadedReport(LoadedReport {
+            history: journals::load_symbols(env.dir, &symbols),
             symbols: journals::symbols(env.dir),
+            rates: rates::read_store(&rates::store_path(env.dir)),
         }),
         Load::Ledger(scope) => Intent::LoadedLedger(LoadedLedger::new(
             journals::load(env.dir, scope.folder(env.symbol), env.session_journal_paths),

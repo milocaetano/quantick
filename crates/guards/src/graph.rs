@@ -243,8 +243,9 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
         ],
     ),
     // The venue-neutral trading vocabulary sits beside `engine`, not above
-    // it: it is what `sim` and the broker adapter both speak.
-    ("trading", &["engine"]),
+    // it: it is what `sim` and the broker adapter both speak. `civil` for
+    // the day a stored exchange rate belongs to.
+    ("trading", &["civil", "engine"]),
     ("sim", &["engine", "trading"]),
     // The MetaTrader 5 broker venue, the second `TradingVenue`. Its decisions
     // are a pure state machine; its transport owns one loopback socket and

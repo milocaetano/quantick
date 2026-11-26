@@ -44,6 +44,7 @@ pub mod metatrader;
 pub mod mt5_bridge;
 pub mod notice_report;
 pub mod ohlcv_plan;
+pub mod rates;
 pub mod replay;
 pub mod replay_desk;
 pub mod replay_download;

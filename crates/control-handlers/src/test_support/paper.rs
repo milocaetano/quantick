@@ -106,6 +106,11 @@ pub(crate) struct PaperDesk {
     pub reports: Vec<quantick_paper::report::scope::ReportReceipt>,
     /// The days the last `ReportChange::Days` set, read back as applied.
     pub report_days: quantick_paper::report::calendar::DaySet,
+    /// The symbols the last `ReportChange::Symbols` chose.
+    pub report_symbols: Vec<String>,
+    /// The merge the last `ReportChange::Merge` asked for; BRL and USD are
+    /// on offer, and a merge reads back one USDT→BRL rate.
+    pub report_merge: Option<quantick_paper::rates::Currency>,
     pub paper: TabPaper,
     pub view: LedgerView,
     pub outcomes: Vec<TradeOutcome>,
@@ -116,6 +121,8 @@ impl PaperDesk {
         Self {
             reports: Vec::new(),
             report_days: Default::default(),
+            report_symbols: Vec::new(),
+            report_merge: None,
             paper: TabPaper::new(account),
             view: LedgerView::default(),
             outcomes: Vec::new(),
@@ -149,7 +156,37 @@ impl TradeDesk for PaperDesk {
                 self.report_days = days;
                 None
             }
+            Some(ReportChange::Symbols(symbols)) => {
+                self.report_symbols = symbols.into_iter().collect();
+                None
+            }
+            Some(ReportChange::Merge(currency)) => {
+                self.report_merge = currency;
+                None
+            }
             _ => None,
+        };
+        let code = |text| quantick_paper::rates::Currency::new(text).expect("fixture code");
+        let day = quantick_civil::CivilDate::from_ymd(2026, 11, 20);
+        let merge = quantick_paper::report::merge::MergeView {
+            request: self.report_merge.clone(),
+            readout: self.report_merge.clone().map(|currency| {
+                use quantick_paper::report::merge::{MergeReadout, RateUsed};
+                MergeReadout {
+                    currency,
+                    assets: vec![("BTCUSDT".to_owned(), code("USDT"))],
+                    rates: vec![RateUsed {
+                        day,
+                        from: code("USDT"),
+                        to: code("BRL"),
+                        rate: Decimal::new(58, 1),
+                    }],
+                    unconverted: Vec::new(),
+                    net: Decimal::new(58, 0),
+                }
+            }),
+            currencies: vec![code("BRL"), code("USD")],
+            ..Default::default()
         };
         quantick_paper::report::snapshot::ReportReadout {
             days: self.report_days.clone(),
@@ -157,6 +194,8 @@ impl TradeDesk for PaperDesk {
             loaded: false,
             source: sources.unwrap_or_default(),
             symbol: None,
+            symbols: self.report_symbols.clone(),
+            merge,
             window: "everything saved".to_owned(),
             scope: None,
             trade_count: 0,

@@ -3,7 +3,8 @@
 use std::collections::BTreeSet;
 
 use quantick_civil::{CivilDate, TzOffset};
-use quantick_paper::pnl::{PnlKey, PnlPrimary, PnlReader};
+use quantick_paper::pnl::{PnlKey, PnlPick, PnlPrimary, PnlReader};
+use quantick_paper::rates::{Currency, RateStore, StoredRates, USD};
 use quantick_paper::report::calendar::{
     CalendarState, DayIndex, DayPick, DaySelection, DaySet, MonthPicker,
 };
@@ -35,7 +36,8 @@ struct ReportFilter {
 
 enum ReportSymbol {
     FirstOpen,
-    Selected(Option<String>),
+    /// The symbols chosen; empty reads every symbol.
+    Selected(BTreeSet<String>),
 }
 
 /// Cached presentation can be read by a host, but changes enter as intents.
@@ -67,6 +69,10 @@ pub struct State {
     report_symbol: ReportSymbol,
     report_symbols: Vec<String>,
     report: Option<LoadedHistory>,
+    /// The rates store read with the history, for a merge.
+    report_rates: RateStore,
+    /// Merge every curve into this currency; `None` reads per asset.
+    merge: Option<Currency>,
     report_generation: u64,
     report_view: Option<ReportView>,
     report_layout_revision: u64,
@@ -105,6 +111,8 @@ impl Default for State {
             report_symbol: ReportSymbol::FirstOpen,
             report_symbols: Vec::new(),
             report: None,
+            report_rates: RateStore::default(),
+            merge: None,
             report_generation: 0,
             report_view: None,
             report_layout_revision: 0,
@@ -139,7 +147,8 @@ pub enum LedgerAction {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Load {
     Scoped(ReportRequest, TzOffset),
-    Report(Option<String>),
+    /// The chosen symbols' history and the rates store; empty reads all.
+    Report(BTreeSet<String>),
     Ledger(LedgerScope),
 }
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -148,9 +157,10 @@ pub struct Effects {
     pub start_import: bool,
     pub toast: Option<String>,
     pub ledger: Option<LedgerAction>,
-    /// The figure the trader picked on the report's P&L switch; the host
-    /// applies it app-wide, as the ticket's switch does.
-    pub pnl_primary: Option<PnlPrimary>,
+    /// A P&L choice the trader made on the report — the figure on its
+    /// switch, the currency it merges in; the host applies it app-wide and
+    /// persists it, as the ticket's switch does.
+    pub pnl_pick: Option<PnlPick>,
 }
 impl Effects {
     /// Collect outputs after the local handler has completed synchronous loads.
@@ -162,8 +172,8 @@ impl Effects {
         if effects.ledger.is_some() {
             self.ledger = effects.ledger;
         }
-        if effects.pnl_primary.is_some() {
-            self.pnl_primary = effects.pnl_primary;
+        if effects.pnl_pick.is_some() {
+            self.pnl_pick = effects.pnl_pick;
         }
     }
 }
@@ -171,6 +181,7 @@ impl Effects {
 pub struct LoadedReport {
     pub history: LoadedHistory,
     pub symbols: Vec<String>,
+    pub rates: RateStore,
 }
 pub struct LoadedLedger {
     history: LoadedHistory,
@@ -212,7 +223,16 @@ pub enum Intent {
     LoadedLedger(LoadedLedger),
     InstallReport(ReportProjection),
     InstallLedger(LedgerProjection),
-    Symbol(Option<String>),
+    /// Choose the symbols outright; empty reads every symbol.
+    Symbols(BTreeSet<String>),
+    /// Tick or untick one symbol of the multi-select.
+    ToggleSymbol(String),
+    /// Per asset (`None`) or Merge all in a currency, as the switch and a
+    /// call set it.
+    Merge(Option<Currency>),
+    /// The currency combo's pick: merge in it, or per asset where it is
+    /// the one asset's own; the host persists it as the next default.
+    MergeCurrency(Currency),
     Source(SourceSelection),
     Period(ReportPeriod),
     CustomText(String),
@@ -328,7 +348,7 @@ impl State {
     fn clear_filters(&mut self, symbol: String) {
         self.filter.scope = None;
         self.report_days_key = None;
-        self.report_symbol = ReportSymbol::Selected((!symbol.is_empty()).then_some(symbol));
+        self.report_symbol = ReportSymbol::Selected(chart_only(symbol));
         self.set_period(ReportPeriod::All);
         self.filter.source = SourceFilter::Real.into();
     }
@@ -336,7 +356,7 @@ impl State {
     fn install_scoped(&mut self, prepared: PreparedReport) {
         let request = &prepared.receipt.request;
         self.report_open = true;
-        self.report_symbol = ReportSymbol::Selected(None);
+        self.report_symbol = ReportSymbol::Selected(BTreeSet::new());
         self.filter.period = ReportPeriod::All;
         self.filter.source = request.source().into();
         self.filter.custom_text.clear();
@@ -389,10 +409,81 @@ impl State {
     pub fn report_open(&self) -> bool {
         self.report_open
     }
-    pub fn report_symbol(&self) -> &Option<String> {
+    /// The symbols chosen; empty reads every symbol.
+    pub fn report_symbols_chosen(&self) -> &BTreeSet<String> {
+        static NONE: BTreeSet<String> = BTreeSet::new();
         match &self.report_symbol {
-            ReportSymbol::FirstOpen => &None,
-            ReportSymbol::Selected(symbol) => symbol,
+            ReportSymbol::FirstOpen => &NONE,
+            ReportSymbol::Selected(symbols) => symbols,
+        }
+    }
+    /// The one symbol chosen, when exactly one is.
+    pub fn report_symbol(&self) -> Option<&str> {
+        let chosen = self.report_symbols_chosen();
+        (chosen.len() == 1)
+            .then(|| chosen.first().map(String::as_str))
+            .flatten()
+    }
+    /// The multi-select's head: `All 4 symbols`, `2 of 4 symbols`.
+    pub fn symbols_summary(&self) -> String {
+        let (chosen, all) = (self.report_symbols_chosen().len(), self.report_symbols.len());
+        if chosen == 0 {
+            format!("All {all} symbols")
+        } else {
+            format!("{chosen} of {} symbols", all.max(chosen))
+        }
+    }
+    /// Each symbol on offer, whether it is ticked and its label with the
+    /// currency its money is in.
+    pub fn symbol_choices(&self, pnl: PnlReader<'_>) -> Vec<(String, bool, String)> {
+        let chosen = self.report_symbols_chosen();
+        self.report_symbols
+            .iter()
+            .map(|symbol| {
+                let currency = pnl
+                    .book
+                    .money(symbol)
+                    .map_or("pt value unset", |money| money.currency.code());
+                let label = format!("{symbol} · {currency}");
+                (symbol.clone(), chosen.contains(symbol), label)
+            })
+            .collect()
+    }
+    /// The merge asked for; `None` reads per asset.
+    pub fn report_merge(&self) -> Option<&Currency> {
+        self.merge.as_ref()
+    }
+    /// What the merge controls show for the current view: the switch when
+    /// the selection walks more than one curve, the currency combo in
+    /// money, and what Merge all reads in when it is switched on — the
+    /// last currency picked, else the chart symbol's, else USD.
+    pub fn merge_controls(&self, pnl: PnlReader<'_>, chart_symbol: &str) -> MergeControls {
+        let rules = pnl.settings.catalog.currencies();
+        let usd = Currency::new(USD).expect("USD is a currency code");
+        let Some(view) = &self.report_view else {
+            return MergeControls {
+                switch: None,
+                currency: None,
+                default: usd,
+            };
+        };
+        let offered = &view.merge.currencies;
+        let chart = (pnl.book.money(chart_symbol))
+            .map(|money| rules.canonical(&money.currency).clone());
+        let default = [pnl.settings.merge_currency.clone(), chart]
+            .into_iter()
+            .flatten()
+            .find(|currency| offered.contains(currency))
+            .unwrap_or(usd);
+        let money = (view.equity.walks().iter())
+            .any(|walk| walk.primary == PnlPrimary::Money || walk.fallback.is_some());
+        let current = self.merge.clone().or_else(|| own_currency(view));
+        MergeControls {
+            switch: (view.merge.per_asset_walks > 1).then_some(self.merge.is_some()),
+            currency: current
+                .filter(|_| money)
+                .map(|current| (current, offered.clone())),
+            default,
         }
     }
     pub fn report_period(&self) -> ReportPeriod {
@@ -421,7 +512,12 @@ impl State {
         if self.filter.source == SourceSelection::default() {
             return "Select one or more sources to see their saved trades.".to_owned();
         }
-        let scope = self.report_symbol().as_deref().unwrap_or("any symbol");
+        let chosen = self.report_symbols_chosen();
+        let scope = if chosen.is_empty() {
+            "any symbol".to_owned()
+        } else {
+            chosen.iter().cloned().collect::<Vec<_>>().join(", ")
+        };
         let hidden = (self.report_view.as_ref()).map_or(0, |view| view.hidden_by_source_or_scope);
         if !self.picked_days().is_empty() {
             format!(
@@ -442,10 +538,9 @@ impl State {
     /// dates — whether "Clear filters" has anything to clear.
     #[must_use]
     pub fn filters_narrowed(&self, symbol: &str) -> bool {
-        let default_symbol = (!symbol.is_empty()).then(|| symbol.to_owned());
         self.filter.source != SourceFilter::Real.into()
             || self.filter.period != ReportPeriod::All
-            || *self.report_symbol() != default_symbol
+            || *self.report_symbols_chosen() != chart_only(symbol.to_owned())
             || !self.picked_days().is_empty()
     }
     pub fn report_layout_revision(&self) -> u64 {
@@ -496,7 +591,7 @@ impl State {
 
     pub fn snapshot(&self) -> Option<ReportSnapshot<'_>> {
         Some(ReportSnapshot::new(
-            self.report_symbol().as_deref(),
+            self.report_symbol(),
             self.report_view.as_ref()?,
         ))
     }
@@ -509,6 +604,7 @@ impl State {
                 && view.source == self.filter.source
                 && view.days == *days
                 && view.tz == tz
+                && view.merge.request == self.merge
                 && view.worded_by(pnl)
         }) {
             return None;
@@ -558,6 +654,10 @@ impl State {
                 Some(key),
             )
         });
+        let rates = StoredRates {
+            rules: pnl.settings.catalog.currencies(),
+            store: &self.report_rates,
+        };
         Some(ReportProjection {
             revision: self.revision,
             view: Some(Box::new(
@@ -569,7 +669,8 @@ impl State {
                     tz,
                     |row| admits(in_force, row),
                 )
-                .with_pnl(pnl),
+                .with_pnl(pnl)
+                .merged(self.merge.clone(), pnl, &rates),
             )),
             days: index,
         })
@@ -634,13 +735,13 @@ impl State {
     fn reveal(&mut self, symbol: String) -> Effects {
         self.report_open = true;
         if matches!(self.report_symbol, ReportSymbol::FirstOpen) {
-            self.report_symbol = ReportSymbol::Selected((!symbol.is_empty()).then_some(symbol));
+            self.report_symbol = ReportSymbol::Selected(chart_only(symbol));
         }
         self.report_load()
     }
     fn report_load(&self) -> Effects {
         Effects {
-            load: Some(Load::Report(self.report_symbol().clone())),
+            load: Some(Load::Report(self.report_symbols_chosen().clone())),
             ..Default::default()
         }
     }
@@ -650,6 +751,32 @@ impl State {
             ..Default::default()
         }
     }
+}
+
+/// The chart's symbol alone, or every symbol before a market is chosen.
+fn chart_only(symbol: String) -> BTreeSet<String> {
+    (!symbol.is_empty()).then_some(symbol).into_iter().collect()
+}
+
+/// The one asset's own currency, when the view walks a single money curve
+/// per asset: picking it reads per asset rather than a merge of one.
+fn own_currency(view: &ReportView) -> Option<Currency> {
+    (view.merge.per_asset_walks == 1)
+        .then(|| view.merge.own.clone())
+        .flatten()
+}
+
+/// The report's merge controls for one frame; see [`State::merge_controls`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeControls {
+    /// `Some(merged)`: the Per asset | Merge all switch, offered only when
+    /// the selection walks more than one curve.
+    pub switch: Option<bool>,
+    /// The currency combo, in money only: the one in force, then the
+    /// currencies on offer.
+    pub currency: Option<(Currency, Vec<Currency>)>,
+    /// What Merge all reads in when switched on.
+    pub default: Currency,
 }
 
 pub struct Model;
@@ -705,6 +832,7 @@ impl crate::Model for Model {
             Intent::LoadedReport(loaded) => {
                 state.report = Some(loaded.history);
                 state.report_symbols = loaded.symbols;
+                state.report_rates = loaded.rates;
                 state.report_generation = state.report_generation.wrapping_add(1);
                 state.report_view = None;
             }
@@ -742,7 +870,32 @@ impl crate::Model for Model {
                 }
             }
             Intent::InstallReport(_) | Intent::InstallLedger(_) => {}
-            Intent::Symbol(symbol) => state.report_symbol = ReportSymbol::Selected(symbol),
+            Intent::Symbols(symbols) => {
+                state.report_symbol = ReportSymbol::Selected(symbols);
+                return state.report_load();
+            }
+            Intent::ToggleSymbol(symbol) => {
+                let mut symbols = state.report_symbols_chosen().clone();
+                if !symbols.remove(&symbol) {
+                    symbols.insert(symbol);
+                }
+                state.report_symbol = ReportSymbol::Selected(symbols);
+                return state.report_load();
+            }
+            Intent::Merge(currency) => {
+                state.merge = currency;
+                state.report_view = None;
+                // Read again: the feed side may have stored rates since.
+                return state.report_load();
+            }
+            Intent::MergeCurrency(currency) => {
+                let own = state.report_view.as_ref().and_then(own_currency);
+                state.merge = (own.as_ref() != Some(&currency)).then(|| currency.clone());
+                state.report_view = None;
+                let mut effects = state.report_load();
+                effects.pnl_pick = Some(PnlPick::MergeCurrency(currency));
+                return effects;
+            }
             Intent::Source(source) => {
                 state.filter.source = source;
                 state.filter.scope = None;
@@ -797,7 +950,7 @@ impl crate::Model for Model {
             }
             Intent::PnlPrimary(primary) => {
                 return Effects {
-                    pnl_primary: Some(primary),
+                    pnl_pick: Some(PnlPick::Primary(primary)),
                     ..Default::default()
                 };
             }

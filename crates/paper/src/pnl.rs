@@ -16,8 +16,9 @@
 //!
 //! Money is never guessed. A symbol with no point value reads
 //! [`UNSET_MONEY`], and a total that would include one reads the same
-//! rather than a partial sum. Currencies are never added together: there is
-//! no exchange rate anywhere in this workspace.
+//! rather than a partial sum. Currencies are never added together here: a
+//! report converts them only when the trader asks it to merge, at a stored
+//! rate and labelled (`crate::report::merge`).
 //!
 //! Money is derived when shown, from the catalog in force — a point value
 //! edited today re-reads yesterday's trades. Stamping it into history is a
@@ -69,6 +70,17 @@ pub struct PnlSettings {
     /// The mode the trader picked; `None` defers to the catalog's
     /// `[display] primary`, then to [`effective_primary`]'s default.
     pub chosen: Option<PnlPrimary>,
+    /// The currency the report's Merge all last read in; `None` until one
+    /// is picked, when the chart symbol's currency is the default.
+    pub merge_currency: Option<Currency>,
+}
+
+/// A P&L display choice a surface made, for the host to apply app-wide and
+/// persist: the leading figure, or the currency a merged report reads in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PnlPick {
+    Primary(PnlPrimary),
+    MergeCurrency(Currency),
 }
 
 impl PnlSettings {
@@ -102,6 +114,24 @@ impl PnlSettings {
         Self {
             catalog: Arc::new(catalog),
             chosen: chosen.and_then(PnlPrimary::from_token),
+            merge_currency: None,
+        }
+    }
+
+    /// [`Self::load`] with every display choice the paper sidecar stored.
+    #[must_use]
+    pub fn restored(shipped: &str, trader_file: Option<&Path>, state: &crate::state::PaperState) -> Self {
+        Self {
+            merge_currency: state.report_merge_currency.as_deref().and_then(Currency::new),
+            ..Self::load(shipped, trader_file, state.pnl_primary.as_deref())
+        }
+    }
+
+    /// Apply a surface's pick: the leading figure, or the merge currency.
+    pub fn pick(&mut self, pick: PnlPick) {
+        match pick {
+            PnlPick::Primary(primary) => self.chosen = Some(primary),
+            PnlPick::MergeCurrency(currency) => self.merge_currency = Some(currency),
         }
     }
 }

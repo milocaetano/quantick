@@ -222,3 +222,28 @@ fn a_trader_overlay_switches_a_shipped_key_off() {
         "only the key named goes"
     );
 }
+
+#[test]
+fn the_shipped_catalog_reads_stablecoins_as_usd_and_keeps_usdt_brl_rates() {
+    let catalog = InstrumentCatalog::parse(SHIPPED).expect("shipped catalog parses");
+    let rules = catalog.currencies();
+    let code = |text| Currency::new(text).expect("code");
+    assert_eq!(rules.canonical(&code("USDT")), &code("USD"));
+    assert_eq!(rules.canonical(&code("USDC")), &code("USD"));
+    assert_eq!(rules.canonical(&code("BRL")), &code("BRL"));
+    let pairs: Vec<_> = rules
+        .pairs()
+        .iter()
+        .map(|pair| (pair.from.code(), pair.to.code(), pair.venue.as_str(), pair.symbol.as_str()))
+        .collect();
+    assert_eq!(pairs, vec![("USDT", "BRL", "binance", "USDTBRL")]);
+    let overlay = "version = 1
+[currencies]
+same = { DAI = \"USD\" }
+";
+    let (layered, warning) = InstrumentCatalog::layered(SHIPPED, Some(overlay));
+    assert_eq!(warning, None);
+    assert_eq!(layered.currencies().canonical(&code("DAI")), &code("USD"));
+    assert_eq!(layered.currencies().canonical(&code("USDT")), &code("USD"), "added to, not replaced");
+    assert_eq!(layered.currencies().pairs().len(), 1);
+}

@@ -25,7 +25,8 @@
 //! Like `engine`: no UI, no network, no async, no wall clock, no randomness.
 //! Every timestamp in here is the venue time of a trade someone was shown.
 //! It depends on `engine` for [`Side`](quantick_engine::Side) and
-//! [`Trade`](quantick_engine::Trade), and on nothing else in the workspace.
+//! [`Trade`](quantick_engine::Trade), on `civil` for the day a stored rate
+//! belongs to, and on nothing else in the workspace.
 
 pub mod broker;
 mod costs;
@@ -34,6 +35,7 @@ mod intent;
 mod money;
 mod order;
 mod position;
+pub mod rates;
 mod venue;
 
 pub mod fake;

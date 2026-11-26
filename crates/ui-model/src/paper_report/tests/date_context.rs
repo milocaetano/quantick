@@ -170,7 +170,7 @@ fn date_only_reveal_preserves_all_symbols_after_closed_cache_eviction() {
                         io::report(session, Some(ReportChange::Days(picked.clone())), tz, &env);
                     assert_eq!(first.symbol.as_deref(), Some("X"));
                     assert_eq!(first.trade_count, 1);
-                    session.update(Intent::Symbol(None));
+                    session.update(Intent::Symbols(BTreeSet::new()));
                     session.update(Intent::ReloadReport);
                     let all = io::report(session, None, tz, &env);
                     assert_eq!((all.symbol, all.trade_count), (None, 2));

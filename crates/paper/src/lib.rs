@@ -32,6 +32,7 @@ pub mod home;
 pub mod instruments;
 pub mod order_strategies;
 pub mod pnl;
+pub mod rates;
 pub mod report;
 pub mod risk_sizing;
 pub mod route;

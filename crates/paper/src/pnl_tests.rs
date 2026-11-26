@@ -253,6 +253,7 @@ fn the_reader_leads_with_the_chosen_figure_and_keeps_the_other_beside_it() {
     let mut settings = PnlSettings {
         catalog: Arc::clone(&catalog),
         chosen: None,
+        ..PnlSettings::default()
     };
     let book = PnlBook {
         declared: &declared,
