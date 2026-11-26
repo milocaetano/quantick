@@ -112,6 +112,7 @@ pub(super) fn test_config() -> AppConfig {
                 max_connecting_ms: i64::MAX,
                 ..Default::default()
             },
+            idle_timeout_secs: 30,
         }],
         broker: Default::default(),
         metatrader: Default::default(),
@@ -539,6 +540,7 @@ pub(super) fn two_metatrader_feeds() -> AppConfig {
                 record_deals: false,
                 short_name: None,
                 sync: Default::default(),
+                idle_timeout_secs: 30,
             },
             FeedConfig {
                 id: "b3".to_string(),
@@ -559,6 +561,7 @@ pub(super) fn two_metatrader_feeds() -> AppConfig {
                 record_deals: false,
                 short_name: None,
                 sync: Default::default(),
+                idle_timeout_secs: 30,
             },
         ],
         broker: Default::default(),

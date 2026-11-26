@@ -170,6 +170,16 @@ pub struct FeedConfig {
     /// optional. Absent, those defaults.
     #[serde(default)]
     pub sync: quantick_sources::sync::SyncLimits,
+    /// Seconds a websocket venue's trade stream may deliver no frame at all
+    /// before it is dropped and reconnected, 1 to
+    /// [`MAX_IDLE_TIMEOUT_SECS`](quantick_sources::reconnect::MAX_IDLE_TIMEOUT_SECS).
+    /// Absent, [`DEFAULT_IDLE_TIMEOUT_SECS`](quantick_sources::reconnect::DEFAULT_IDLE_TIMEOUT_SECS).
+    #[serde(default = "default_idle_timeout_secs")]
+    pub idle_timeout_secs: u64,
+}
+
+fn default_idle_timeout_secs() -> u64 {
+    quantick_sources::reconnect::DEFAULT_IDLE_TIMEOUT_SECS
 }
 
 /// The most characters a venue code made of a name's initials takes.
@@ -224,6 +234,12 @@ fn declared<'a, V>(table: &'a BTreeMap<String, V>, symbol: &str) -> Option<(&'a 
 }
 
 impl FeedConfig {
+    /// [`Self::idle_timeout_secs`] as a duration.
+    #[must_use]
+    pub fn idle_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.idle_timeout_secs)
+    }
+
     /// The asset `symbol` belongs to on this feed: its [mode](AssetMode)'s
     /// when the config switches one on, else the exact key naming it, else
     /// the longest family pattern matching it, else the symbol alone on the
@@ -618,6 +634,13 @@ impl AppConfig {
         self.feed(id).map(|f| f.provider)
     }
 
+    /// Each feed's provider and trade-stream idle timeout, in config order.
+    #[must_use]
+    pub fn idle_timeouts(&self) -> Vec<(ProviderKind, std::time::Duration)> {
+        let timeout = |f: &FeedConfig| (f.provider, f.idle_timeout());
+        self.feeds.iter().map(timeout).collect()
+    }
+
     /// How far behind feed `id` a chart may fall before new entries pause;
     /// the defaults for a feed the config does not name.
     #[must_use]
@@ -839,6 +862,15 @@ impl AppConfig {
             feed.validate_costs()?;
             feed.validate_icons()?;
             feed.sync.validate(&feed.id)?;
+            let idle_range = 1..=quantick_sources::reconnect::MAX_IDLE_TIMEOUT_SECS;
+            if !idle_range.contains(&feed.idle_timeout_secs) {
+                return Err(format!(
+                    "feed '{}' sets idle_timeout_secs to {} - it must be 1 to {}",
+                    feed.id,
+                    feed.idle_timeout_secs,
+                    idle_range.end()
+                ));
+            }
             for (symbol, preset) in &feed.symbol_bubble_presets {
                 if !feed
                     .symbols

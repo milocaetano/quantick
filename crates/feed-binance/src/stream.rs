@@ -8,8 +8,11 @@
 //! The decode step ([`decode_text`]) is pure and unit-tested; the connection
 //! runner ([`run_agg_trade_stream`]) is exercised by an `#[ignore]`d live test.
 
+use std::time::Duration;
+
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::sync::{mpsc::Sender, watch};
+use tokio::time::{Instant, MissedTickBehavior};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
 
@@ -50,14 +53,21 @@ pub fn decode_text(text: &str) -> Result<Trade, FeedError> {
 /// Returns the number of trades forwarded — on a clean server close, or when the
 /// consumer drops `tx`. Returns [`FeedError`] on a transport error.
 ///
+/// No inbound frame of any kind for `idle_timeout` ends the connection: a
+/// half-open socket otherwise waits forever. A client ping goes out every
+/// half window, so a quiet but healthy socket answers in time — Binance's own
+/// pings come every 20 s on Spot but only every 3 minutes on USD-M.
+///
 /// # Errors
 ///
-/// Returns [`FeedError::Http`] on connection or socket errors.
+/// Returns [`FeedError::Http`] on connection or socket errors and
+/// [`FeedError::IdleTimeout`] when the socket falls silent.
 pub async fn run_agg_trade_stream(
     url: &str,
     tx: &Sender<Trade>,
     tracker: &mut ContinuityTracker,
     connected: &watch::Sender<bool>,
+    idle_timeout: Duration,
 ) -> Result<u64, FeedError> {
     info!(target: "quantick::feed", url, "connecting aggTrade websocket");
     let (mut ws, _resp) = tokio_tungstenite::connect_async(url)
@@ -67,7 +77,35 @@ pub async fn run_agg_trade_stream(
     info!(target: "quantick::feed", url, "aggTrade websocket connected");
 
     let mut forwarded: u64 = 0;
-    while let Some(frame) = ws.next().await {
+    let mut probe = tokio::time::interval((idle_timeout / 2).max(Duration::from_millis(1)));
+    probe.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    probe.tick().await;
+    let silence = tokio::time::sleep(idle_timeout);
+    tokio::pin!(silence);
+    loop {
+        // Biased toward a waiting frame: after a slow hand-off to the
+        // consumer, a buffered frame proves the socket alive.
+        let frame = tokio::select! {
+            biased;
+            frame = ws.next() => frame,
+            _ = probe.tick() => {
+                ws.send(Message::Ping(Default::default()))
+                    .await
+                    .map_err(|e| FeedError::Http(e.to_string()))?;
+                continue;
+            }
+            () = &mut silence => {
+                warn!(
+                    target: "quantick::feed",
+                    url,
+                    idle_ms = idle_timeout.as_millis() as u64,
+                    forwarded,
+                    "no aggTrade websocket frame within the idle timeout"
+                );
+                return Err(FeedError::IdleTimeout(idle_timeout));
+            }
+        };
+        let Some(frame) = frame else { break };
         let msg = frame.map_err(|e| FeedError::Http(e.to_string()))?;
         match msg {
             Message::Text(text) => match decode_text(text.as_str()) {
@@ -96,6 +134,9 @@ pub async fn run_agg_trade_stream(
             }
             Message::Pong(_) | Message::Binary(_) | Message::Frame(_) => {}
         }
+        // Restarted once the frame is handled, so time spent waiting on the
+        // consumer never counts as socket silence.
+        silence.as_mut().reset(Instant::now() + idle_timeout);
     }
     debug!(target: "quantick::feed", forwarded, "websocket stream ended");
     Ok(forwarded)
@@ -133,6 +174,72 @@ mod tests {
         assert!(decode_text("{not valid json").is_err());
     }
 
+    const IDLE: Duration = Duration::from_millis(400);
+
+    /// One connection to a local socket that `serve` drives, at [`IDLE`].
+    async fn stream_against<F, Fut>(serve: F) -> Result<u64, FeedError>
+    where
+        F: FnOnce(tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>) -> Fut
+            + Send
+            + 'static,
+        Fut: std::future::Future<Output = ()> + Send,
+    {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = agg_trade_url(
+            &format!("ws://{}", listener.local_addr().unwrap()),
+            "BTCUSDT",
+        );
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            serve(tokio_tungstenite::accept_async(stream).await.unwrap()).await;
+        });
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let (connected, _status) = tokio::sync::watch::channel(false);
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            run_agg_trade_stream(&url, &tx, &mut ContinuityTracker::new(), &connected, IDLE),
+        )
+        .await
+        .expect("the stream neither timed out nor ended");
+        server.abort();
+        result
+    }
+
+    /// A socket that completes the handshake and then never reads or writes
+    /// again — not even a pong — ends with the idle error, not a hang.
+    #[tokio::test]
+    async fn a_silent_socket_ends_with_the_idle_error() {
+        let result = stream_against(|socket| async move {
+            std::future::pending::<()>().await;
+            drop(socket);
+        })
+        .await;
+        assert!(
+            matches!(result, Err(FeedError::IdleTimeout(after)) if after == IDLE),
+            "{result:?}"
+        );
+    }
+
+    /// A socket that carries no trades but answers the client's pings stays
+    /// connected past several idle windows, until the server closes it.
+    #[tokio::test]
+    async fn pongs_keep_a_quiet_socket_alive() {
+        let result = stream_against(|mut socket| async move {
+            // Reading is what makes tungstenite answer each ping with a pong.
+            let _ = tokio::time::timeout(IDLE * 3, async {
+                while let Some(Ok(_)) = socket.next().await {}
+            })
+            .await;
+            socket.close(None).await.unwrap();
+            // Hold the socket until the client answers the close: dropping
+            // it first resets the connection on Windows before the client
+            // reads the close frame.
+            while socket.next().await.is_some() {}
+        })
+        .await;
+        assert!(matches!(result, Ok(0)), "{result:?}");
+    }
+
     #[tokio::test]
     #[ignore = "hits the live Binance websocket; run manually with --ignored"]
     async fn live_stream_forwards_a_few_trades() {
@@ -141,12 +248,19 @@ mod tests {
         let url = agg_trade_url(BINANCE_WS_BASE, "BTCUSDT");
         let handle = tokio::spawn(async move {
             let mut tracker = ContinuityTracker::new();
-            run_agg_trade_stream(&url, &tx, &mut tracker, &connected_tx).await
+            run_agg_trade_stream(
+                &url,
+                &tx,
+                &mut tracker,
+                &connected_tx,
+                Duration::from_secs(30),
+            )
+            .await
         });
 
         let mut seen = 0;
         while seen < 5 {
-            match tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv()).await {
+            match tokio::time::timeout(Duration::from_secs(20), rx.recv()).await {
                 Ok(Some(trade)) => {
                     assert!(trade.price > Decimal::ZERO);
                     seen += 1;

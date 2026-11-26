@@ -1,4 +1,5 @@
-//! A feed's `sync` table: the limits that pause new entries.
+//! A feed's `sync` table, the limits that pause new entries, and its trade
+//! stream's idle timeout.
 
 use super::*;
 
@@ -43,4 +44,38 @@ fn a_feeds_sync_limits_load_over_the_defaults() {
         load("sync = { max_lag_ms = 9 }").is_err(),
         "a typo is refused"
     );
+}
+
+/// A feed's trade-stream idle timeout defaults to 30 s, takes an override,
+/// and refuses zero or more than an hour at load.
+#[test]
+fn a_feeds_idle_timeout_loads_over_the_default() {
+    let load = |line: &str| {
+        parse(
+            &format!(
+                r#"
+                    default_feed = "f"
+                    default_symbol = "BTCUSDT"
+                    [[feeds]]
+                    id = "f"
+                    name = "F"
+                    provider = "binance"
+                    symbols = ["BTCUSDT"]
+                    {line}
+                "#
+            ),
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+    };
+    let idle = |config: &AppConfig| config.idle_timeouts();
+    let binance = |secs| vec![(ProviderKind::Binance, std::time::Duration::from_secs(secs))];
+    let absent = load("").expect("no idle_timeout_secs");
+    assert_eq!(idle(&absent), binance(30));
+    let set = load("idle_timeout_secs = 90").expect("an override");
+    assert_eq!(idle(&set), binance(90));
+    for refused in ["0", "3601", "18446744073709551615"] {
+        let error = load(&format!("idle_timeout_secs = {refused}")).expect_err(refused);
+        assert!(error.to_string().contains("idle_timeout_secs"), "{error}");
+    }
 }

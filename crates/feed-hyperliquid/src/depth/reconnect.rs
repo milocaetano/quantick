@@ -4,8 +4,7 @@ use tokio::sync::mpsc::Sender;
 use tracing::{info, warn};
 
 use quantick_orderbook::{DepthEvent, DepthStatus};
-
-use crate::reconnect::Backoff;
+use quantick_sources::reconnect::Backoff;
 
 use super::mapper::BookMapper;
 use super::stream::{DepthSessionError, run_depth_session};

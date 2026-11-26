@@ -42,6 +42,9 @@ pub enum FeedError {
         /// The `Retry-After` the venue named, when it named one.
         retry_after: Option<std::time::Duration>,
     },
+    /// The trade websocket delivered no frame at all for this long, so it is
+    /// treated as dead and reconnected.
+    IdleTimeout(std::time::Duration),
 }
 
 impl std::fmt::Display for FeedError {
@@ -58,6 +61,9 @@ impl std::fmt::Display for FeedError {
                 Some(wait) => write!(f, "rate limited (retry after {}s)", wait.as_secs()),
                 None => write!(f, "rate limited (no retry-after given)"),
             },
+            FeedError::IdleTimeout(after) => {
+                write!(f, "no websocket frame for {} ms", after.as_millis())
+            }
         }
     }
 }

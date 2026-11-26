@@ -6,6 +6,7 @@
 //! history") are serviced between live trades.
 
 use std::ops::ControlFlow;
+use std::time::Duration;
 
 use tokio::{
     sync::{mpsc, watch},
@@ -15,7 +16,7 @@ use tracing::{error, info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_binance::{
-    Backoff, BinanceHttp, BinanceKlineHttp, BinanceMarket, KLINE_INTERVAL_1D, agg_trade_url,
+    BinanceHttp, BinanceKlineHttp, BinanceMarket, KLINE_INTERVAL_1D, agg_trade_url,
     backfill_before_with_boundary, backfill_with_boundary,
     depth::{
         BinanceDepthHttp, DepthEvent, DepthSessionConfig, DepthSnapshotSource as _,
@@ -23,6 +24,7 @@ use quantick_feed_binance::{
     },
     fetch_history, run_with_reconnect,
 };
+use quantick_sources::reconnect::Backoff;
 use quantick_sources::trade_admission::{RecentTradeIds, TradeAdmission};
 
 use super::{
@@ -47,6 +49,8 @@ pub(crate) struct BinanceSource {
     pub http: BinanceHttp,
     pub url: String,
     pub backoff: Backoff,
+    /// Read silence after which the trade socket is reconnected.
+    pub idle_timeout: Duration,
 }
 
 /// Start the Binance feed for `symbol` on a background thread.
@@ -64,19 +68,18 @@ pub fn spawn_market(symbol: &str, market: BinanceMarket) -> FeedHandle {
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
     // Every aggTrade is an execution carrying its real size, and the venue
     // answers the same for every symbol it lists.
-    let (caps_tx, caps_rx) = watch::channel(
-        match market {
-            BinanceMarket::Spot => ProviderKind::Binance,
-            BinanceMarket::UsdM => ProviderKind::BinanceFutures,
-        }
-        .capabilities(),
-    );
+    let provider = match market {
+        BinanceMarket::Spot => ProviderKind::Binance,
+        BinanceMarket::UsdM => ProviderKind::BinanceFutures,
+    };
+    let (caps_tx, caps_rx) = watch::channel(provider.capabilities());
     let symbol = market.display_symbol(symbol);
     let source = BinanceSource {
         http: BinanceHttp::for_market(market),
         url: agg_trade_url(market.trade_ws_base(), &market.wire_symbol(&symbol)),
         // Fixed seed keeps a single desktop client's retry reproducible.
         backoff: Backoff::for_feed(0x9E37_79B9_7F4A_7C15),
+        idle_timeout: crate::idle_timeout::idle_timeout(provider),
     };
     std::thread::Builder::new()
         .name("quantick-feed".into())
@@ -113,7 +116,12 @@ pub(crate) async fn feed_task(
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
     source: BinanceSource,
 ) {
-    let BinanceSource { http, url, backoff } = source;
+    let BinanceSource {
+        http,
+        url,
+        backoff,
+        idle_timeout,
+    } = source;
     let market = http.market();
     // 1. Backfill recent history so the chart opens populated. Remember the
     //    earliest agg_id so we can page further back on demand.
@@ -134,7 +142,7 @@ pub(crate) async fn feed_task(
     let (live_tx, mut live_rx) = mpsc::channel::<Trade>(4096);
     let (connected_tx, mut connected_rx) = watch::channel(false);
     let reconnect = tokio::spawn(async move {
-        run_with_reconnect(&url, &live_tx, &connected_tx, backoff).await;
+        run_with_reconnect(&url, &live_tx, &connected_tx, backoff, idle_timeout).await;
     });
     // Candle history runs off this loop, not inside it. A week is ~11
     // sequential pages and a trader paging back through a quarter asks for
@@ -559,7 +567,7 @@ static INITIAL_BOOK_DEPTH: std::sync::OnceLock<u16> = std::sync::OnceLock::new()
 /// `QUANTICK_BOOK_DEPTH`. The application's composition root reads the
 /// variable and hands the raw value in; this crate reads no environment.
 /// Unset, or never configured, means [`DEFAULT_BOOK_DEPTH`].
-pub fn configure_initial_book_depth(raw: Option<&str>) {
+pub(crate) fn configure_initial_book_depth(raw: Option<&str>) {
     let _ = INITIAL_BOOK_DEPTH.set(parse_book_depth(raw));
 }
 

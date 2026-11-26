@@ -998,6 +998,7 @@ mod tests {
                 record_deals: false,
                 short_name: None,
                 sync: Default::default(),
+                idle_timeout_secs: quantick_sources::reconnect::DEFAULT_IDLE_TIMEOUT_SECS,
             }],
             broker: Default::default(),
             metatrader: crate::config::MetaTraderSettings::default(),

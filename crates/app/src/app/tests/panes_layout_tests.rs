@@ -1755,6 +1755,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         record_deals: false,
         short_name: None,
         sync: Default::default(),
+        idle_timeout_secs: 30,
     });
     let mut app = app_on(config, "binance", "TESTUSDT");
     assert_eq!(app.active_tab().canvas.layout, CanvasLayout::Single);

@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 quantick-engine = { path = "../engine" }
 quantick-orderbook = { path = "../orderbook" }
+# The shared reconnect backoff and idle timeout.
+quantick-sources = { path = "../sources" }
 rust_decimal = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
