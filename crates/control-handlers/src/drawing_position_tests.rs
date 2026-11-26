@@ -127,7 +127,7 @@ fn an_inspection_reads_the_look_legs_and_width_and_changes_nothing() {
     assert_eq!(read.look.stop_color, "#000000");
     assert_eq!(read.look.zone_opacity_pct, 25);
     assert_eq!(read.look.ratio.as_str(), "2");
-    assert_eq!(read.look.ratio_text, "Risk/reward 1:2");
+    assert_eq!(read.look.ratio_text, "R/R 1:2");
     assert_eq!(read.width_bars.as_str(), "20");
     assert_eq!(marks.items()[0], before);
 }
@@ -160,7 +160,7 @@ fn a_set_lands_every_edit_as_one_undo_step_and_reads_it_back() {
         ("#112233", "#445566")
     );
     assert_eq!(read.look.zone_opacity_pct, 40);
-    assert_eq!(read.look.ratio_text, "Risk/reward 1:3");
+    assert_eq!(read.look.ratio_text, "R/R 1:3");
     assert_eq!(read.width_bars.as_str(), "32");
     assert!(marks.undo());
     let back = set(&mut marks, &input(id, json!({}))).unwrap();
@@ -181,7 +181,7 @@ fn a_custom_plan_reads_its_ratio_risk_first() {
     marks.items_mut()[0].points = moved.to_vec();
     let read = set(&mut marks, &input(id, json!({}))).unwrap();
     assert!(read.look.custom);
-    assert_eq!(read.look.ratio_text, "Custom · Risk/reward 1:2.5");
+    assert_eq!(read.look.ratio_text, "R/R 1:2.5");
 }
 
 /// A refusal changes nothing, whichever edit in the call it was.
@@ -233,13 +233,13 @@ fn the_default_call_saves_resets_and_reads_per_tool() {
     let fresh = default(&mut bank, canvas, &drawing, DefaultAction::Inspect).unwrap();
     assert!(!fresh.saved);
     assert_eq!(
-        fresh.opening.ratio_text, "Risk/reward 1:1",
+        fresh.opening.ratio_text, "R/R 1:1",
         "factory risk 1 : reward 1"
     );
     let saved = default(&mut bank, canvas, &drawing, DefaultAction::Save).unwrap();
     assert!(saved.saved);
     assert_eq!(saved.tool_id, "long-position");
-    assert_eq!(saved.opening.ratio_text, "Risk/reward 1:2");
+    assert_eq!(saved.opening.ratio_text, "R/R 1:2");
     let mut short = drawing.clone();
     short.tool = DrawingTool::by_id("short-position").unwrap();
     let other = default(&mut bank, canvas, &short, DefaultAction::Inspect).unwrap();
@@ -249,7 +249,7 @@ fn the_default_call_saves_resets_and_reads_per_tool() {
     assert_eq!(reset.opening.target_color, "#388E3C");
     assert_eq!(reset.opening.stop_color, "#000000");
     assert_eq!(reset.opening.zone_opacity_pct, 25);
-    assert_eq!(reset.opening.ratio_text, "Risk/reward 1:1");
+    assert_eq!(reset.opening.ratio_text, "R/R 1:1");
 }
 
 /// A flat plan states no legs to read back, so even a colour edit is

@@ -51,8 +51,12 @@ pub(super) const ENTRY_HANDLE: usize = 0;
 pub(super) const RIGHT_EDGE_HANDLE: usize = 1;
 pub(super) const PROJECTED_HANDLE: usize = 2;
 pub(super) const MEASURED_LINE_HANDLE: usize = 3;
-/// The entry line itself, grabbed anywhere along it; no point of its own.
+/// Lines with no point of their own, grabbed anywhere along them: the entry
+/// line moves the entry's price; the box's left and right sides move that
+/// side in time, as the right square does.
 pub(super) const ENTRY_LINE_HANDLE: usize = 4;
+pub(super) const LEFT_SIDE_HANDLE: usize = 5;
+pub(super) const RIGHT_SIDE_HANDLE: usize = 6;
 /// The least contrast white text keeps on a plate before the theme's ink
 /// replaces it: white on the factory green and black plates.
 const WHITE_TEXT_CONTRAST: f32 = 3.0;
@@ -282,10 +286,7 @@ fn ink([r, g, b]: Rgb, alpha: u8) -> PremultipliedRgba {
 }
 
 fn points_text(delta: f64) -> String {
-    format!(
-        "{} pts",
-        quantick_engine::display::display_signed_f64(delta)
-    )
+    quantick_engine::display::display_signed_f64(delta)
 }
 
 /// White on a plate it reads on, else the theme's better ink for it.
@@ -428,16 +429,12 @@ fn paint_leg_plates(
     let plates = [
         (
             frame.target_y,
-            format!(
-                "Target {} · {}",
-                price(legs.target),
-                points_text(legs.reward())
-            ),
+            format!("TP {} · {}", price(legs.target), points_text(legs.reward())),
             payload.target_rgb,
         ),
         (
             frame.stop_y,
-            format!("Stop {} · {}", price(legs.stop), points_text(-legs.risk())),
+            format!("SL {} · {}", price(legs.stop), points_text(-legs.risk())),
             payload.stop_rgb,
         ),
     ];
@@ -498,12 +495,23 @@ fn line_at(points: &[Px], position: Px, ctxt: &DrawContext<'_>, side: Side) -> O
         return None;
     }
     let near = |y: Option<f32>| y.is_some_and(|y| (position.y - y).abs() <= GRAB_PX);
+    let top = frame.entry_y.min(frame.stop_y).min(frame.target_y);
+    let bottom = frame.entry_y.max(frame.stop_y).max(frame.target_y);
+    let beside = |x: f32| {
+        (position.x - x).abs() <= GRAB_PX
+            && position.y >= top - GRAB_PX
+            && position.y <= bottom + GRAB_PX
+    };
     if near(frame.projected_y()) {
         Some(PROJECTED_HANDLE)
     } else if near(Some(frame.entry_y)) {
         Some(ENTRY_LINE_HANDLE)
     } else if near(frame.measured_y()) {
         Some(MEASURED_LINE_HANDLE)
+    } else if beside(frame.left) {
+        Some(LEFT_SIDE_HANDLE)
+    } else if beside(frame.right) {
+        Some(RIGHT_SIDE_HANDLE)
     } else {
         None
     }
@@ -515,23 +523,31 @@ pub(super) fn pointer_hint(
     ctxt: &DrawContext<'_>,
     side: Side,
 ) -> Option<PointerHint> {
-    line_at(points, position, ctxt, side).map(|handle| PointerHint::ResizeSide { handle })
+    line_at(points, position, ctxt, side).and_then(line_hint)
 }
 
-/// A press on a line or a handle announces what it grabs.
+/// What a press on a line or a handle grabs, as its cursor says it: the box's
+/// sides and the width square move sideways, the TP, SL and entry levels up
+/// or down; the entry circle moves both ways and keeps the plain resize.
 pub(super) fn line_hint(handle: usize) -> Option<PointerHint> {
-    (ENTRY_HANDLE..=ENTRY_LINE_HANDLE)
-        .contains(&handle)
-        .then_some(PointerHint::ResizeSide { handle })
+    match handle {
+        RIGHT_EDGE_HANDLE | LEFT_SIDE_HANDLE | RIGHT_SIDE_HANDLE => {
+            Some(PointerHint::ResizeSide { handle })
+        }
+        PROJECTED_HANDLE | MEASURED_LINE_HANDLE | ENTRY_LINE_HANDLE => {
+            Some(PointerHint::ResizeLevel { handle })
+        }
+        _ => None,
+    }
 }
 
 /// A line grab moves that line's price and nothing else: the entry and the
 /// measured edge keep their bars, so a press mid-line never jumps an anchor
 /// sideways to the pointer.
 ///
-/// The width handle moves the right-hand anchor in time and nothing else;
-/// the entry circle moves the entry's price and the left-hand anchor in
-/// time. The width lives in the anchors, so it keeps its length in market
+/// The width square and either side moves that side's anchor in time and
+/// nothing else; the entry circle moves the entry's price and the left-hand
+/// anchor in time. The width lives in the anchors, so it keeps its length in market
 /// time on any timeframe and on a pane mirroring the drawing. The other edge
 /// holds, never closer than [`MIN_WIDTH_BARS`].
 fn drag_line(points: &[Px], handle: usize, to: Px, px_per_bar: f32) -> Option<Handles> {
@@ -549,7 +565,10 @@ fn drag_line(points: &[Px], handle: usize, to: Px, px_per_bar: f32) -> Option<Ha
             moved.get_mut(0)?.y = to.y;
             moved.get_mut(left_anchor)?.x = to.x.min(right - floor);
         }
-        RIGHT_EDGE_HANDLE => moved.get_mut(right_anchor)?.x = to.x.max(left + floor),
+        LEFT_SIDE_HANDLE => moved.get_mut(left_anchor)?.x = to.x.min(right - floor),
+        RIGHT_EDGE_HANDLE | RIGHT_SIDE_HANDLE => {
+            moved.get_mut(right_anchor)?.x = to.x.max(left + floor);
+        }
         _ => return None,
     }
     Some(moved)

@@ -632,7 +632,9 @@ impl DrawingProjection<'_> {
         let hint_of =
             |index| self.drawing_pointer_hint(drawings, index, pos, band, history_right, total);
         let side_line = |index, hint| match hint {
-            Some(PointerHint::ResizeSide { handle }) => Some(PressTarget::Handle { index, handle }),
+            Some(PointerHint::ResizeSide { handle } | PointerHint::ResizeLevel { handle }) => {
+                Some(PressTarget::Handle { index, handle })
+            }
             _ => None,
         };
         let point_handle = |index| {

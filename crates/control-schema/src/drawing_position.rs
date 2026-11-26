@@ -67,8 +67,7 @@ pub struct PositionLook {
     pub ratio: CanonicalDecimal,
     /// Whether the ratio is none of the menu's presets (1, 2, 3).
     pub custom: bool,
-    /// The bar button's words, risk first: `Risk/reward 1:2`,
-    /// `Custom · Risk/reward 1:1.3`.
+    /// The bar button's words, risk first: `R/R 1:2`, `R/R 1:1.3`.
     pub ratio_text: String,
 }
 

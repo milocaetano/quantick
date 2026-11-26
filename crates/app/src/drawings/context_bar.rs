@@ -73,8 +73,8 @@ const WIDTH_PREVIEW_LEN_PX: f32 = 18.0;
 const POPOVER_ROW_WIDTH_PX: f32 = 132.0;
 /// Height of one row inside the width and size popovers.
 const POPOVER_ROW_HEIGHT_PX: f32 = 26.0;
-/// Room for the widest risk/reward button, `Custom · Risk/reward 1:12.5`.
-const RISK_REWARD_WIDTH_PX: f32 = 176.0;
+/// Room for the widest risk/reward button, `R/R 1:12.5`.
+const RISK_REWARD_WIDTH_PX: f32 = 72.0;
 
 /// Opacity while the pointer is elsewhere. It never reaches zero: the object
 /// is selected, and this bar is the proof of that on screen.
@@ -713,8 +713,7 @@ fn leg_color(face: &PositionFace, leg: PositionLeg) -> egui::Color32 {
     egui::Color32::from_rgb(r, g, b)
 }
 
-/// `Risk/reward 1:2` in one colour, led by `Custom · ` when the plan is no
-/// preset.
+/// `R/R 1:2` in one colour.
 fn draw_ratio_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'_>) {
     let Some(face) = object.position.as_ref() else {
         return;
@@ -722,7 +721,7 @@ fn draw_ratio_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'
     let palette = theme::get(ui.ctx());
     let size = egui::vec2(RISK_REWARD_WIDTH_PX, TOOLRAIL_ICON.hit);
     let Some(button) = face.ratio.as_ref().map(|menu| &menu.button) else {
-        ui.add_sized(size, egui::Label::new("Risk/reward –"))
+        ui.add_sized(size, egui::Label::new("R/R –"))
             .on_hover_text("A flat plan states no risk/reward");
         return;
     };

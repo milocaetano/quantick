@@ -1,11 +1,14 @@
-use crate::{MarkScene, pos2, Px, PxRect};
+use crate::{MarkScene, Px, PxRect, pos2};
 use std::any::Any;
 
 use crate::icons;
 use serde::{Deserialize, Serialize};
 
 use super::shape_core::SHAPES_FAMILY;
-use super::{Constrain, DrawContext, DrawingPayload, DrawingStyle, MarkTool, Handles, PointerHint, ToolFamily, ToolShortcut, drawing_fill, drawing_stroke};
+use super::{
+    Constrain, DrawContext, DrawingPayload, DrawingStyle, Handles, MarkTool, PointerHint,
+    ToolFamily, ToolShortcut, drawing_fill, drawing_stroke,
+};
 
 /// Registry id, named like `frvp::TOOL_ID` for the callers that gate on
 /// this one shape (the strategy seat does: two anchors honestly bound a
@@ -227,11 +230,7 @@ fn rectangle_handles(points: &[Px]) -> Option<Handles> {
 
 /// Move the two anchor components owned by one corner while the diagonally
 /// opposite corner stays fixed; a side handle moves one anchor's x.
-fn resize_from_corner(
-    points: &[Px],
-    handle: usize,
-    to: Px,
-) -> Option<Handles> {
+fn resize_from_corner(points: &[Px], handle: usize, to: Px) -> Option<Handles> {
     let [first, second] = points else {
         return None;
     };
@@ -315,11 +314,7 @@ impl MarkTool for Rectangle {
         if points.len() == 2 {
             let rect = screen_rect(points, chart_rect, payload_of(ctxt));
             painter.rect_filled(rect, 0.0, drawing_fill(style));
-            painter.rect_stroke(
-                rect,
-                0.0,
-                drawing_stroke(style),
-            );
+            painter.rect_stroke(rect, 0.0, drawing_stroke(style));
         }
     }
     fn hit_test(
@@ -421,8 +416,8 @@ impl MarkTool for Rectangle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_prelude::*;
     use crate::chart::PriceScale;
+    use crate::test_prelude::*;
     use crate::{ChartPoint, Constrain, DrawingTool, ValueUnit};
 
     fn context<'a>(
@@ -498,17 +493,13 @@ mod tests {
         for handle in 0..4 {
             for target in [outward[handle], inward[handle]] {
                 let moved = TOOL
-                    .drag_handle(
-                        chart,
-                        &points,
-                        handle,
-                        target,
-                        &ctxt,
-                        Constrain::Free,
-                    )
+                    .drag_handle(chart, &points, handle, target, &ctxt, Constrain::Free)
                     .expect("the rectangle owns every corner drag");
                 let resized = PxRect::from_two_pos(moved[0], moved[1]);
-                assert!(resized.contains(target), "handle {handle} follows the pointer");
+                assert!(
+                    resized.contains(target),
+                    "handle {handle} follows the pointer"
+                );
                 assert!(
                     resized.contains(opposite[handle]),
                     "handle {handle} preserves its opposite corner"
@@ -558,7 +549,9 @@ mod tests {
     }
 
     fn hint_at(payload: &RectanglePayload, position: Px) -> Option<PointerHint> {
-        with_context(payload, |ctxt| TOOL.pointer_hint(CHART, &BAND, position, ctxt))
+        with_context(payload, |ctxt| {
+            TOOL.pointer_hint(CHART, &BAND, position, ctxt)
+        })
     }
 
     fn point_handle_at(payload: &RectanglePayload, position: Px) -> Option<usize> {
@@ -570,7 +563,7 @@ mod tests {
     fn side_handle_at(payload: &RectanglePayload, position: Px) -> Option<usize> {
         match hint_at(payload, position)? {
             PointerHint::ResizeSide { handle } => Some(handle),
-            PointerHint::ExtendSide => None,
+            PointerHint::ExtendSide | PointerHint::ResizeLevel { .. } => None,
         }
     }
 
@@ -620,7 +613,11 @@ mod tests {
             pos2(102.0, 84.0),
             pos2(100.0 + BORDER_PX + 2.0, 220.0 - 3.0),
         ] {
-            assert_eq!(zone_at(&BAND, CHART, &payload, corner), None, "at {corner:?}");
+            assert_eq!(
+                zone_at(&BAND, CHART, &payload, corner),
+                None,
+                "at {corner:?}"
+            );
         }
         // Just past the corner's reach, the side line is a side line again.
         assert_eq!(
@@ -707,7 +704,10 @@ mod tests {
         let corner = pos2(100.0, 80.0);
         assert!(!TOOL.double_click(CHART, &BAND, corner, &mut payload));
         let mut payload = right_only();
-        assert!(!double_click_at(&mut payload, 100.0), "the left border line");
+        assert!(
+            !double_click_at(&mut payload, 100.0),
+            "the left border line"
+        );
         assert_eq!(payload, right_only());
     }
 
@@ -717,10 +717,22 @@ mod tests {
     fn each_zone_names_its_own_hint() {
         let payload = RectanglePayload::default();
         let side = |handle| Some(PointerHint::ResizeSide { handle });
-        assert_eq!(hint_at(&payload, pos2(100.0, MID_Y)), side(FIRST_SIDE_HANDLE));
-        assert_eq!(hint_at(&payload, pos2(300.0, MID_Y)), side(SECOND_SIDE_HANDLE));
-        assert_eq!(hint_at(&payload, pos2(110.0, MID_Y)), Some(PointerHint::ExtendSide));
-        assert_eq!(hint_at(&payload, pos2(290.0, MID_Y)), Some(PointerHint::ExtendSide));
+        assert_eq!(
+            hint_at(&payload, pos2(100.0, MID_Y)),
+            side(FIRST_SIDE_HANDLE)
+        );
+        assert_eq!(
+            hint_at(&payload, pos2(300.0, MID_Y)),
+            side(SECOND_SIDE_HANDLE)
+        );
+        assert_eq!(
+            hint_at(&payload, pos2(110.0, MID_Y)),
+            Some(PointerHint::ExtendSide)
+        );
+        assert_eq!(
+            hint_at(&payload, pos2(290.0, MID_Y)),
+            Some(PointerHint::ExtendSide)
+        );
         assert_eq!(hint_at(&payload, pos2(200.0, MID_Y)), None);
         assert_eq!(hint_at(&payload, pos2(100.0, 80.0)), None);
     }
@@ -734,12 +746,31 @@ mod tests {
         let right =
             side_handle_at(&payload, pos2(300.0 + 2.0, MID_Y)).expect("the right line grabs");
         assert_ne!(left, right);
-        assert_eq!(point_handle_at(&payload, pos2(100.0, 82.0)), Some(0), "the corner's");
-        assert_eq!(side_handle_at(&payload, pos2(100.0, 82.0)), None, "no side line there");
-        assert_eq!(point_handle_at(&payload, pos2(100.0, MID_Y)), None, "no point handle");
-        assert_eq!(side_handle_at(&payload, pos2(110.0, MID_Y)), None, "the band is no handle");
+        assert_eq!(
+            point_handle_at(&payload, pos2(100.0, 82.0)),
+            Some(0),
+            "the corner's"
+        );
+        assert_eq!(
+            side_handle_at(&payload, pos2(100.0, 82.0)),
+            None,
+            "no side line there"
+        );
+        assert_eq!(
+            point_handle_at(&payload, pos2(100.0, MID_Y)),
+            None,
+            "no point handle"
+        );
+        assert_eq!(
+            side_handle_at(&payload, pos2(110.0, MID_Y)),
+            None,
+            "the band is no handle"
+        );
         for handle in [left, right] {
-            assert_eq!(TOOL.handle_hint(handle), Some(PointerHint::ResizeSide { handle }));
+            assert_eq!(
+                TOOL.handle_hint(handle),
+                Some(PointerHint::ResizeSide { handle })
+            );
         }
         for corner in 0..4 {
             assert_eq!(TOOL.handle_hint(corner), None);
@@ -750,7 +781,14 @@ mod tests {
         .expect("the rectangle owns its side drag");
         assert_eq!(moved.as_slice(), &[pos2(60.0, 80.0), pos2(300.0, 220.0)]);
         let moved = with_context(&payload, |ctxt| {
-            TOOL.drag_handle(CHART, &BAND, right, pos2(250.0, 290.0), ctxt, Constrain::Free)
+            TOOL.drag_handle(
+                CHART,
+                &BAND,
+                right,
+                pos2(250.0, 290.0),
+                ctxt,
+                Constrain::Free,
+            )
         })
         .expect("the rectangle owns its side drag");
         assert_eq!(moved.as_slice(), &[pos2(100.0, 80.0), pos2(250.0, 220.0)]);
@@ -779,7 +817,9 @@ mod tests {
             extend_left: true,
             extend_right: true,
         };
-        let exported = payload.export_preset().expect("the rectangle exports its preset");
+        let exported = payload
+            .export_preset()
+            .expect("the rectangle exports its preset");
         let mut restored = RectanglePayload::default();
         assert!(restored.import_preset(&exported));
         assert_eq!(restored, payload);

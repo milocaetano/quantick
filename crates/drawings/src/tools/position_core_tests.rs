@@ -110,7 +110,7 @@ fn dragging_the_projected_leg_pins_it_and_leaves_the_rest() {
     let target_y = scale.y(120.0);
     assert_eq!(
         pointer_hint(&points, pos2(200.0, target_y), &ctxt, Side::Long),
-        Some(PointerHint::ResizeSide {
+        Some(PointerHint::ResizeLevel {
             handle: PROJECTED_HANDLE
         })
     );
@@ -178,14 +178,7 @@ fn a_selected_position_names_its_legs_and_its_ratio_risk_first() {
             _ => None,
         })
         .collect();
-    assert_eq!(
-        texts,
-        [
-            "Target 120 · +20 pts",
-            "Stop 90 · -10 pts",
-            "Long · risk 1 : reward 2 · entry 100"
-        ],
-    );
+    assert_eq!(texts, ["TP 120 · +20", "SL 90 · -10", "L R/R 1:2 · 100"],);
 }
 
 /// A long plan entered at 100 with its stop measured at 95: target 110.
@@ -299,7 +292,7 @@ fn a_target_projected_off_the_chart_keeps_its_chip_on_it() {
         .shapes
         .iter()
         .find_map(|shape| match shape {
-            crate::MarkShape::Text { text, at, .. } if text.starts_with("Target") => Some(*at),
+            crate::MarkShape::Text { text, at, .. } if text.starts_with("TP ") => Some(*at),
             _ => None,
         })
         .unwrap();
@@ -326,7 +319,7 @@ fn a_plan_entirely_off_the_chart_paints_no_chip() {
     );
     assert!(!scene.shapes.iter().any(|shape| matches!(
         shape,
-        crate::MarkShape::Text { text, .. } if text.starts_with("Target") || text.starts_with("Stop")
+        crate::MarkShape::Text { text, .. } if text.starts_with("TP ") || text.starts_with("SL ")
     )));
 }
 
@@ -540,7 +533,7 @@ fn a_dragged_measured_edge_makes_the_plan_custom_at_the_ratio_it_shows() {
 fn the_plan_plate_names_the_side_and_the_ratio_risk_first() {
     assert_eq!(
         plan_plate(Side::Short, 1.5, 165_461.58),
-        "Short · risk 1 : reward 1.5 · entry 165461.58"
+        "S R/R 1:1.5 · 165461.58"
     );
 }
 
@@ -753,18 +746,18 @@ fn the_factory_look_reads_on_light_and_dark() {
             )),
             "every word sits on its plate, inked against it"
         );
-        assert_eq!(words("Target"), white, "dark {dark}");
-        assert_eq!(words("Long"), white, "dark {dark}");
+        assert_eq!(words("TP "), white, "dark {dark}");
+        assert_eq!(words("L R/R"), white, "dark {dark}");
         let stop_plate = crate::rgba_unmultiplied(stop[0], stop[1], stop[2], u8::MAX);
         if dark {
             assert_eq!(
-                words("Stop"),
+                words("SL "),
                 theme.ink_on(stop_plate),
                 "white fails on grey"
             );
-            assert_ne!(words("Stop"), white);
+            assert_ne!(words("SL "), white);
         } else {
-            assert_eq!(words("Stop"), white);
+            assert_eq!(words("SL "), white);
         }
     }
 }
@@ -875,4 +868,46 @@ fn a_width_set_in_bars_moves_the_right_anchor_in_time() {
             Err(crate::PositionRefusal::WidthOutOfRange)
         );
     }
+}
+
+/// The cursor says what a press moves: the box's sides and the width square
+/// sideways, the TP, SL and entry levels up or down, and a press anywhere
+/// along a side grabs it, not only at the square.
+#[test]
+fn every_side_resizes_and_the_cursor_names_the_axis() {
+    let scale = scale();
+    let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 90.0)];
+    let points = screen(&scale, &anchors);
+    let payload = two_to_one();
+    let ctxt = context(&payload, &anchors, &scale);
+    let hint = |at: Px| pointer_hint(&points, at, &ctxt, Side::Long);
+    // Box x 100 to 300; target 120, entry 100, stop 90.
+    let mid_target = (scale.y(120.0) + scale.y(100.0)) / 2.0;
+    assert_eq!(
+        hint(pos2(100.0, mid_target)),
+        Some(PointerHint::ResizeSide {
+            handle: LEFT_SIDE_HANDLE
+        })
+    );
+    assert_eq!(
+        hint(pos2(300.0, scale.y(95.0))),
+        Some(PointerHint::ResizeSide {
+            handle: RIGHT_SIDE_HANDLE
+        })
+    );
+    for (price, handle) in [
+        (120.0, PROJECTED_HANDLE),
+        (100.0, ENTRY_LINE_HANDLE),
+        (90.0, MEASURED_LINE_HANDLE),
+    ] {
+        assert_eq!(
+            hint(pos2(200.0, scale.y(price))),
+            Some(PointerHint::ResizeLevel { handle })
+        );
+    }
+    assert_eq!(line_hint(ENTRY_HANDLE), None, "the circle moves both ways");
+    let left = drag_line(&points, LEFT_SIDE_HANDLE, pos2(50.0, 0.0), 10.0).unwrap();
+    assert_eq!(left.as_slice(), &[pos2(50.0, points[0].y), points[1]]);
+    let right = drag_line(&points, RIGHT_SIDE_HANDLE, pos2(400.0, 0.0), 10.0).unwrap();
+    assert_eq!(right.as_slice(), &[points[0], pos2(400.0, points[1].y)]);
 }

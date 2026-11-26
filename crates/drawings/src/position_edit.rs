@@ -123,7 +123,7 @@ pub struct RatioRow {
 /// What the bar shows for a position's ratio: the button and the menu.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RatioMenu {
-    /// `Risk/reward 1:2`, `Custom · Risk/reward 1:1.3`.
+    /// `R/R 1:2`.
     pub button: String,
     /// The checked, read-only `Custom 1:N` row on top while the plan is no
     /// preset, then the presets, none checked in that case.
@@ -150,7 +150,7 @@ pub fn ratio_menu(drawing: &Drawing<DrawingTool>) -> Option<RatioMenu> {
         checked: preset == Some(value),
     }));
     Some(RatioMenu {
-        button: ratio_button(ratio, preset.is_none()),
+        button: ratio_button(ratio),
         rows,
     })
 }

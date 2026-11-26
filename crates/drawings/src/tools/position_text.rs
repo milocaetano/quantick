@@ -30,23 +30,23 @@ pub fn custom_row(ratio: f64) -> String {
     format!("Custom 1:{}", ratio_number(ratio))
 }
 
-/// The risk/reward button: `Risk/reward 1:2`, led by `Custom · ` for a plan
-/// that is no preset.
+/// The risk/reward button, short so the bar stays small: `R/R 1:2`. Its
+/// menu says whether the plan is a preset.
 #[must_use]
-pub fn ratio_button(ratio: f64, custom: bool) -> String {
-    let lead = if custom { "Custom · " } else { "" };
-    format!("{lead}Risk/reward 1:{}", ratio_number(ratio))
+pub fn ratio_button(ratio: f64) -> String {
+    format!("R/R 1:{}", ratio_number(ratio))
 }
 
-/// The plate at the entry: `Long · risk 1 : reward 2 · entry 165461.58`.
+/// The plate on the entry line, short enough to sit inside the box:
+/// `L R/R 1:2 · 165461.58`, `S` for a short.
 #[must_use]
 pub fn plan_plate(side: Side, ratio: f64, entry: f64) -> String {
     let side = match side {
-        Side::Long => "Long",
-        Side::Short => "Short",
+        Side::Long => "L",
+        Side::Short => "S",
     };
     format!(
-        "{side} · risk 1 : reward {} · entry {}",
+        "{side} R/R 1:{} · {}",
         ratio_number(ratio),
         quantick_engine::display::display_f64(entry)
     )

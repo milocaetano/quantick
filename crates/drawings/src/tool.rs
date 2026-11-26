@@ -467,6 +467,9 @@ pub enum PointerHint {
     /// sideways and nothing else. The index follows the point handles;
     /// [`MarkTool::drag_handle`] owns the drag.
     ResizeSide { handle: usize },
+    /// A press grabs `handle`, this level line, and its drag moves the level
+    /// up or down and nothing else; otherwise as [`Self::ResizeSide`].
+    ResizeLevel { handle: usize },
 }
 
 /// A cheap, copyable reference to one registered implementation.

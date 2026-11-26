@@ -101,7 +101,7 @@ fn an_out_of_range_value_or_another_tool_is_refused() {
 fn the_menu_checks_the_preset_or_shows_the_custom_row_on_top() {
     let drawing = target_measured_long();
     let menu = ratio_menu(&drawing).unwrap();
-    assert_eq!(menu.button, "Risk/reward 1:2");
+    assert_eq!(menu.button, "R/R 1:2");
     let checked: Vec<_> = menu.rows.iter().map(|row| row.checked).collect();
     assert_eq!(checked, [false, true, false]);
     // A dragged stop at 92: risk 8, reward 20.
@@ -112,7 +112,7 @@ fn the_menu_checks_the_preset_or_shows_the_custom_row_on_top() {
         ..payload(&drawing).clone()
     });
     let menu = ratio_menu(&custom).unwrap();
-    assert_eq!(menu.button, "Custom · Risk/reward 1:2.5");
+    assert_eq!(menu.button, "R/R 1:2.5");
     assert_eq!(
         menu.rows[0],
         RatioRow {
