@@ -9,6 +9,7 @@ use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
 use quantick_broker_mt5::auth::{AUTH_DEADLINE, BRIDGE_SECRET_BYTES};
+use quantick_broker_mt5::transport::MAX_LINE_BYTES;
 use quantick_broker_mt5::{
     BridgeLink, BridgeSecret, LinkEvent, LinkState, Mt5Venue, TcpBridgeLink,
 };
@@ -224,4 +225,69 @@ fn a_first_line_dribbled_past_the_deadline_is_refused() {
         "closed after {took:?}, before the deadline"
     );
     assert_the_bridge_still_connects(&mut link);
+}
+
+/// The bound on a proven bridge's lines: one of exactly `MAX_LINE_BYTES`
+/// arrives whole, and one byte more ends the connection without that line
+/// or anything sent after it being delivered.
+#[test]
+fn a_line_past_its_bound_ends_the_connection_and_is_never_delivered() {
+    let mut link = TcpBridgeLink::listen(0, secret()).expect("bind loopback");
+    let mut bridge = dial_authenticated(&link);
+    let fits = "x".repeat(MAX_LINE_BYTES);
+    let over = "y".repeat(MAX_LINE_BYTES + 1);
+    let writer = std::thread::spawn(move || {
+        // The listener may close mid-write; that is the behaviour under test.
+        let _ = bridge.write_all(format!("{fits}\n{over}\nafter\n").as_bytes());
+    });
+    let started = Instant::now();
+    let mut events = Vec::new();
+    while !events
+        .iter()
+        .any(|event| matches!(event, LinkEvent::Disconnected))
+    {
+        assert!(
+            started.elapsed() < PATIENCE,
+            "the over-long line never ended the connection"
+        );
+        link.poll(&mut events);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let _ = writer.join();
+    let lines: Vec<usize> = events
+        .iter()
+        .filter_map(|event| match event {
+            LinkEvent::Line(line) => Some(line.len()),
+            LinkEvent::Disconnected => None,
+        })
+        .collect();
+    assert_eq!(
+        lines,
+        vec![MAX_LINE_BYTES],
+        "only the line within the bound"
+    );
+}
+
+/// Whatever an unproven peer sends first — under the bound or past it, with
+/// or without a newline — it is refused, and the right bridge still gets
+/// through afterwards. One listener serves every case, as one serves a run.
+#[test]
+fn any_first_bytes_but_the_secret_are_refused() {
+    use proptest::prelude::*;
+    use proptest::test_runner::TestRunner;
+
+    let link = std::cell::RefCell::new(TcpBridgeLink::listen(0, secret()).expect("bind loopback"));
+    let mut runner = TestRunner::new(ProptestConfig::with_cases(32));
+    runner
+        .run(&prop::collection::vec(any::<u8>(), 0..512), |first| {
+            assert_refused(&mut link.borrow_mut(), move |mut client| {
+                let _ = client.write_all(&first);
+                // End the stream so a line with no newline is refused at
+                // once instead of at the deadline.
+                let _ = client.shutdown(std::net::Shutdown::Write);
+            });
+            Ok(())
+        })
+        .unwrap();
+    assert_the_bridge_still_connects(&mut link.borrow_mut());
 }

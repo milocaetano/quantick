@@ -22,6 +22,7 @@ futures-util = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+proptest = { workspace = true }
 # `test-util` gives the tests a pausable clock: the page-budget test walks 512
 # pages, each paying the inter-page delay, which is thirteen real seconds of
 # waiting for a scripted source that does no I/O at all. It is the one
