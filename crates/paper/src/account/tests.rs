@@ -81,6 +81,50 @@ fn the_account_trades_and_journals_without_a_ticket() {
     );
 }
 
+/// Costs the host declares price the account's simulator fills, and the
+/// journal keeps the fees beside the gross points.
+#[test]
+fn declared_fill_costs_reach_the_simulator_and_the_journal() {
+    let dir = ScratchDir::new("account-fill-costs");
+    let mut account = account(&dir, "ACCTX");
+    let costs = quantick_trading::FillCosts::new(
+        quantick_trading::Commission::PerContract(Decimal::ONE),
+        1,
+        Some(Decimal::ONE),
+        false,
+    )
+    .expect("valid costs");
+    account.set_fill_costs(costs);
+
+    account.seed(&print(0, 100));
+    account.market(Side::Buy, Decimal::from(100), Bracket::none(), &plain_env());
+    account.on_trade(&print(1, 100));
+    let events = account.dispatch(Command::ClosePosition);
+    account.handle_events(events);
+    account.on_trade(&print(2, 105));
+
+    let trade = &account.session_trades()[0];
+    assert_eq!(
+        (trade.entry_price, trade.exit_price),
+        (Decimal::from(101), Decimal::from(104))
+    );
+    assert_eq!(
+        trade.pnl_points,
+        Decimal::from(3),
+        "gross, after the slippage"
+    );
+    assert_eq!(trade.fees_points, Decimal::from(2), "one point a side");
+    let folder = dir.path().join("ACCTX");
+    let file = std::fs::read_dir(&folder)
+        .expect("the symbol folder exists")
+        .flatten()
+        .next()
+        .expect("one journal");
+    let text = std::fs::read_to_string(file.path()).expect("readable");
+    let reread = quantick_sim::history::parse(&text).expect("the journal parses");
+    assert_eq!(reread.trades, account.session_trades().to_vec());
+}
+
 /// The risk lock refuses an oversized entry, and says so through the
 /// outbox rather than by reaching for a toast lane it does not own.
 #[test]
@@ -238,28 +282,31 @@ const JOURNAL_GOLDEN_FILE: &str = "19700101-000002.csv";
 /// Every byte [`the_journal_bytes_are_fixed`] must write. Recorded from
 /// a run against `app`'s ticket *before* the policy half moved out of it,
 /// and not touched since - not when the account left the ticket, and not
-/// when it left `app` for this crate.
+/// when it left `app` for this crate. Version 3 of the journal appended one
+/// column, `fees_points`, zero on every row of this free fill model; every
+/// byte before it on each line is the version-2 record
+/// (`ab74859479f2f1e471dfb5a1556a15d2891d440c7c119db49c0e2ad64be094d6`).
 ///
 /// SHA-256 of these bytes:
-/// `ab74859479f2f1e471dfb5a1556a15d2891d440c7c119db49c0e2ad64be094d6`.
+/// `9dbdeb77b506e3b49313ffae632df8a72f5b0a9c107dc734dbb998cc9491a877`.
 /// The hash is written down so that the "before" and the "after" of the
 /// extraction can be compared by someone who is reading neither this
 /// file's history nor the diff — a reviewer, or the trader.
 const JOURNAL_GOLDEN: &str = concat!(
-    "# quantick-trades 2\n",
+    "# quantick-trades 3\n",
     "# symbol=GOLDEN\n",
     "# source=live\n",
     "opened_ms,closed_ms,side,quantity,entry_price,exit_price,pnl_points,",
-    "exit_reason,entry_agg_id,exit_agg_id,mae_points,mfe_points\n",
+    "exit_reason,entry_agg_id,exit_agg_id,mae_points,mfe_points,fees_points\n",
     // A long taken at the market and closed by hand: 100 to 105.
-    "1000,2000,long,1,100,105,5,manual,1,2,0,5\n",
+    "1000,2000,long,1,100,105,5,manual,1,2,0,5,0\n",
     // A short, the same way: 105 down to 103.
-    "3000,4000,short,1,105,103,2,manual,3,4,0,2\n",
+    "3000,4000,short,1,105,103,2,manual,3,4,0,2,0\n",
     // A long stopped out. The entry is 103 and the ticket's stop offset
     // is 2, so the stop sits at 101 and the tape reaches it.
-    "5000,6000,long,1,103,101,-2,stop_loss,5,6,2,0\n",
+    "5000,6000,long,1,103,101,-2,stop_loss,5,6,2,0,0\n",
     // A long taken at its target: entry 101, offset 6, filled at 107.
-    "7000,8000,long,1,101,107,6,take_profit,7,8,0,6\n",
+    "7000,8000,long,1,101,107,6,take_profit,7,8,0,6,0\n",
 );
 
 /// A market entry the way the ticket places one: priced against the
@@ -419,7 +466,7 @@ fn the_export_csv_carries_readable_stamps_and_running_equity() {
     assert_eq!(lines.len(), 3, "header plus two rows");
     assert!(lines[0].starts_with("symbol,side,quantity,opened_ms,opened_utc"));
     assert!(
-        lines[0].ends_with(",source,pnl_per_unit,pnl_money,currency"),
+        lines[0].ends_with(",source,pnl_per_unit,pnl_money,currency,fees_points,net_points"),
         "{}",
         lines[0]
     );
@@ -429,7 +476,7 @@ fn the_export_csv_carries_readable_stamps_and_running_equity() {
         lines[1]
     );
     assert!(
-        lines[1].ends_with(",manual,1,2,2,2,live,5,,"),
+        lines[1].ends_with(",manual,1,2,2,2,live,5,,,0,5"),
         "{}",
         lines[1]
     );
@@ -439,7 +486,7 @@ fn the_export_csv_carries_readable_stamps_and_running_equity() {
         lines[2]
     );
     assert!(
-        lines[2].ends_with(",manual,,,,,,-2,,"),
+        lines[2].ends_with(",manual,,,,,,-2,,,0,-2"),
         "unknown v1 fields and an unrecorded source stay empty: {}",
         lines[2]
     );
@@ -494,12 +541,12 @@ size_step = \"1\"
     );
     let lines: Vec<&str> = text.lines().collect();
     assert!(
-        lines[1].ends_with(",400,400,60000,manual,,,,,,200,80,BRL"),
+        lines[1].ends_with(",400,400,60000,manual,,,,,,200,80,BRL,0,400"),
         "{}",
         lines[1]
     );
     assert!(
-        lines[2].ends_with(",10,,"),
+        lines[2].ends_with(",10,,,0,30"),
         "unknown money stays empty: {}",
         lines[2]
     );
@@ -1233,7 +1280,7 @@ fn a_saved_trade_prices_identically_from_any_tab() {
             .2
             .lines()
             .nth(1)
-            .is_some_and(|line| line.ends_with(",200,80,BRL")),
+            .is_some_and(|line| line.ends_with(",200,80,BRL,0,400")),
         "{}",
         on_b3.2
     );

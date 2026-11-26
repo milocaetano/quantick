@@ -116,7 +116,7 @@ impl<'a> TradeWords<'a> {
             symbol: shown_symbol(instrument, chart),
             source: meta.source,
             pnl: meta.pnl.closed_split(trade),
-            result: Some(trade.pnl_points.cmp(&Decimal::ZERO)),
+            result: Some(trade.net_points().cmp(&Decimal::ZERO)),
             detail,
         }
     }

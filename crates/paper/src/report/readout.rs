@@ -52,7 +52,7 @@ impl EquityWalk {
     #[must_use]
     pub fn of(rows: &[HistoryRow]) -> Self {
         Self::walk(
-            rows.iter().map(|row| row.trade.pnl_points),
+            rows.iter().map(|row| row.trade.net_points()),
             PnlPrimary::PointsTimesQty,
             "pts".to_owned(),
         )
@@ -201,7 +201,7 @@ impl ReportView {
         self.pnl_rows = self
             .rows
             .iter()
-            .map(|row| pnl.trade(&row.symbol, row.trade.pnl_points, row.trade.quantity))
+            .map(|row| pnl.trade(&row.symbol, row.trade.net_points(), row.trade.quantity))
             .collect();
         self.net_text = pnl.word_split(&total);
         self.net_tint = pnl.tint(&total);
@@ -243,7 +243,7 @@ impl LedgerTotals {
         let mut totals = Self::default();
         for (pnl, trade) in trades {
             totals.trades += 1;
-            if trade.pnl_points > Decimal::ZERO {
+            if trade.net_points() > Decimal::ZERO {
                 totals.wins += 1;
             }
             pnl.add_to(&mut totals.net, trade);

@@ -503,10 +503,10 @@ impl Tab {
                         observer,
                     );
                     // After the drain: a symbol switch inside it forgets the old tick.
-                    let tick = config
-                        .feed(&self.feed_id)
-                        .and_then(|f| f.widget_tick(&self.symbol));
-                    self.paper.account_mut().set_price_tick(tick);
+                    let feed = config.feed(&self.feed_id);
+                    let account = self.paper.account_mut();
+                    account.set_price_tick(feed.and_then(|f| f.widget_tick(&self.symbol)));
+                    account.set_fill_costs(config.fill_costs(&self.feed_id, &self.symbol));
                 }
                 TabDrainStage::ApplyIndicatorResults => {
                     for pane in self.panes_mut() {

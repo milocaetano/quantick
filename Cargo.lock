@@ -3404,6 +3404,7 @@ dependencies = [
  "quantick-orderbook",
  "quantick-orderflow",
  "quantick-sources",
+ "quantick-trading",
  "quantick-workspace",
  "rust_decimal",
  "serde",

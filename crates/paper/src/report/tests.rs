@@ -253,6 +253,8 @@ equity.low: 0.0  equity.high: 15.0
       long_trades: 4,
       short_trades: 4,
       net_points: 15,
+      gross_points: 15,
+      fees_points: 0,
       gross_profit: 31,
       gross_loss: 16,
       win_rate_pct: Some(
@@ -386,6 +388,8 @@ equity.low: 0.0  equity.high: 11.0
       long_trades: 2,
       short_trades: 3,
       net_points: 11,
+      gross_points: 11,
+      fees_points: 0,
       gross_profit: 19,
       gross_loss: 8,
       win_rate_pct: Some(

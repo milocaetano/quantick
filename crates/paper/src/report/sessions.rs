@@ -175,7 +175,7 @@ impl SessionInfo {
             live,
             trades: parsed.trades.len(),
             net: parsed.trades.iter().fold(Decimal::ZERO, |net, trade| {
-                net.saturating_add(trade.pnl_points)
+                net.saturating_add(trade.net_points())
             }),
             first_closed_ms: parsed.trades.iter().map(|trade| trade.closed_ms).min(),
             span: span_of(&parsed.trades),
@@ -557,7 +557,7 @@ pub fn summarize_sessions<'a>(
         }
         let entry = kept.entry(key).or_insert((0, Decimal::ZERO, i64::MIN));
         entry.0 += 1;
-        entry.1 = entry.1.saturating_add(row.trade.pnl_points);
+        entry.1 = entry.1.saturating_add(row.trade.net_points());
         entry.2 = entry.2.max(row.trade.closed_ms);
     }
     let mut sessions: Vec<SessionSummary<'a>> = kept
@@ -673,7 +673,7 @@ pub fn group_by_day_and_session<'a>(
         });
         let group = &mut days[at];
         group.count += 1;
-        group.net = group.net.saturating_add(trade.pnl_points);
+        group.net = group.net.saturating_add(trade.net_points());
         pnl.add_to(&mut group.pnl, trade);
         let session = match group
             .sessions
@@ -696,7 +696,7 @@ pub fn group_by_day_and_session<'a>(
             }
         };
         session.count += 1;
-        session.net = session.net.saturating_add(trade.pnl_points);
+        session.net = session.net.saturating_add(trade.net_points());
         pnl.add_to(&mut session.pnl, trade);
         session.items.push(index);
     }

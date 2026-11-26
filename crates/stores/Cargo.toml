@@ -17,6 +17,7 @@ quantick-indicators = { path = "../indicators" }
 quantick-orderflow = { path = "../orderflow" }
 # The feed-shaped config types and the history reach the catalogue speaks.
 quantick-sources = { path = "../sources" }
+quantick-trading = { path = "../trading" }
 quantick-workspace = { path = "../workspace" }
 rust_decimal = { workspace = true }
 serde = { workspace = true }

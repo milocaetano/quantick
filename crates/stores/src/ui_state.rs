@@ -990,6 +990,7 @@ mod tests {
                 asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
                 symbol_widgets: Default::default(),
+                symbol_costs: Default::default(),
                 symbol_icons: Default::default(),
                 contract_rolls: Default::default(),
                 default_layout: None,

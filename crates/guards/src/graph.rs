@@ -255,7 +255,8 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // hands the engine an MT5-shaped book the way the feed does. `drawings`
     // for the alert observer cache, which reads a pane's drawings as facts;
     // it sits beside `AlertRuntime` because `alerts` cannot reach `drawings`
-    // (`drawings` depends on `alerts`).
+    // (`drawings` depends on `alerts`). `trading` for the fill costs a feed's
+    // `symbol_costs` declares.
     (
         "stores",
         &[
@@ -268,6 +269,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "orderbook",
             "orderflow",
             "sources",
+            "trading",
             "workspace",
         ],
     ),

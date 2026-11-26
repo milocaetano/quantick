@@ -365,7 +365,7 @@ fn trade_cells(
         (trade.exit_reason.as_str().replace('_', " "), muted),
         (
             view.trade_text(ordinal).to_owned(),
-            points_color(palette, trade.pnl_points),
+            points_color(palette, trade.net_points()),
         ),
         (view.equity.text(index), points_color(palette, equity)),
         match row.source {

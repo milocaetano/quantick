@@ -139,7 +139,7 @@ impl PnlReader<'_> {
             let units = self.book.units(symbol);
             total.add(
                 symbol,
-                &TradePnl::of(trade.pnl_points, trade.quantity, &units),
+                &TradePnl::of(trade.net_points(), trade.quantity, &units),
                 &units,
             );
         }
@@ -244,7 +244,7 @@ impl PnlReader<'_> {
     pub fn value(&self, symbol: &str, trade: &ClosedTrade, primary: PnlPrimary) -> Option<Decimal> {
         let units = self.book.units(symbol);
         primary_value(
-            &TradePnl::of(trade.pnl_points, trade.quantity, &units),
+            &TradePnl::of(trade.net_points(), trade.quantity, &units),
             primary,
         )
     }
@@ -302,14 +302,14 @@ impl SymbolPnl<'_> {
     #[must_use]
     pub fn closed(&self, trade: &ClosedTrade) -> String {
         self.reader
-            .trade(self.symbol, trade.pnl_points, trade.quantity)
+            .trade(self.symbol, trade.net_points(), trade.quantity)
     }
 
     /// One closed trade of this symbol as a ledger row writes it, on two
     /// lines: [`Self::row_split`] of its stored figure.
     #[must_use]
     pub fn closed_split(&self, trade: &ClosedTrade) -> (String, String) {
-        self.row_split(trade.pnl_points, trade.quantity)
+        self.row_split(trade.net_points(), trade.quantity)
     }
 
     /// A stored figure of this symbol (move × quantity) as a ledger row
@@ -327,7 +327,7 @@ impl SymbolPnl<'_> {
     #[must_use]
     pub fn compact(&self, trade: &ClosedTrade) -> String {
         self.reader
-            .compact(self.symbol, trade.pnl_points, trade.quantity)
+            .compact(self.symbol, trade.net_points(), trade.quantity)
     }
 
     /// Fold one closed trade of this symbol into `total`.
@@ -335,7 +335,7 @@ impl SymbolPnl<'_> {
         let units = self.reader.book.units(self.symbol);
         total.add(
             self.symbol,
-            &TradePnl::of(trade.pnl_points, trade.quantity, &units),
+            &TradePnl::of(trade.net_points(), trade.quantity, &units),
             &units,
         );
     }

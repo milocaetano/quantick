@@ -84,10 +84,10 @@ impl DayIndex {
             let day = CivilDate::from_ms(trade.closed_ms, tz).day_number();
             let stat = days.entry(day).or_default();
             stat.trades += 1;
-            if trade.pnl_points > Decimal::ZERO {
+            if trade.net_points() > Decimal::ZERO {
                 stat.wins += 1;
             }
-            stat.net = stat.net.saturating_add(trade.pnl_points);
+            stat.net = stat.net.saturating_add(trade.net_points());
         }
         Self { days }
     }

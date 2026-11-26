@@ -36,6 +36,16 @@ pub fn metric_rows(report: &PerformanceReport) -> Vec<MetricRow> {
         "closed round trips under the current filter",
     );
     row(
+        "gross / fees / net",
+        format!(
+            "{} / {} / {} pts",
+            fmt_signed_points(report.gross_points),
+            fmt_points(report.fees_points),
+            fmt_signed_points(report.net_points)
+        ),
+        "points before fees, the commission paid on both sides, and what was kept;          every other row reads trades after their fees",
+    );
+    row(
         "max drawdown",
         pts(report.max_drawdown_points),
         "deepest drop of realized equity below its running peak, in closing order",
@@ -201,5 +211,31 @@ mod tests {
         assert_eq!(sides[0].0, "trades");
         assert_eq!((sides[0].1)(&report.long), "0");
         assert_eq!((sides[2].1)(&report.long), "—", "0/0 is no win rate");
+        assert_eq!(value("gross / fees / net"), "0 / 0 / 0 pts");
+    }
+
+    #[test]
+    fn the_fees_row_shows_what_the_gross_paid_to_become_the_net() {
+        let trade = quantick_trading::ClosedTrade {
+            side: quantick_engine::Side::Buy,
+            quantity: Decimal::ONE,
+            entry_price: Decimal::from(100),
+            exit_price: Decimal::from(111),
+            opened_ms: 0,
+            closed_ms: 1_000,
+            pnl_points: Decimal::from(11),
+            exit_reason: quantick_trading::ExitReason::Manual,
+            entry_agg_id: None,
+            exit_agg_id: None,
+            mae_points: None,
+            mfe_points: None,
+            fees_points: Decimal::from(4),
+        };
+        let rows = metric_rows(&PerformanceReport::from_trades(&[trade]));
+        let row = rows
+            .iter()
+            .find(|row| row.0 == "gross / fees / net")
+            .expect("the fees row");
+        assert_eq!(row.1, "+11 / 4 / +7 pts");
     }
 }

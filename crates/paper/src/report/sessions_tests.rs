@@ -434,7 +434,7 @@ fn a_legacy_file_without_metadata_loads_with_a_default_label() {
     let folder = dir.path().join("WINJ26");
     std::fs::create_dir_all(&folder).unwrap();
     let mut text = format!(
-        "# quantick-trades 2\n# symbol=WINJ26\n{}\n",
+        "# quantick-trades 3\n# symbol=WINJ26\n{}\n",
         history::HEADER
     );
     text.push_str(&history::write_trade(&trade_at(DAY_START, 2)));

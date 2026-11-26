@@ -56,7 +56,7 @@ impl PaperAccount {
     #[must_use]
     pub fn trade_pnl_text(&self, trade: &ClosedTrade) -> String {
         self.pnl_reader()
-            .trade(&self.symbol, trade.pnl_points, trade.quantity)
+            .trade(&self.symbol, trade.net_points(), trade.quantity)
     }
 
     /// The reader bound to this chart's symbol.
