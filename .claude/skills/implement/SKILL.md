@@ -36,6 +36,6 @@ Be unambiguous. Omit empty optional fields. Never invent commands. Set `Review:`
 # Output
 Recheck and compact the saved plan. Ask if a blocking decision remains; otherwise output only:
 ```text
-/goal Implement "<absolute-plan-path>" under its Rules; done only when its PR is open non-draft, its Evidence giving measured vs planned Size, tested by an independent agent, reviewed, CI green at the current remote HEAD, not merged.
+/goal Implement "<absolute-plan-path>" under its Rules; done only when its PR is open non-draft, its Evidence giving measured vs planned Size, tested by an independent agent, reviewed, CI green at the current remote HEAD, not merged; end by printing the PR's full URL.
 ```
 Do not run it.
