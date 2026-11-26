@@ -219,8 +219,6 @@ class ExecSession(TransportMixin):
     # -- framing -----------------------------------------------------------
 
     def hello(self) -> None:
-        # The secret goes first and alone: quantick reads nothing else from a
-        # connection until it has seen it.
         self.outbox += self.secret.encode("ascii") + b"\n"
         self.send(
             {
@@ -765,16 +763,6 @@ def main() -> int:
         help="file holding quantick's per-run secret (quantick passes it; its log names it)",
     )
     args = parser.parse_args()
-    try:
-        secret = read_secret(args.secret_file)
-    except (OSError, ValueError) as error:
-        log(
-            "EXEC_SECRET_UNREADABLE",
-            path=args.secret_file,
-            reason=str(error),
-            hint="start the bridge with the path quantick logged as MT5_EXEC_SECRET_PUBLISHED",
-        )
-        return 2
     if mt5 is None:
         log("BRIDGE_NO_MT5_PACKAGE", hint="pip install MetaTrader5")
         return 2
@@ -787,6 +775,18 @@ def main() -> int:
     cache = ReplyCache()
     try:
         while True:
+            # Read again before every dial: the file goes with the quantick run
+            # that published it, and a later run publishes another.
+            try:
+                secret = read_secret(args.secret_file)
+            except (OSError, ValueError) as error:
+                log(
+                    "EXEC_SECRET_UNREADABLE",
+                    path=args.secret_file,
+                    reason=str(error),
+                    hint="start the bridge with the path quantick logged as MT5_EXEC_SECRET_PUBLISHED",
+                )
+                return 2
             try:
                 run_session(args, cache, instance, secret)
             except BridgeExit:
@@ -796,7 +796,7 @@ def main() -> int:
                     "EXEC_DISCONNECTED",
                     reason=str(error) or type(error).__name__,
                     retry_in_s=args.retry_seconds,
-                    hint="is quantick running with [broker.metatrader] enabled?",
+                    hint="is quantick running with [broker.metatrader] enabled, and is --secret-file this run's?",
                 )
                 time.sleep(args.retry_seconds)
     except KeyboardInterrupt:

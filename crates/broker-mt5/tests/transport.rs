@@ -27,14 +27,7 @@ fn dial_authenticated(link: &TcpBridgeLink) -> TcpStream {
     let mut bridge = TcpStream::connect(link.local_addr()).expect("dial");
     bridge.set_read_timeout(Some(PATIENCE)).expect("timeout");
     bridge
-        .write_all(
-            format!(
-                "{}
-",
-                secret().to_hex()
-            )
-            .as_bytes(),
-        )
+        .write_all(format!("{}\n", secret().to_hex()).as_bytes())
         .expect("bridge writes");
     bridge
 }
@@ -188,17 +181,8 @@ fn a_wrong_secret_is_refused_before_any_line() {
     let mut link = TcpBridgeLink::listen(0, secret()).expect("bind loopback");
     let wrong = BridgeSecret::from_bytes([6; BRIDGE_SECRET_BYTES]).to_hex();
     assert_refused(&mut link, move |mut client| {
-        let _ = client.write_all(
-            format!(
-                "{wrong}
-"
-            )
-            .as_bytes(),
-        );
-        let _ = client.write_all(
-            b"{\"type\":\"state\",\"balance\":\"1\"}
-",
-        );
+        let _ = client.write_all(format!("{wrong}\n").as_bytes());
+        let _ = client.write_all(b"{\"type\":\"state\",\"balance\":\"1\"}\n");
     });
     assert_the_bridge_still_connects(&mut link);
 }
@@ -207,10 +191,7 @@ fn a_wrong_secret_is_refused_before_any_line() {
 fn a_bridge_that_sends_no_secret_is_refused() {
     let mut link = TcpBridgeLink::listen(0, secret()).expect("bind loopback");
     assert_refused(&mut link, |mut client| {
-        let _ = client.write_all(
-            b"{\"type\":\"exec_hello\",\"schema\":2,\"instance\":\"x\"}
-",
-        );
+        let _ = client.write_all(b"{\"type\":\"exec_hello\",\"schema\":2,\"instance\":\"x\"}\n");
     });
     assert_refused(&mut link, drop);
     assert_the_bridge_still_connects(&mut link);
@@ -231,12 +212,7 @@ fn a_first_line_dribbled_past_the_deadline_is_refused() {
     // The right secret, but one byte at a time: never whole in time.
     let hex = secret().to_hex();
     let took = assert_refused(&mut link, move |mut client| {
-        for byte in format!(
-            "{hex}
-"
-        )
-        .bytes()
-        {
+        for byte in format!("{hex}\n").bytes() {
             if client.write_all(&[byte]).is_err() {
                 return;
             }

@@ -13,11 +13,9 @@
 //! listens on the configured loopback port, launches the bridge and builds
 //! the MetaTrader venue over the socket.
 //!
-//! The listener takes only a bridge that proves this run's secret. The
-//! connector draws it once, publishes it in the private instance directory
-//! and hands the bridge the file's path (`--secret-file`), never the secret
-//! itself, which a process list would show. With no secret there is no
-//! listener: execution never falls back to an open port.
+//! The bridge is handed the path of this run's secret file (`--secret-file`),
+//! never the secret, which a process list would show. With no secret there
+//! is no listener (`PROTOCOL.md`, "Execution channel").
 
 use std::io::{BufRead as _, BufReader, Read};
 use std::path::Path;

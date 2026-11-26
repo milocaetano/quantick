@@ -23,7 +23,8 @@ pub const BRIDGE_SECRET_BYTES: usize = 32;
 /// nothing, or one byte at a time, from holding the one bridge slot.
 pub const AUTH_DEADLINE: Duration = Duration::from_secs(2);
 
-/// Longest first line read: the hex secret is 64 bytes, plus the line end.
+/// Longest first line read, line end included: headroom over the 64 hex
+/// characters of a secret.
 const MAX_AUTH_LINE_BYTES: usize = 128;
 
 /// One run's secret. Its value never reaches a log: `Debug` shows nothing.
@@ -85,7 +86,8 @@ pub(crate) fn authenticate(reader: &mut BufReader<TcpStream>, secret: &BridgeSec
         let Some(left) = AUTH_DEADLINE.checked_sub(started.elapsed()) else {
             return false;
         };
-        if left.is_zero() || reader.get_ref().set_read_timeout(Some(left)).is_err() {
+        // A zero timeout is an error, so an exhausted deadline refuses here too.
+        if reader.get_ref().set_read_timeout(Some(left)).is_err() {
             return false;
         }
         let available = match reader.fill_buf() {

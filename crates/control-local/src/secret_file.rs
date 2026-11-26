@@ -22,24 +22,20 @@ pub const SECRET_FILE_EXTENSION: &str = "secret";
 /// A published secret file, removed when dropped.
 #[derive(Debug)]
 pub struct PublishedSecret {
-    path: Option<PathBuf>,
+    path: PathBuf,
 }
 
 impl PublishedSecret {
     /// Where the file is, for the helper process to be pointed at.
     #[must_use]
     pub fn path(&self) -> &Path {
-        self.path
-            .as_deref()
-            .expect("a live published secret retains its path")
+        &self.path
     }
 }
 
 impl Drop for PublishedSecret {
     fn drop(&mut self) {
-        if let Some(path) = self.path.take() {
-            let _ = remove_owned_descriptor(&path);
-        }
+        let _ = remove_owned_descriptor(&self.path);
     }
 }
 
@@ -77,19 +73,21 @@ pub fn publish_secret_in(
     // A file left by a crashed run whose process id this run inherited: it
     // is this user's own and private, or removing it refuses.
     remove_owned_descriptor(&target)?;
-    let written = (|| {
-        let mut file = private_new_file(&target)?;
-        file.write_all(contents)
-            .map_err(|error| DiscoveryError::io("write private secret file", error))?;
-        file.sync_all()
-            .map_err(|error| DiscoveryError::io("synchronize private secret file", error))?;
-        verify_private_file(&target)
-    })();
+    // A file another publisher created between the removal and this open
+    // fails `create_new` and is left alone; only a file this call created is
+    // cleaned up when writing it fails.
+    let mut file = private_new_file(&target)?;
+    let written = file
+        .write_all(contents)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| DiscoveryError::io("write private secret file", error))
+        .and_then(|()| verify_private_file(&target));
     if let Err(error) = written {
+        drop(file);
         let _ = std::fs::remove_file(&target);
         return Err(error);
     }
-    Ok(PublishedSecret { path: Some(target) })
+    Ok(PublishedSecret { path: target })
 }
 
 #[cfg(test)]

@@ -8,10 +8,8 @@
 //! a false account, while a bridge that listened would take orders from any
 //! local process. The port binds `127.0.0.1` only.
 //!
-//! Loopback is not identity, so a connection is the bridge only once its
-//! first line is this run's [`BridgeSecret`] ([`crate::auth`]). Until then
-//! nothing it sends is read as a bridge line and no order is written to it;
-//! a connection that fails is closed and the listener takes the next.
+//! A connection is the bridge only once [`crate::auth`] has seen this run's
+//! secret as its first line.
 //!
 //! One bridge at a time: while one is connected, a second waits in the
 //! listen backlog until the first goes.
@@ -155,6 +153,10 @@ fn accept_loop(
         // Held while the first line is awaited too, so dropping the link
         // closes a connection that is still proving itself.
         *current.lock().unwrap_or_else(PoisonError::into_inner) = Some(closer);
+        // A drop between the check above and the store found nothing to close.
+        if stop.load(Ordering::SeqCst) {
+            return;
+        }
         let mut reader = BufReader::new(stream);
         if !authenticate(&mut reader, secret) {
             if let Some(refused) = current

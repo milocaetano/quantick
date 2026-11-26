@@ -620,7 +620,10 @@ anything else, that sends no line, or that has not sent the whole line within
 2 seconds (or sends more than 128 bytes without a line end) is closed. It is
 never written to, and nothing it sent is read as a bridge line. Quantick
 logs `BROKER_EXEC_BRIDGE_REFUSED` and takes the next connection. When the
-secret cannot be published, quantick does not listen at all.
+secret cannot be published, quantick does not listen at all. The secret stops
+impersonation, not denial of service: connections are checked one at a time,
+so a local process that keeps dialing can delay the real bridge, never act
+as it.
 
 Prices and volumes travel as **decimal strings** both ways (`"124900"`,
 `"2"`); a protective price that is absent is `null`, never `0`.
