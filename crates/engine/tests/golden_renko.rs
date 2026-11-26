@@ -1,8 +1,6 @@
-//! Renko bricks as ProfitChart draws them, pinned three ways: a
-//! hand-computed golden over ten prints on a stated step, the trader's
-//! ProfitChart 50R chart of WIN over a trimmed MetaTrader tape of the same two
-//! sessions, and the bricks every consumer cuts from that tape with the step
-//! read off its own prints.
+//! Renko bricks as ProfitChart draws them, pinned three ways: a hand-computed golden on a stated
+//! step, the trader's ProfitChart 50R chart of WIN over a trimmed MetaTrader tape, and the bricks
+//! every consumer cuts from that tape with the step read off its own prints.
 
 use quantick_engine::bar_registry::BUILTIN_BARS;
 use quantick_engine::{
@@ -72,8 +70,7 @@ fn a_print_clearing_two_levels_closes_two_bricks_and_the_second_holds_no_print()
 
 #[test]
 fn no_brick_is_cut_until_the_prints_have_shown_the_step() {
-    // Ten prints show nine distances, far short of the evidence the step
-    // is frozen on: every print is held, in the forming bar, and said so.
+    // Ten prints show nine distances, short of the evidence the step is frozen on: all are held.
     let trades = fixture::parse_trades(TRADES).unwrap();
     let mut builder = RenkoBarBuilder::new(3);
     assert!(closed_bricks(&mut builder, &trades).is_empty());
@@ -87,10 +84,8 @@ fn no_brick_is_cut_until_the_prints_have_shown_the_step() {
 /// close, high, low, and its open time in UTC milliseconds.
 type Brick = (char, i64, i64, i64, i64, Option<i64>);
 
-/// ProfitChart's 50R chart of WINV26 on 2026-10-01 and 2026-10-02, brick by
-/// brick. The open times are the brick's first print; the comments read them
-/// on B3's clock, UTC-03:00, the clock the chart is drawn on. The first
-/// brick's open time is the trimmed tape's, not the chart's, so it is left out.
+/// ProfitChart's 50R chart of WINV26 on 2026-10-01 and 2026-10-02, brick by brick. Comments read
+/// open times on B3's clock (UTC-03:00). The first brick's open time is the trimmed tape's, so omitted.
 const REFERENCE: [Brick; 17] = [
     ('U', 187425, 187670, 187670, 187115, None),
     ('U', 187670, 187915, 187915, 187255, Some(1_790_879_696_315)), // 10-01 15:34:56.315

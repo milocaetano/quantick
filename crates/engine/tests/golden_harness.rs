@@ -1,9 +1,5 @@
-//! Golden harness wired end-to-end against a trivial pass-through builder.
-//!
-//! Until tick bars land (#5), this proves the harness itself works: it parses a
-//! trade fixture, replays it through a `BarBuilder`, and compares the output to
-//! a committed expected-bars fixture — with the determinism (twice-identical)
-//! check running underneath.
+//! Golden harness wired end-to-end against a pass-through builder: parse a trade fixture, replay
+//! it through a `BarBuilder`, compare to the expected-bars fixture, with the determinism check.
 
 use quantick_engine::{Bar, BarBuilder, Trade, golden};
 use rust_decimal::Decimal;

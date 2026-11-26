@@ -1,39 +1,7 @@
 //! Per-bar bid×ask footprint ladders and the pure signals over them.
-//!
-//! A footprint answers "at which prices did the buyers and sellers act inside
-//! this bar?" — the per-price-level split that [`Bar`](crate::Bar) deliberately
-//! does not carry (bars are equality-compared in golden tests and copied by
-//! value everywhere; the ladder is opt-in and lives beside the bar, never
-//! inside it).
-//!
-//! The design mirrors the engine's determinism rules:
-//!
-//! - Levels are keyed by **zero-anchored integer buckets**
-//!   (`floor(price / group)`), so two bars with the same grouping align row for
-//!   row — the prerequisite for reading stacked imbalances across bars — and no
-//!   float ever becomes a map key.
-//! - The ladder is capped. A bar that would exceed
-//!   [`level cap`](FootprintBuilder::new) doubles its grouping (an *integer*
-//!   re-bucket, so the merge is exact) and reports itself
-//!   [`aggregated`](BarFootprint::is_aggregated) — coarser data is labeled,
-//!   never silently patched.
-//! - Accumulation saturates instead of panicking: quantities come from an
-//!   untrusted feed, the same rule [`Bar`](crate::Bar) follows.
-//!
-//! The *builder* knows nothing about bar boundaries: the caller that already
-//! drives a [`BarBuilder`](crate::BarBuilder) pushes the same trades here and
-//! calls [`close`](FootprintBuilder::close) whenever its bar closes. That keeps
-//! one bucketing rule (the bar builder's) and one ladder fold (this one), and
-//! lets chart, backtest and bot read identical footprints from identical
-//! trades.
-//!
-//! Signal functions ([`poc`](BarFootprint::poc),
-//! [`imbalances`](BarFootprint::imbalances),
-//! [`stacked_zones`](BarFootprint::stacked_zones),
-//! [`extreme_ratio`](BarFootprint::extreme_ratio)) are pure reads over a
-//! finished ladder. They are context tools for a human or a strategy to weigh —
-//! none of them claims standalone predictive edge, and the engine attaches no
-//! thresholds of its own: every cutoff is a caller-supplied parameter.
+//! Levels are zero-anchored integer buckets (`floor(price / group)`): equal groupings align row for
+//! row. Past the level cap the grouping doubles exactly and the ladder reports itself aggregated.
+//! Accumulation saturates (untrusted feed). Signals are pure reads; every cutoff is the caller's.
 
 use std::collections::BTreeMap;
 
@@ -46,10 +14,8 @@ use crate::{Side, Trade};
 /// share times a full ladder of rows never overdraws the bar's own total.
 const APPROX_SHARE_DECIMALS: u32 = 12;
 
-/// Default ladder size cap: beyond this many price levels in one bar the
-/// grouping doubles. Generous for every realistic bar (a dense Binance tick
-/// bar prints a few hundred distinct levels) while bounding memory against a
-/// corrupt feed spraying prices across the whole `Decimal` range.
+/// Default ladder size cap: beyond this many levels in one bar the grouping doubles.
+/// It bounds memory against a corrupt feed spraying prices across the whole `Decimal` range.
 pub const DEFAULT_LEVEL_CAP: usize = 2000;
 
 /// The buy/sell split of one price level of one bar.
@@ -109,19 +75,9 @@ pub struct StackedZone {
     pub side: Side,
 }
 
-/// The uniform spread an [approximated](BarFootprint::approximated) ladder
-/// holds, stated as a *range* instead of a row per bucket.
-///
-/// A venue candle carries no tape, so its volume is spread evenly over the
-/// buckets its low–high crosses: every row of `lo..=hi` holds the same share,
-/// and the rounding remainders all land on the close's row. Written out that
-/// is `hi - lo + 1` map entries — up to the level cap, for one candle. Read as
-/// a range it is six numbers, whatever the candle's width, which is how a fold
-/// over thousands of candles stays affordable
-/// ([`ProfileFold`](crate::ProfileFold)).
-///
-/// The two readings are the same data: `BarFootprint::approximated` is written
-/// on top of this one, so there is no second spread to drift.
+/// The uniform spread an [approximated](BarFootprint::approximated) ladder holds, as a range
+/// `lo..=hi`. Remainders land on the close's row; a range keeps a
+/// [`ProfileFold`](crate::ProfileFold) cheap.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ApproxSpread {
     /// Lowest bucket of the spread, under `2^doublings * base_group`.
@@ -147,13 +103,8 @@ pub(crate) struct ApproxSpread {
 }
 
 impl ApproxSpread {
-    /// The spread `bar`'s summary implies at `base_group`, or `None` when the
-    /// bar traded nothing (there is no distribution to approximate).
-    ///
-    /// # Panics
-    ///
-    /// On a non-positive `base_group` or a zero `level_cap` — the same
-    /// configuration contract as [`FootprintBuilder::new`].
+    /// The spread `bar` implies at `base_group`, or `None` if it traded nothing. Panics as the
+    /// builder.
     #[must_use]
     pub fn of(bar: &crate::Bar, base_group: Decimal, level_cap: usize) -> Option<Self> {
         assert!(
@@ -184,10 +135,7 @@ impl ApproxSpread {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let rows = (hi - lo + 1) as u64;
         let rows_dec = Decimal::from(rows);
-        // Per-row shares rounded *down*, remainders to the close's row:
-        // totals conserve exactly, whatever the divisions truncated — a
-        // share rounded up would overdraw the total by an epsilon and break
-        // the conservation the fold is trusted for.
+        // Widen the grouping until the bar's price span fits the cap, as the trade fold does.
         let share = |total: Decimal| {
             total
                 .checked_div(rows_dec)
@@ -217,9 +165,7 @@ impl ApproxSpread {
 }
 
 /// The finished (or in-progress) footprint ladder of one bar.
-///
-/// Obtained from [`FootprintBuilder`]; whether it is closed is known from
-/// *where* you obtained it, exactly like [`Bar`](crate::Bar).
+/// Whether it is closed is known from where you obtained it, like [`Bar`](crate::Bar).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BarFootprint {
     levels: BTreeMap<i64, FootprintLevel>,
@@ -237,32 +183,9 @@ impl BarFootprint {
         }
     }
 
-    /// An **approximated** ladder built from a bar's summary alone — for
-    /// bars with no tape behind them (venue history candles), where the real
-    /// per-price distribution is unknowable.
-    ///
-    /// The bar's volume is spread uniformly over the buckets its low–high
-    /// range crosses, each side separately (a venue that reports the
-    /// taker-buy split — Binance klines do — keeps its real side totals);
-    /// division remainders land in the close's bucket, so every total is
-    /// conserved *exactly*: folding approximated ladders into a
-    /// [`VolumeProfile`](crate::VolumeProfile) sums to precisely the bars'
-    /// own volumes. A range too wide for `level_cap` doubles the grouping
-    /// first and reports itself [`aggregated`](Self::is_aggregated).
-    ///
-    /// The shape is honest about *totals* and approximate about *placement*
-    /// — the consumer must label it so (data honesty); the engine cannot,
-    /// because an approximated ladder reads identically to a real one on
-    /// purpose: one fold, one profile, one code path.
-    ///
-    /// `None` when the bar traded nothing. # Panics — on a non-positive
-    /// `base_group` or a zero `level_cap`, the same configuration contract
-    /// as [`FootprintBuilder::new`].
-    /// Spelling the spread out row by row costs one map entry per bucket, and
-    /// a wide candle fills the cap. A caller folding thousands of candles into
-    /// one profile takes the spread itself
-    /// (the crate-internal `ApproxSpread`) and adds it as a range
-    /// instead — same numbers, no ladder in between.
+    /// An **approximated** ladder from a bar's summary alone (venue candles, no tape): volume spreads
+    /// uniformly over the low-high buckets, remainders on the close's. Totals exact, placement not: label
+    /// it. `None` if nothing traded. Panics on a non-positive `base_group` or a zero `level_cap`.
     #[must_use]
     pub fn approximated(bar: &crate::Bar, base_group: Decimal, level_cap: usize) -> Option<Self> {
         let spread = ApproxSpread::of(bar, base_group, level_cap)?;
@@ -334,10 +257,7 @@ impl BarFootprint {
         self.doublings
     }
 
-    /// Point of control: the bucket with the highest total volume.
-    ///
-    /// Ties break toward the **lowest** bucket, deterministically: iteration
-    /// is ascending and only a strictly greater volume replaces the candidate.
+    /// Per-row shares round down and remainders go to the close's row, so totals conserve exactly.
     #[must_use]
     pub fn poc(&self) -> Option<i64> {
         let mut best: Option<(i64, Decimal)> = None;
@@ -351,22 +271,9 @@ impl BarFootprint {
         best.map(|(bucket, _)| bucket)
     }
 
-    /// Diagonal imbalances under a caller-supplied rule.
-    ///
-    /// The comparison is diagonal because the two sides of one price did not
-    /// compete — they crossed. A taker-buy printing at level `p` competed with
-    /// the taker-sells one level *below*, so:
-    ///
-    /// - **buy** imbalance at `p`: `buy(p) >= ratio * sell(p - 1)` **and**
-    ///   `buy(p) - sell(p - 1) >= min_qty`;
-    /// - **sell** imbalance at `p`: `sell(p) >= ratio * buy(p + 1)` **and**
-    ///   `sell(p) - buy(p + 1) >= min_qty`.
-    ///
-    /// A missing neighbour counts as zero, which makes the ratio test vacuous
-    /// there — `min_qty` is what separates signal from a 4-vs-1-lot artefact,
-    /// on empty neighbours and thin ones alike. A bucket may satisfy both
-    /// sides; both entries are returned, ascending by bucket, buy before sell
-    /// within one bucket.
+    /// Diagonal imbalances: a taker-buy at `p` competes with taker-sells at `p - 1` (sells with
+    /// `p + 1`). A side wins when its qty is `>= ratio *` the diagonal and exceeds it by `min_qty`;
+    /// missing counts 0. Ascending by bucket, buy before sell.
     #[must_use]
     pub fn imbalances(&self, ratio: Decimal, min_qty: Decimal) -> Vec<Imbalance> {
         let side_qty = |bucket: i64, side: Side| -> Decimal {
@@ -400,12 +307,8 @@ impl BarFootprint {
         found
     }
 
-    /// Maximal runs of at least `min_run` *consecutive* same-side imbalances.
-    ///
-    /// Consecutive means adjacent buckets — a level that printed nothing
-    /// breaks the stack, as does one that merely failed the imbalance rule.
-    /// Zones are returned ascending by `low_bucket`, buy zones before sell
-    /// zones at equal starts.
+    /// Maximal runs of at least `min_run` consecutive same-side imbalances; a gap breaks the stack.
+    /// Ascending by `low_bucket`, buy before sell.
     #[must_use]
     pub fn stacked_zones(
         &self,
@@ -440,15 +343,9 @@ impl BarFootprint {
         zones
     }
 
-    /// The aggression ratio at one extreme of the bar: dominant side over the
-    /// other side at the lowest (or highest) traded level — the number a
-    /// footprint chart badges beside a candle's extreme as an exhaustion or
-    /// absorption cue.
-    ///
-    /// Returns `None` for an empty ladder **and** when the smaller side is
-    /// zero: a one-sided extreme has no finite ratio, and inventing a large
-    /// stand-in would be a silent lie — the caller can read the raw
-    /// [`levels`](BarFootprint::levels) and say "one-sided" honestly.
+    /// The aggression ratio at one extreme of the bar: dominant side over the other at that level.
+    /// `None` for an empty ladder or a zero smaller side: no finite ratio, and a stand-in would
+    /// lie.
     #[must_use]
     pub fn extreme_ratio(&self, extreme: Extreme) -> Option<Decimal> {
         let (_, level) = match extreme {
@@ -493,17 +390,8 @@ impl BarFootprint {
 }
 
 /// Double a ladder's grouping: merge bucket pairs by integer halving.
-///
-/// The identity behind it — `floor(floor(p/g)/2) == floor(p/2g)` — is why a
-/// coarsened ladder is *exactly* the ladder a coarser builder would have
-/// produced, and why the range fold may coarsen its accumulator at any point
-/// without changing the answer. Shared by the ladder and by
-/// [`ProfileFold`](crate::ProfileFold) for that reason: two copies of this
-/// loop is two chances for the two to stop agreeing, and they had already
-/// started to — one saturated on the trade count, the other did not.
-///
-/// Accumulation saturates: quantities and counts come from an untrusted feed
-/// and a corrupt one must not panic the fold.
+/// `floor(floor(p/g)/2) == floor(p/2g)`, so the result equals a coarser builder's. Shared with
+/// [`ProfileFold`](crate::ProfileFold); saturates (untrusted feed).
 pub(crate) fn halved(levels: BTreeMap<i64, FootprintLevel>) -> BTreeMap<i64, FootprintLevel> {
     let mut merged: BTreeMap<i64, FootprintLevel> = BTreeMap::new();
     for (bucket, level) in levels {
@@ -525,14 +413,8 @@ pub struct FootprintBuilder {
 }
 
 impl FootprintBuilder {
-    /// A builder bucketing prices into rows `base_group` wide (normally the
-    /// instrument's tick size), holding at most `level_cap` rows per bar
-    /// before the grouping doubles.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `base_group` is not positive or `level_cap` is zero — both
-    /// are configuration errors, not feed input.
+    /// A builder bucketing prices into rows `base_group` wide (the tick), doubling past `level_cap`
+    /// rows. Panics if `base_group` is not positive or `level_cap` is zero.
     #[must_use]
     pub fn new(base_group: Decimal, level_cap: usize) -> Self {
         assert!(
@@ -555,10 +437,8 @@ impl FootprintBuilder {
         partial.fold(trade, self.level_cap);
     }
 
-    /// Close the current bar: hand out its ladder and start fresh. Call this
-    /// whenever the bar builder driven by the same trades closes a bar (the
-    /// closing trade included). `None` when no trade arrived since the last
-    /// close.
+    /// Close the current bar and hand out its ladder. Call it when the paired bar builder closes a
+    /// bar (closing trade included). `None` when no trade arrived since the last close.
     pub fn close(&mut self) -> Option<BarFootprint> {
         self.partial.take()
     }
@@ -802,10 +682,8 @@ mod tests {
         assert_eq!(fp.extreme_ratio(Extreme::High), None);
     }
 
-    /// A corrupt print near `Decimal::MAX` over a sub-unit group overflows
-    /// the bucket division; it must land in a saturated bucket, and a
-    /// one-sided extreme whose ratio overflows must read as "no finite
-    /// ratio" — never a panic, on either path (feed input is untrusted).
+    /// A corrupt print near `Decimal::MAX` over a sub-unit group must land in a saturated bucket,
+    /// and an overflowing extreme ratio must read as "no finite ratio", never a panic.
     #[test]
     fn absurd_feed_values_saturate_instead_of_panicking() {
         let mut builder = FootprintBuilder::new(dec("0.01"), DEFAULT_LEVEL_CAP);
@@ -867,10 +745,8 @@ mod tests {
         }
     }
 
-    /// The approximated ladder conserves every total exactly: shares are
-    /// rounded down and the remainders land in the close's row, so folding
-    /// approximated bars sums to precisely the bars' own volumes — the
-    /// property the range profile trusts.
+    /// The approximated ladder conserves every total exactly: shares round down and remainders land
+    /// in the close's row.
     #[test]
     fn an_approximated_ladder_conserves_volume_sides_and_count_exactly() {
         // 1.0 buy over three $1 rows: 0.333… truncated, remainder to close.

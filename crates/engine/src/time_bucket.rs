@@ -1,28 +1,6 @@
-//! The one bucket law every time bar obeys, live or folded from candles.
-//!
-//! A time interval is a millisecond count, as it has always been: that is what
-//! [`crate::BarSpec::Time`] holds and what every saved workspace, config file
-//! and control call already carries. The law reads three shapes out of it, all
-//! in UTC:
-//!
-//! - **A calendar month** is a whole number `n` (1..=[`MAX_CALENDAR_MONTHS`])
-//!   of [`CALENDAR_MONTH_MS`]. Months differ in length, so no fixed duration
-//!   *is* a month; the mean Gregorian month stands in as its nominal size. That
-//!   nominal value is not a whole number of days, so no `Nd` interval can be
-//!   mistaken for it, and arithmetic that only needs a typical bar width (how
-//!   far ahead an empty slot sits) still gets a sensible answer. The buckets
-//!   themselves are calendar months, counted from January 1970: `3mo` cuts
-//!   quarters, `12mo` calendar years.
-//! - **A whole number of weeks** opens on Monday 00:00 UTC. The epoch was a
-//!   Thursday, so this is the one fixed interval that is not epoch-aligned.
-//! - **Anything else** — seconds to days — is epoch-aligned and floor-divided,
-//!   which puts a day on 00:00 UTC and is exactly the rule time bars always
-//!   followed.
-//!
-//! The live builder ([`crate::TimeBarBuilder`]) and the venue-candle fold read
-//! the same two functions, so a chart's history and its forming bar cannot
-//! disagree about where a day, a week or a month begins. Pure arithmetic: no
-//! clock, no time zone database.
+//! The one bucket law every time bar obeys, live or folded from candles (UTC, pure arithmetic).
+//! Calendar month: a whole `n` (1..=[`MAX_CALENDAR_MONTHS`]) of [`CALENDAR_MONTH_MS`], counted from
+//! Jan 1970. Whole weeks open Monday 00:00 UTC. Anything else is epoch-aligned and floor-divided.
 
 /// One UTC day.
 pub const DAY_MS: i64 = 86_400_000;
@@ -30,13 +8,9 @@ pub const DAY_MS: i64 = 86_400_000;
 /// One week. A bucket of whole weeks opens on Monday 00:00 UTC.
 pub const WEEK_MS: i64 = 7 * DAY_MS;
 
-/// The nominal size of one calendar month: the mean Gregorian month,
-/// 365.2425 / 12 days.
-///
-/// An interval of `n` times this, for `n` in 1..=[`MAX_CALENDAR_MONTHS`], is
-/// read as `n` calendar months rather than as a duration. It is a whole number
-/// of seconds but not of minutes, hours or days, so it never collides with an
-/// interval written in those units below a year.
+/// The nominal size of one calendar month: the mean Gregorian month, 365.2425 / 12 days.
+/// An interval of `n` times this (1..=[`MAX_CALENDAR_MONTHS`]) reads as `n` calendar months; it
+/// is not a whole number of minutes, so it collides with no interval below a year.
 pub const CALENDAR_MONTH_MS: i64 = 2_629_746_000;
 
 /// The most calendar months one bar may span: a calendar year.
@@ -64,12 +38,8 @@ pub fn calendar_months(interval_ms: i64) -> Option<i64> {
         .filter(|months| (1..=MAX_CALENDAR_MONTHS).contains(months))
 }
 
-/// The shape an interval's buckets take, read once from its millisecond count.
-///
-/// Everything the law says about one interval follows from which of the three
-/// shapes it is, so a caller that cuts many timestamps by the same interval —
-/// the live builder, a fold, a drawing walking empty slots — resolves it once
-/// and asks the shape, rather than re-reading the count every time.
+/// The shape an interval's buckets take, read once from its millisecond count, so callers
+/// that cut many timestamps by one interval resolve it once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeBucketLaw {
     /// Epoch-aligned windows of this many milliseconds: seconds to days.
@@ -160,11 +130,8 @@ pub fn time_bucket_start(time_ms: i64, interval_ms: i64) -> i64 {
     TimeBucketLaw::of(interval_ms).map_or(time_ms, |law| law.start(time_ms))
 }
 
-/// The start of the bucket after the one opening at `bucket_start` — where
-/// that bucket ends, exclusive.
-///
-/// `bucket_start` is expected to be a value [`time_bucket_start`] returned.
-/// See [`TimeBucketLaw::end`].
+/// The start of the bucket after the one opening at `bucket_start`, i.e. where it ends
+/// (exclusive); `bucket_start` should come from [`time_bucket_start`]. See [`TimeBucketLaw::end`].
 #[must_use]
 pub fn time_bucket_end(bucket_start: i64, interval_ms: i64) -> i64 {
     TimeBucketLaw::of(interval_ms).map_or(bucket_start, |law| law.end(bucket_start))

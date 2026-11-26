@@ -1,31 +1,7 @@
-//! Volume-by-price profiles over a range of bars, and the value area over them.
-//!
-//! A [`VolumeProfile`] is the exact fold of N per-bar
-//! [`BarFootprint`](crate::BarFootprint) ladders into one ladder: at which
-//! prices did the whole *range* trade, not one bar. Because footprint buckets
-//! are zero-anchored (`floor(price / group)`), ladders that share a grouping
-//! align row for row and the merge is a plain `BTreeMap` sum — no resampling,
-//! no interpolation, no float keys.
-//!
-//! The same determinism and honesty rules as the footprint apply:
-//!
-//! - Ladders whose cap forced different doublings merge at the **coarsest**
-//!   grouping among them; finer ladders fold down by exact integer halving
-//!   (the identity coarsening rests on: `floor(floor(p/g)/2) == floor(p/2g)`).
-//!   Ladders with different *base* groups never aligned at all and the merge
-//!   refuses (`None`) instead of inventing rows.
-//! - The merged ladder is capped like a bar's: past `level_cap` rows the
-//!   grouping doubles and the profile reports itself
-//!   [`aggregated`](VolumeProfile::is_aggregated) — as it also does when any
-//!   input ladder already was.
-//! - Accumulation saturates instead of panicking; quantities come from an
-//!   untrusted feed.
-//!
-//! [`value_area`](VolumeProfile::value_area) is the classic profile read: the
-//! narrowest band of rows around the [`poc`](VolumeProfile::poc) holding a
-//! caller-supplied fraction of the range's volume (the engine attaches no
-//! thresholds of its own — 70% is the caller's convention, not this module's).
-//!
+//! Volume-by-price profiles over a range of bars, and the value area over them. A [`VolumeProfile`]
+//! is the exact fold of [`BarFootprint`](crate::BarFootprint) ladders (a `BTreeMap` sum); mixed
+//! doublings merge at the coarsest grouping, different base groups refuse (`None`). It caps like a
+//! bar, reports itself aggregated, and saturates (untrusted feed).
 
 use std::collections::BTreeMap;
 
@@ -56,28 +32,9 @@ pub struct VolumeProfile {
 }
 
 impl VolumeProfile {
-    /// Fold `ladders` into one profile, capped at `level_cap` rows.
-    ///
-    /// The result's grouping is the coarsest among the inputs (finer ladders
-    /// fold down exactly); if the merged ladder still exceeds `level_cap` the
-    /// grouping doubles until it fits, and the profile reports itself
-    /// [`aggregated`](Self::is_aggregated) — as it also does when any input
-    /// already was.
-    ///
-    /// `None` when `ladders` is empty, and when the inputs disagree on their
-    /// *base* grouping — such ladders never shared bucket boundaries, and a
-    /// profile over them would be an invention, not a fold.
-    ///
-    /// This is the whole-range spelling of the same fold
-    /// [`ProfileFold`](crate::ProfileFold) runs a piece at a time, and it is
-    /// written on top of it rather than beside it: one accumulator, one set of
-    /// coarsening rules, no second answer to keep in step. Callers that cannot
-    /// afford the whole range in one call reach for the fold directly.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `level_cap` is zero — a configuration error, not feed input,
-    /// the same contract as [`FootprintBuilder::new`](crate::FootprintBuilder::new).
+    /// Fold `ladders` into one profile at the coarsest input grouping, doubling past `level_cap`
+    /// rows. `None` when empty or base groupings differ. Written on top of
+    /// [`ProfileFold`](crate::ProfileFold). Panics if `level_cap` is zero.
     #[must_use]
     pub fn merge<'a>(
         ladders: impl IntoIterator<Item = &'a BarFootprint>,
@@ -86,10 +43,8 @@ impl VolumeProfile {
         assert!(level_cap > 0, "profile level cap must be positive");
         let mut ladders = ladders.into_iter();
         let first = ladders.next()?;
-        // The first ladder's own grouping becomes the fold's, so it can never
-        // be the one refused; and a ladder's base group is positive by
-        // `FootprintBuilder`'s construction, so the fold's assertion on that
-        // cannot fire from here.
+        // The first ladder's grouping becomes the fold's, so it is never refused, and its base
+        // group is positive by `FootprintBuilder`'s construction.
         let mut fold = crate::ProfileFold::new(first.base_group(), level_cap);
         fold.push_ladder(first);
         for ladder in ladders {
@@ -103,13 +58,9 @@ impl VolumeProfile {
         fold.profile()
     }
 
-    /// The profile these rows, this grouping and this honesty flag describe.
-    ///
-    /// Crate-only, and deliberately: a `VolumeProfile` is a *fold's* result,
-    /// and there is exactly one fold — [`ProfileFold`](crate::ProfileFold),
-    /// which [`merge`](Self::merge) itself is written on top of. Handing this
-    /// to consumers would let a second fold exist, which is the drift the
-    /// one-engine rule forbids.
+    /// The profile these rows, grouping and honesty flag describe. Crate-only: a `VolumeProfile` is
+    /// a fold's result and [`ProfileFold`](crate::ProfileFold) is the only fold; exposing this
+    /// would allow a second one.
     pub(crate) fn from_parts(
         levels: BTreeMap<i64, FootprintLevel>,
         group: Decimal,
@@ -140,10 +91,8 @@ impl VolumeProfile {
         self.group.saturating_mul(Decimal::from(bucket))
     }
 
-    /// True when this profile is coarser than the bars' base grouping —
-    /// because an input ladder was capped, or because the merge itself was.
-    /// Consumers must surface this; coarser data is labeled, never silently
-    /// patched.
+    /// True when this profile is coarser than the bars' base grouping (a capped input or merge).
+    /// Consumers must surface this; coarser data is labeled, never silently patched.
     #[must_use]
     pub fn is_aggregated(&self) -> bool {
         self.aggregated
@@ -191,32 +140,9 @@ impl VolumeProfile {
         best.map(|(bucket, _)| bucket)
     }
 
-    /// The narrowest printed-row band around the POC holding at least
-    /// `fraction` of [`total_volume`](Self::total_volume).
-    ///
-    /// Expansion follows the Sierra Chart / CQG convention: starting at the
-    /// POC, compare the combined volume of the next **two** price-adjacent
-    /// buckets above against the next two below, and expand into the larger
-    /// pair. Buckets where nothing traded contribute zero volume, so a pair
-    /// facing a price gap competes with what actually sits behind it — an
-    /// isolated cluster far above the POC no longer outbids a printed row
-    /// directly below it just because the gap between them is free to cross.
-    /// An exact tie expands **downward**, consistent with the POC's own
-    /// tie-toward-lowest rule. Within the chosen pair, buckets are taken one
-    /// at a time and expansion stops as soon as the fraction is captured, so
-    /// the area is minimal.
-    ///
-    /// A side whose pair is entirely inside a gap is only ever chosen when the
-    /// other side is exhausted — the remaining volume then genuinely sits
-    /// beyond the gap, and expansion jumps to that side's next printed row
-    /// (this keeps a `fraction ≥ 1` covering every printed row, and keeps the
-    /// loop bounded by printed rows, not by price distance).
-    ///
-    /// [`vah`](ValueArea::vah) and [`val`](ValueArea::val) are always printed
-    /// buckets — empty buckets crossed on the way are never reported as edges.
-    ///
-    /// `None` on an empty profile. `fraction` is the caller's convention
-    /// (0.70 is the classic); a fraction ≥ 1 covers every printed row.
+    /// The narrowest printed-row band around the POC holding at least `fraction` of the volume.
+    /// Sierra/CQG rule: expand into the larger of the next two buckets above or below (empty count
+    /// 0), tie downward, one bucket at a time. A pair inside a gap jumps to the next printed row.
     #[must_use]
     pub fn value_area(&self, fraction: Decimal) -> Option<ValueArea> {
         let poc = self.poc()?;
@@ -262,10 +188,9 @@ impl VolumeProfile {
 
             if take_below {
                 if pair_below == Decimal::ZERO {
-                    // Both buckets of the pair are inside a gap: this side was
-                    // only chosen because the other is exhausted, so the
-                    // volume still owed sits beyond the gap — jump to the
-                    // next printed row rather than crawling the price axis.
+                    // Both buckets of the pair are inside a gap: this side was chosen only because
+                    // the other is exhausted, so jump to the next printed row rather than crawling
+                    // the price axis.
                     lo -= 1;
                     captured = captured.saturating_add(rows[lo].1);
                 } else {
@@ -490,10 +415,8 @@ mod tests {
 
     #[test]
     fn value_area_on_a_symmetric_ladder() {
-        // 1 / 4 / 10 / 4 / 1: POC row is 10 of 20 total; 70% needs exactly
-        // 14. The pairs tie (4+1 both sides), the tie expands downward, and
-        // the first row below (4) completes the fraction — the area is
-        // minimal, so expansion stops mid-pair right there.
+        // 1 / 4 / 10 / 4 / 1: POC row is 10 of 20; 70% needs 14. The pairs tie, the tie expands
+        // downward and the first row below (4) completes the fraction, stopping mid-pair.
         let profile = profile_of(&[
             ("10", "1", "0"),
             ("11", "4", "0"),
@@ -589,10 +512,8 @@ mod tests {
 
     #[test]
     fn value_area_does_not_annex_clusters_across_price_gaps() {
-        // Issue #156's reproduction. 21 units total, 70% needs 14.7. The old
-        // printed-row pairing saw the isolated cluster at 500 as "the next row
-        // above 102" and dragged the VAH 400 buckets up — while leaving out
-        // the row at 100 holding 4x the volume of the row it included.
+        // 21 units total, 70% needs 14.7. An isolated cluster at 500 must not outbid the row at 100
+        // holding 4x the volume of the row included, dragging the VAH 400 buckets up.
         let profile = profile_of(&[
             ("100", "4", "0"),
             ("101", "10", "0"),

@@ -1,23 +1,11 @@
-//! Plain-text CSV fixtures for recorded trades.
-//!
-//! Fixtures are how the engine's determinism is guarded: a committed file of
-//! trades is replayed against committed expected bars (see the golden harness).
-//! The format is deliberately trivial — one trade per line, comma-separated, no
-//! quoting — so fixtures are easy to read, hand-write and diff, and the parser
-//! needs no dependencies.
-//!
+//! Plain-text CSV trade fixtures that guard determinism, one trade per line:
 //! ```text
 //! # comment lines and blank lines are ignored
 //! agg_id,timestamp_ms,price,quantity,side
 //! 1,1700000000000,36000.10,0.005,buy
 //! 2,1700000000200,36000.20,0.010,sell
 //! ```
-//!
-//! The first non-comment line may be the header shown above; it is detected and
-//! skipped. `side` is `buy` or `sell` (the aggressor — see [`Side`]).
-//!
-//! [`write_trades`] is the inverse of [`parse_trades`]: parsing a written file
-//! yields the original trades.
+//! The header is optional; `side` is the aggressor ([`Side`]). [`write_trades`] inverts [`parse_trades`].
 
 use std::fmt::Write as _;
 use std::str::FromStr as _;
@@ -56,16 +44,9 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-/// Parse trades from CSV fixture text.
-///
-/// Blank lines and `#` comments are skipped; a leading [`HEADER`] line is
-/// optional and ignored. Trades are returned in file order — the engine relies
-/// on the caller feeding trades in the order they occurred.
-///
+/// Parse trades from CSV text; blank lines, `#` comments and a [`HEADER`] are skipped.
 /// # Errors
-///
-/// Returns a [`ParseError`] (carrying the 1-based line number) on the first
-/// malformed row: wrong field count, unparseable number, or an unknown side.
+/// A [`ParseError`] (1-based line) on the first malformed row.
 pub fn parse_trades(text: &str) -> Result<Vec<Trade>, ParseError> {
     let mut trades = Vec::new();
     for (idx, raw) in text.lines().enumerate() {
@@ -114,10 +95,7 @@ fn parse_trade_line(line: &str, line_no: usize) -> Result<Trade, ParseError> {
     })
 }
 
-/// Serialise trades to CSV fixture text, including the [`HEADER`] line.
-///
-/// The inverse of [`parse_trades`]: `parse_trades(&write_trades(ts)) == ts` for
-/// any slice of trades, so fixtures round-trip losslessly.
+/// Serialise trades to CSV fixture text, with the [`HEADER`] line; inverse of [`parse_trades`].
 #[must_use]
 pub fn write_trades(trades: &[Trade]) -> String {
     let mut out = String::with_capacity(HEADER.len() + 1 + trades.len() * 40);
@@ -138,15 +116,8 @@ pub fn write_trades(trades: &[Trade]) -> String {
     out
 }
 
-/// Parse expected bars from CSV fixture text.
-///
-/// Same conventions as [`parse_trades`]: blank lines and `#` comments are
-/// skipped, and a leading [`BAR_HEADER`] line is optional. This is the
-/// golden-output side of the determinism contract — a committed expected-bars
-/// file the harness compares produced bars against.
-///
+/// Parse expected bars from CSV fixture text (golden output), like [`parse_trades`].
 /// # Errors
-///
 /// Returns a [`ParseError`] on the first malformed row.
 pub fn parse_bars(text: &str) -> Result<Vec<Bar>, ParseError> {
     let mut bars = Vec::new();
@@ -195,11 +166,8 @@ fn parse_bar_line(line: &str, line_no: usize) -> Result<Bar, ParseError> {
     })
 }
 
-/// Serialise bars to CSV fixture text, including the [`BAR_HEADER`] line.
-///
-/// The inverse of [`parse_bars`]. Output is deterministic (fixed field order,
-/// `Decimal`'s canonical `Display`), so it doubles as the byte-identical
-/// representation the golden harness diffs two runs against.
+/// Serialise bars to CSV fixture text, with the [`BAR_HEADER`] line; inverse of [`parse_bars`].
+/// Output is deterministic (fixed field order, canonical `Decimal`), so runs diff byte for byte.
 #[must_use]
 pub fn write_bars(bars: &[Bar]) -> String {
     let mut out = String::with_capacity(BAR_HEADER.len() + 1 + bars.len() * 80);

@@ -1,83 +1,22 @@
-//! Renko bars as ProfitChart cuts them: bricks of one price height that close
-//! on price movement alone, never on time or volume.
-//!
-//! # The rule
-//!
-//! An `N`-tick brick is `S = (N - 1) × step` tall, `step` being the
-//! instrument's price step — `50R` on WIN, whose step is 5 points, is 245
-//! points. Brick edges sit on whole multiples of `S`, so where the bricks fall
-//! does not depend on where the tape happened to start. After a brick closes
-//! at `C`, the next one continues to `C ± S` or reverses to `C ∓ 2S`, and it
-//! closes only once a print trades at least one step past that level: a touch
-//! is not a break. The print that closes a brick opens the next one, so a
-//! brick holds the prints that formed it and none that ended it. There is no
-//! session reset; an overnight gap is one more move.
-//!
-//! A print far enough past the level clears several: one print closes a brick
-//! per level, and the bricks it cleared on its way past hold none of its
-//! prints — no volume, no trades, stamped with the time of the print that
-//! cleared them. They record the move the print made, not trades that
-//! happened.
-//!
-//! # A fresh builder
-//!
-//! With no brick behind it, the `S`-cell holding the first print,
-//! `[floor(p / S) × S, +S]`, is the first brick's body, and whichever edge
-//! the tape breaks first by a step names its direction.
-//!
-//! # Bar fields
-//!
-//! A closed brick's `open` and `close` are its levels; its `high` and `low`
-//! are the extremes of its own prints and its body — the wicks ProfitChart
-//! draws. The forming brick opens on the last close, its range includes that
-//! level, and its close is the last print. Before the first brick there is no
-//! level, and the forming bar is the plain fold of the prints.
-//!
-//! # The step
-//!
-//! The brick height is a number of price steps, and the builder reads the
-//! step off its own prints by the rule the chart's tape grid uses
-//! ([`PriceGrid`]): the largest step dividing the distance between any two
-//! prints. It holds its prints — they form the in-progress bar — until
-//! [`STEP_EVIDENCE_DISTANCES`] distances have shown the step, then cuts them
-//! from the first, exactly as a builder told that step at the start would
-//! have, and freezes it. The bricks those held prints close come out late, on
-//! the print that showed the step: [`push_into`](BarBuilder::push_into)
-//! counts them, and every consumer shows them as history, never as closes to
-//! act on. A grid that narrowed later would make every brick
-//! already shown the wrong height, so it is never followed: a print off the
-//! frozen grid is cut on it and counted
-//! ([`off_grid_prints`](crate::BarBuilderDiagnostics::off_grid_prints)),
-//! never snapped onto it and never a reason to cut again. The chart, the
-//! backtest and the bot each build this builder over the same prints, so they
-//! cut the same bricks by construction.
+//! Renko bars as ProfitChart cuts them: bricks of `S = (N - 1) × step` that close on price alone.
+//! Edges sit on multiples of `S`; the next brick continues to `C ± S` or reverses to `C ∓ 2S` and
+//! closes only a full step past it. One print may close several bricks; cleared ones hold no
+//! prints. The step is read off the prints ([`PriceGrid`]), held until [`STEP_EVIDENCE_DISTANCES`]
+//! and frozen. Late bricks are counted by [`push_into`](BarBuilder::push_into) and shown as history
+//! only.
 
 use rust_decimal::Decimal;
 
 use crate::{Bar, BarBuilder, BarBuilderDiagnostics, PriceGrid, Trade};
 
-/// How many price distances a builder's prints must show before it freezes
-/// its step.
-///
-/// A running GCD only narrows, so the risk is a step frozen too coarse: every
-/// brick a whole multiple too tall for the rest of the tape. The chart's grid
-/// reports after eight distances because a coarse answer there costs a
-/// regroup; frozen here, it would cost every brick. Measured on WINV26's
-/// 2026-10-01 and 2026-10-02 tapes (4,305,342 prints, 2,692,694 distances),
-/// from every start: after eight distances 1.8e-4 of starts still read a step
-/// coarser than the tick, after sixteen 1.7e-5, and the worst start needed
-/// 29. Sixty-four is more than twice the worst, and the tail, falling about
-/// tenfold every eight distances, puts a coarse freeze near 1e-11. WIN shows
-/// sixty-four distances in under two seconds on average; a quieter market
-/// only waits longer for its first brick and loses nothing, because the
-/// bricks are cut from the first print held.
+/// How many price distances a builder's prints must show before it freezes its step.
+/// Measured on real WIN tapes: 64 is over twice the worst start needed, so a coarse freeze is
+/// negligible; a quiet market only waits longer for its first brick.
 pub const STEP_EVIDENCE_DISTANCES: u32 = 64;
 
 /// The most bricks one print may close.
-///
-/// Thousands of bricks in one trade is a corrupt tape, not a market; past
-/// this the ladder stops, and the next print carries on from the last level
-/// cleared. Nothing is skipped, and one print cannot exhaust memory.
+/// Thousands of bricks in one trade is a corrupt tape; past this the next print carries on from the
+/// last level cleared. Nothing is skipped and memory stays bounded.
 pub const MAX_BRICKS_PER_PRINT: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,14 +96,8 @@ pub struct RenkoBarBuilder {
 }
 
 impl RenkoBarBuilder {
-    /// A builder of `ticks`-tick bricks that reads the price step off its own
-    /// prints: what the registry builds for every consumer.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `ticks < 2`: a one-tick brick is zero steps tall and would
-    /// close on every print. It is a configuration error, not feed input —
-    /// the registry refuses it before a builder exists.
+    /// A builder of `ticks`-tick bricks that reads the step off its own prints. Panics if `ticks <
+    /// 2`.
     #[must_use]
     pub fn new(ticks: u64) -> Self {
         assert!(
@@ -183,14 +116,8 @@ impl RenkoBarBuilder {
         }
     }
 
-    /// A builder of `ticks`-tick bricks on a step the caller states rather
-    /// than reads, cutting from the first print: the rule apart from the
-    /// inference, as a hand-computed golden pins it.
-    ///
-    /// # Panics
-    ///
-    /// As [`Self::new`], and if `step` is not positive or `ticks - 1` of it
-    /// overflow — a configuration error, not feed input.
+    /// A builder on a caller-stated step, cutting from the first print. Panics as [`Self::new`], or
+    /// if `step` is not positive or `ticks - 1` of it overflow.
     #[must_use]
     pub fn with_step(ticks: u64, step: Decimal) -> Self {
         let mut builder = Self::new(ticks);
@@ -348,13 +275,8 @@ fn brick(own: Option<Forming>, open: Decimal, close: Decimal, cleared_at_ms: i64
 }
 
 impl BarBuilder for RenkoBarBuilder {
-    /// The brick `trade` closes, for code that names this type; every
-    /// consumer calls [`push_into`](BarBuilder::push_into).
-    ///
-    /// # Panics
-    ///
-    /// If `trade` closes more than one brick: refused in every build rather
-    /// than handing back the first and losing the rest.
+    /// The brick `trade` closes; consumers call [`push_into`](BarBuilder::push_into).
+    /// Panics if `trade` closes more than one brick.
     fn push(&mut self, trade: &Trade) -> Option<Bar> {
         let mut closed = Vec::new();
         self.push_into(trade, &mut closed);
@@ -377,10 +299,8 @@ impl BarBuilder for RenkoBarBuilder {
             self.fold(trade);
             return 0;
         };
-        // The step is known: every print held is cut from the first, as a
-        // builder told the step at the start would have cut it — history this
-        // print only releases — then this print, and the step is never read
-        // again.
+        // The step is known: cut every held print from the first, as a builder told the step at the
+        // start would have, then this print. The step is never read again.
         self.measure = Some(measure);
         self.forming = None;
         let first = closed.len();
@@ -574,10 +494,9 @@ mod tests {
 
     #[test]
     fn the_print_that_reads_the_step_counts_the_bricks_its_held_prints_closed() {
-        // One point a print through 163 closes 31 bricks while they are held;
-        // 170, the sixty-fourth distance, reads the step, cuts them, and
-        // clears three levels of its own: those three are its closes, the
-        // 31 before them history cut late.
+        // One point a print through 163 closes 31 bricks while held; 170, the 64th distance, reads
+        // the step, cuts them and clears three levels of its own: three closes, the 31 before them
+        // history.
         let mut builder = RenkoBarBuilder::new(3);
         let mut closed = Vec::new();
         for (i, price) in (100..164).enumerate() {

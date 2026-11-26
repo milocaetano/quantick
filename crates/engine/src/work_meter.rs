@@ -1,22 +1,5 @@
-//! Heap work, counted per thread — the test binary's allocator.
-//!
-//! Owned by the engine, the root every hot-path crate already depends on, so
-//! any test binary can install it: `engine`'s own unit tests, its
-//! `tests/hot_path_budget.rs`, `orderflow`'s and `chart`'s budget tests, and
-//! `app`'s test binary (`main.rs`, under `cfg(test)`) each declare it as their
-//! `#[global_allocator]`; `quantick_chart::work_meter` re-exports it. It wraps
-//! the system allocator and tallies, for the thread that asked, every
-//! allocation, its bytes, every reallocation and the bytes a reallocation may
-//! have to copy. Production builds keep the system allocator untouched.
-//!
-//! Counting is a deterministic measure of work where a stopwatch is not: a
-//! path that clones history, or rebuilds a buffer sized by it, shows up as
-//! bytes whatever the machine's load — which is what lets
-//! `app::tests::session_length_tests` and each crate's `hot_path_budget` test
-//! hold per-trade, per-depth and per-frame work to a budget in the ordinary
-//! test run without a wall-clock assertion.
-//! Per thread, because tests run in parallel: a tally only ever sees the work
-//! of the thread it is read on.
+//! Per-thread heap tally wrapping the system allocator, installed by test binaries as
+//! `#[global_allocator]` (production keeps the system one). A deterministic work measure for budgets.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;

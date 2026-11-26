@@ -1,34 +1,7 @@
-//! Folding a *range* of bars into one [`VolumeProfile`], a piece at a time.
-//!
-//! [`VolumeProfile::merge`] is the whole fold in one call: hand it every
-//! ladder, get the profile. That is the right shape when the range is a
-//! screenful of tape. It is the wrong shape when the range is a time chart's
-//! backfilled history, for two reasons this module exists to fix:
-//!
-//! - **Venue candles have no tape.** They join as
-//!   [approximated](crate::BarFootprint::approximated) ladders — the candle's
-//!   volume spread evenly over its high–low. Written out, one candle is up to
-//!   `level_cap` map entries; twenty-five thousand of them is tens of millions
-//!   of entries built only to be summed and thrown away. Read as an
-//!   `ApproxSpread` instead, one candle is a *range add*: six numbers, three
-//!   map touches, whatever the candle's width. The profile is identical
-//!   because the spread is the same data — `BarFootprint::approximated` is
-//!   written on top of the same `ApproxSpread::of`.
-//! - **The caller may not have a frame to spare.** [`ProfileFold`] takes its
-//!   inputs one at a time and can be read at any point, so a consumer with a
-//!   deadline folds what it can afford, paints what it has, and comes back —
-//!   instead of blocking until the whole range is done.
-//!
-//! Memory is bounded by construction: accumulated rows never exceed the level
-//! cap, and pending spreads never exceed [`ProfileFold::SPREAD_BATCH`] before
-//! they are folded in. A fold of a million candles holds no more than a fold
-//! of ten.
-//!
-//! Determinism is the same contract as the merge: exact integer bucket
-//! arithmetic, `BTreeMap` order, no clock, no randomness. `profile()` over a
-//! set of inputs returns exactly what `merge` returns over the same set —
-//! guarded by tests in this module and by
-//! `crates/engine/tests/profile_fold_parity.rs`.
+//! Folding a range of bars into one [`VolumeProfile`], a piece at a time. Venue candles join as
+//! range adds (`ApproxSpread`), not materialised ladders; the fold can be read at any point. Memory
+//! is bounded by the level cap and [`ProfileFold::SPREAD_BATCH`]. Deterministic: `profile()` equals
+//! [`VolumeProfile::merge`] over the same inputs.
 
 use std::collections::BTreeMap;
 
@@ -71,26 +44,13 @@ pub struct ProfileFold {
 }
 
 impl ProfileFold {
-    /// How many pending spreads a fold holds before folding them into its
-    /// rows.
-    ///
-    /// The batch is what keeps a long range's memory flat: spreads accumulate,
-    /// then collapse into an accumulator that is itself capped at `level_cap`
-    /// rows. Larger batches amortise the collapse over more candles; smaller
-    /// ones hold less. A thousand spreads is a few tens of kilobytes at peak
-    /// and one collapse per thousand candles — either way far under what a
-    /// single capped ladder occupies. Public because it is half of the memory
-    /// bound a caller can assert against ([`rows_held`](Self::rows_held)).
+    /// How many pending spreads a fold holds before folding them into its rows. Keeps a long
+    /// range's memory flat: larger batches amortise the collapse, smaller ones hold less. Public
+    /// because it is half of the memory bound ([`rows_held`](Self::rows_held)).
     pub const SPREAD_BATCH: usize = 1_024;
 
-    /// An empty fold over ladders grouped at `base_group`, capped at
-    /// `level_cap` rows.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `level_cap` is zero or `base_group` is not positive — a
-    /// configuration error, the same contract as
-    /// [`FootprintBuilder::new`](crate::FootprintBuilder::new).
+    /// An empty fold over ladders grouped at `base_group`, capped at `level_cap`. Panics if the cap
+    /// is zero or `base_group` is not positive.
     #[must_use]
     pub fn new(base_group: Decimal, level_cap: usize) -> Self {
         assert!(
@@ -108,18 +68,9 @@ impl ProfileFold {
         }
     }
 
-    /// Add one bar's real ladder. Costs one map touch per row it holds.
-    ///
-    /// Returns `false`, having added **nothing**, when `ladder` was built on a
-    /// different base grouping: its buckets never aligned with this fold's,
-    /// and folding them would invent rows rather than sum them.
-    ///
-    /// The refusal is reported, not remembered. What a mismatch means is the
-    /// caller's to decide — [`VolumeProfile::merge`] has no honest answer over
-    /// a set that disagrees and returns `None`, while a chart holding one
-    /// stale snapshot beside a refolded group would rather fold the bars that
-    /// do align and say how many it left out. A fold that poisoned itself
-    /// would take the second caller's whole range down with one bar.
+    /// Add one bar's real ladder (one map touch per row). Returns `false`, adding nothing, on a
+    /// different base grouping: its buckets never aligned. Reported, not remembered, so the caller
+    /// decides.
     pub fn push_ladder(&mut self, ladder: &BarFootprint) -> bool {
         if ladder.base_group() != self.base_group {
             return false;
@@ -137,12 +88,8 @@ impl ProfileFold {
         true
     }
 
-    /// Add one venue candle as an approximated spread — `O(1)` in the candle's
-    /// width, where a materialised ladder is `O(rows)`.
-    ///
-    /// Returns `false` when the candle traded nothing: there is no
-    /// distribution to approximate, exactly as
-    /// [`BarFootprint::approximated`] returns `None`.
+    /// Add one venue candle as an approximated spread: `O(1)` in the candle's width. Returns
+    /// `false` when the candle traded nothing, as [`BarFootprint::approximated`] returns `None`.
     pub fn push_candle(&mut self, bar: &Bar) -> bool {
         let Some(spread) = ApproxSpread::of(bar, self.base_group, self.level_cap) else {
             return false;
@@ -169,11 +116,8 @@ impl ProfileFold {
         self.levels.len() + self.pending.len()
     }
 
-    /// The profile of everything folded so far, or `None` when nothing
-    /// contributed. Costs a fold of the pending
-    /// spreads and a clone of the accumulated rows; it does not consume or
-    /// mutate the fold, so a consumer may read a partial answer as often as it
-    /// likes and keep folding.
+    /// The profile of everything folded so far, or `None` when nothing contributed.
+    /// Costs a fold of the pending spreads and a clone of the rows; it does not mutate the fold.
     #[must_use]
     pub fn profile(&self) -> Option<VolumeProfile> {
         if self.inputs == 0 {
@@ -203,15 +147,9 @@ impl ProfileFold {
         Some(VolumeProfile::from_parts(levels, group, doublings > 0))
     }
 
-    /// Fold every pending spread in, so later reads cost a clone of the rows
-    /// and nothing else.
-    ///
-    /// [`profile`](Self::profile) takes `&self`, so it folds the pending
-    /// spreads on *every* call — right for a fold still running, waste for one
-    /// that is finished and read again and again (a chart re-reads a completed
-    /// fold whenever its forming bar moves). A consumer that knows it has
-    /// pushed its last input calls this once. Nothing else changes:
-    /// collapsing early and collapsing late reach the same rows.
+    /// Fold every pending spread in, so later reads cost a clone of the rows and nothing else.
+    /// [`profile`](Self::profile) takes `&self` and folds pending spreads on every call; a consumer
+    /// done pushing calls this once. Collapsing early or late reaches the same rows.
     pub fn seal(&mut self) {
         self.collapse_pending();
     }
@@ -259,13 +197,8 @@ fn merge_into(levels: &mut BTreeMap<i64, FootprintLevel>, rows: BTreeMap<i64, Fo
     }
 }
 
-/// Print `spreads` as rows, at `floor` doublings or coarser.
-///
-/// The spreads go into a difference map — two touches for a run of rows, one
-/// for the remainder the close is owed — which is then run-summed into the
-/// rows themselves. Coarser: the printed rows are counted *before* any of them
-/// exist, and a count over the cap doubles the grouping and starts again, so a
-/// range spanning a million buckets never materialises a million rows.
+/// Print `spreads` as rows, at `floor` doublings or coarser, via a difference map run-summed.
+/// Rows are counted before they exist; a count over the cap doubles the grouping first.
 fn fold_spreads(
     spreads: &[ApproxSpread],
     floor: u32,
@@ -364,10 +297,8 @@ fn delta_at(diff: &mut BTreeMap<i64, Delta>, bucket: i64) -> &mut Delta {
 }
 
 impl Delta {
-    /// Every field, coverage included. It carried three of the four once and
-    /// the callers made up the difference by hand — a method named `add` that
-    /// quietly skips a field prints the wrong rows the first time someone
-    /// trusts its name, and prints them without failing anything.
+    /// Every field, coverage included: a method named `add` that skips a field prints wrong rows
+    /// silently.
     fn add(&mut self, other: &Delta) {
         self.buy = self.buy.saturating_add(other.buy);
         self.sell = self.sell.saturating_add(other.sell);

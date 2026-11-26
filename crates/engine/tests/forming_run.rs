@@ -1,9 +1,6 @@
 //! [`FormingRun`]: a forming bar's prefixes, and what a walk may cost.
-//!
-//! The oracle is the app's lane fold as it shipped before the walk was
-//! bounded, kept verbatim: every prefix the bounded walk returns must equal
-//! the one the oracle returns, byte for byte, on the golden tapes and on
-//! synthetic runs appended in irregular batches.
+//! The oracle is the unbounded lane fold, kept verbatim: every prefix the bounded walk returns
+//! must equal it byte for byte, on the golden tapes and on irregularly appended synthetic runs.
 
 use quantick_engine::forming_run::{CHECKPOINT_SPACING, FormingRun};
 use quantick_engine::{Bar, Side, Trade, fixture::parse_trades};
@@ -12,8 +9,7 @@ use rust_decimal::Decimal;
 /// Rungs a chart's live lane walks at most (`MAX_LANE_RUNGS` in the app).
 const MAX_LANE_RUNGS: usize = 64;
 
-/// `lane_prefixes` as it stood at `2452e577` (`crates/app/src/indicator_worker.rs`),
-/// before the fold was bounded. It folds the whole run on every call.
+/// The unbounded `lane_prefixes` fold; it folds the whole run per call.
 fn oracle(run: &[Trade], rungs: usize) -> Vec<Bar> {
     if run.is_empty() || rungs == 0 {
         return Vec::new();
@@ -53,10 +49,8 @@ fn golden_tapes() -> Vec<Vec<Trade>> {
     tapes
 }
 
-/// A synthetic print whose every field moves: the price walks both ways and
-/// repeats, sides alternate irregularly, quantities carry decimals, and some
-/// prints share a timestamp. The two near-maximum quantities make the side
-/// totals saturate, so the fold's order is observable in the output.
+/// A synthetic print whose every field moves; two near-maximum quantities make the side totals
+/// saturate, so the fold's order is observable.
 fn synthetic(id: u64) -> Trade {
     let quantity = if id == 97 || id == 98 {
         Decimal::MAX - Decimal::from(id)
@@ -135,10 +129,8 @@ fn a_cut_run_starts_its_prefixes_again_from_its_own_first_print() {
     assert_eq!(run.prefixes(16), oracle(&tape[200..], 16));
 }
 
-/// The limit itself: whatever the forming bar's length, a walk folds at most
-/// `CHECKPOINT_SPACING - 1` prints per rung and never more than the run holds
-/// — the single pass the unbounded fold made — and appending folds each new
-/// print once.
+/// The limit: a walk folds at most `CHECKPOINT_SPACING - 1` prints per rung and never more than
+/// the run holds, and appending folds each new print once.
 #[test]
 fn a_walk_folds_a_bounded_number_of_prints_whatever_the_runs_length() {
     let per_rung = (CHECKPOINT_SPACING - 1) as u64;
