@@ -476,3 +476,50 @@ fn a_repaint_changes_the_ink_and_keeps_the_config() {
         .expect("still a rectangle");
     assert!(payload.extend_right, "the band still runs to the edge");
 }
+
+/// A position's ratio is its plan, not its look: picking one leaves the mark
+/// following its ground, so a light pane's black stop turns light grey on a
+/// dark one. A colour pick makes the look the trader's.
+#[test]
+fn a_ratio_pick_keeps_a_position_on_its_ground_and_a_colour_pick_owns_it() {
+    use crate::position_edit::{PositionEdit, PositionLeg, edited_position};
+    const FACTORY_STOP_RGB: [u8; 3] = [0, 0, 0];
+    const FACTORY_STOP_RGB_ON_DARK: [u8; 3] = [0xB2, 0xB5, 0xBE];
+    let mut store = store("look-position-ratio");
+    let mut appearance = Appearance::default();
+    theme(&mut appearance, &mut store, LIGHT);
+    let paper: PaneCanvas = ChartSurface::Paper.into();
+    let mut drawings = Drawings::default();
+    drawings.follow_ground(&store, paper);
+    open(&mut drawings, &store, paper, tool("long-position"));
+    open(&mut drawings, &store, paper, tool("long-position"));
+    let stop = |drawings: &Drawings<DrawingTool>, index: usize| {
+        let drawing = &drawings.items()[index];
+        let payload = drawing.payload.as_any();
+        let payload = payload.downcast_ref::<crate::PositionPayload>().unwrap();
+        (drawing.look, payload.stop_rgb, payload.ratio)
+    };
+    assert_eq!(
+        stop(&drawings, 0),
+        (Inheritance::Theme, FACTORY_STOP_RGB, 1.0)
+    );
+
+    let ratio = edited_position(&drawings.items()[0], PositionEdit::Ratio(2.0)).unwrap();
+    drawings.replace_edited(0, ratio);
+    let red = edited_position(
+        &drawings.items()[1],
+        PositionEdit::Colour(PositionLeg::Stop, [200, 0, 0]),
+    )
+    .unwrap();
+    drawings.replace_edited(1, red);
+    theme(&mut appearance, &mut store, DARK);
+    drawings.follow_ground(&store, paper);
+    assert_eq!(
+        stop(&drawings, 0),
+        (Inheritance::Theme, FACTORY_STOP_RGB_ON_DARK, 2.0)
+    );
+    assert_eq!(
+        stop(&drawings, 1),
+        (Inheritance::Explicit, [200, 0, 0], 1.0)
+    );
+}

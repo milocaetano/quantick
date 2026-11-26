@@ -36,9 +36,7 @@ impl<T> Drawing<T> {
     /// export, which is the look a default stores. A note's words are
     /// content, so writing them leaves the look alone.
     fn same_look(&self, other: &Self) -> bool {
-        self.style == other.style
-            && (self.payload.eq_dyn(other.payload.as_ref())
-                || self.payload.export_preset() == other.payload.export_preset())
+        self.style == other.style && self.payload.same_look(other.payload.as_ref())
     }
 
     /// Make the look the trader's when this edit of `before` changed it.

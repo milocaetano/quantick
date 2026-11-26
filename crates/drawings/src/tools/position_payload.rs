@@ -309,6 +309,15 @@ impl DrawingPayload for PositionPayload {
         self.stop_rgb = factory_stop_rgb(theme);
         self.zone_opacity_pct = FACTORY_ZONE_OPACITY_PCT;
     }
+    /// The look is the colours and the opacity. The ratio is the plan's: a
+    /// preset pick or a leg drag leaves the mark following its ground, so a
+    /// light pane's black stop still turns grey on a dark one.
+    fn same_look(&self, other: &dyn DrawingPayload) -> bool {
+        other.as_any().downcast_ref::<Self>().is_some_and(|other| {
+            (self.target_rgb, self.stop_rgb, self.zone_opacity_pct)
+                == (other.target_rgb, other.stop_rgb, other.zone_opacity_pct)
+        })
+    }
     fn clone_box(&self) -> Box<dyn DrawingPayload> {
         Box::new(self.clone())
     }
