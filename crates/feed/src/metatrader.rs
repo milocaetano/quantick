@@ -78,7 +78,7 @@ mod listener;
 mod reconnect_fill_tests;
 mod refill;
 use gap_fill::{GapFill, RefillLimits};
-use ledger::{CandleShelf, HistoryBlock, LivePrint, LiveReplay, OpeningSlice, TapeLedger, Trimmed};
+use ledger::{CandleShelf, HistoryBlock, OpeningSlice, TapeLedger, Trimmed};
 use listener::{AfterExit, Listener, ListenerExit};
 use refill::RefillDeadline;
 
@@ -628,32 +628,6 @@ impl Mt5Feed {
             FeedEvent::Live(trade) => self.forward_live(trade).await,
             other => self.send(other).await,
         }
-    }
-
-    /// One trade out as live, behind any continuity gap a lost session owes.
-    /// A resumed session's replay of prints the chart holds goes nowhere.
-    async fn forward_live(&mut self, trade: quantick_engine::Trade) -> EventFlow {
-        match self.tape.screen_live(&trade) {
-            LivePrint::Held => return EventFlow::Skipped,
-            LivePrint::New {
-                replayed: Some(LiveReplay { dropped, last_ms }),
-            } => info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "MT5_RESUME_LIVE_OVERLAP_DROPPED",
-                symbol = %self.symbol,
-                dropped,
-                last_ms,
-                "the resumed session re-sent prints the chart holds; dropped as duplicates"
-            ),
-            LivePrint::New { replayed: None } => {}
-        }
-        if let Some(event) = self.tape.forward(&trade)
-            && self.tx.send(FeedEvent::Continuity(event)).await.is_err()
-        {
-            return EventFlow::UiGone;
-        }
-        self.send(FeedEvent::Live(trade)).await
     }
 
     /// A new bridge session's price facts: the venue's decimals, and no
