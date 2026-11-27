@@ -21,7 +21,7 @@ pub struct Source<'a> {
 
 /// Read-only facts at the exact close/trade boundary. `drawings` is the pane's
 /// alert facts as the drawing owner projects them
-/// (`quantick_drawings::alerts::facts`), still borrowed, never collected.
+/// (`Drawings::alert_facts`), still borrowed, never collected.
 pub struct PaneFacts<'a, D> {
     pub id: u64,
     pub series: &'a quantick_chart::state::ChartState,

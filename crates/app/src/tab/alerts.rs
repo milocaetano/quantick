@@ -1,22 +1,16 @@
 //! Borrowed observation docking. No queue, history scan, or rule decisions.
-use crate::pane::ChartPane;
 pub(crate) use quantick_stores::alerts::{Observation, PaneFacts, Source};
-/// A pane's facts with its drawings' alert facts, as the observer takes them.
-pub(crate) type Facts<'a> =
-    PaneFacts<'a, quantick_drawings::alerts::Facts<'a, quantick_drawings::DrawingTool>>;
+pub(crate) type Facts<'a> = PaneFacts<'a, quantick_drawings::alerts::Facts<'a>>;
 
 /// Pane facts at the boundary; the cache that reads them lives in `stores`.
 /// A function, not `From`: a trait impl on the public `PaneFacts` would make
 /// `ChartPane` effectively public and trip `private_interfaces`.
-pub(crate) fn facts(pane: &ChartPane) -> Facts<'_> {
+pub(crate) fn facts(pane: &crate::pane::ChartPane) -> Facts<'_> {
     PaneFacts {
         id: pane.id,
         series: &pane.series.state,
         drawing_revision: pane.drawings.revision(),
-        drawings: quantick_drawings::alerts::facts(
-            &pane.drawings,
-            pane.layout.drawings_key.as_ref(),
-        ),
+        drawings: pane.drawings.alert_facts(pane.layout.drawings_key.as_ref()),
         prefix_slots: pane.seam_slot(),
         hydrating: pane.history_pending(),
     }

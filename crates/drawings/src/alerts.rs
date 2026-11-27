@@ -3,7 +3,7 @@ use quantick_alerts::{Geometry, Line, Point, TargetKind, Unavailable};
 
 /// Every alert fact a pane's drawings supply, in drawing order, borrowed.
 /// Named, not `impl Iterator`, so an object-safe observer can take it.
-pub struct Facts<'a, T> {
+pub struct Facts<'a, T = crate::DrawingTool> {
     drawings: std::slice::Iter<'a, crate::Drawing<T>>,
     key: Option<&'a quantick_workspace::market_settings::DrawingKey>,
 }
@@ -16,14 +16,16 @@ impl<'a, T: crate::ToolCatalog> Iterator for Facts<'a, T> {
     }
 }
 
-/// The alert facts of `drawings` under the pane's market `key`.
-pub fn facts<'a, T: crate::ToolCatalog>(
-    drawings: &'a crate::Drawings<T>,
-    key: Option<&'a quantick_workspace::market_settings::DrawingKey>,
-) -> Facts<'a, T> {
-    Facts {
-        drawings: drawings.items().iter(),
-        key,
+impl<T: crate::ToolCatalog> crate::Drawings<T> {
+    /// The alert facts of these drawings under the pane's market `key`.
+    pub fn alert_facts<'a>(
+        &'a self,
+        key: Option<&'a quantick_workspace::market_settings::DrawingKey>,
+    ) -> Facts<'a, T> {
+        Facts {
+            drawings: self.items().iter(),
+            key,
+        }
     }
 }
 
