@@ -17,7 +17,7 @@ fn registration_borrows_the_host_registry_once() {
         register_family_actions! {
             [{ *evaluations += 1; calls }]
             families {
-                schemas: [], catalog: [], readbacks: [], handlers: [], actions: [record, record]
+                wire: none, handlers: [], actions: [record, record]
             }
         }
         Ok(())
@@ -36,7 +36,7 @@ fn registration_stops_at_the_first_error() {
         register_family_actions! {
             [calls]
             families {
-                schemas: [], catalog: [], readbacks: [], handlers: [], actions: [record, reject, record]
+                wire: none, handlers: [], actions: [record, reject, record]
             }
         }
         Ok(())

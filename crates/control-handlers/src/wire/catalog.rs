@@ -3,14 +3,15 @@
 //! `schemas/control`.
 
 macro_rules! family_documents {
-    ($args:tt $($family:ident {
-        schemas: $schemas:tt, catalog: [$($catalog:ident),*], readbacks: $readbacks:tt,
-        handlers: $handlers:tt, actions: $actions:tt
-    })*) => {{
+    ($args:tt $($family:ident { wire: $wire:tt, handlers: $handlers:tt, actions: $actions:tt })*) => {{
         let mut documents = Vec::new();
-        $($(documents.extend(crate::wire::$catalog::documents());)*)*
+        $(family_documents!(@family documents $family $wire);)*
         documents
     }};
+    (@family $documents:ident $family:ident [catalog $(, readbacks)?]) => {
+        $documents.extend(crate::wire::$family::documents());
+    };
+    (@family $documents:ident $family:ident $wire:tt) => {};
 }
 
 /// Every document this module publishes, as `(file name, schema)`.
