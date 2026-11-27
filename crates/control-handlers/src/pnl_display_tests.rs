@@ -37,6 +37,7 @@ impl FakeDesk {
         account.set_pnl_settings(PnlSettings {
             catalog: Arc::new(InstrumentCatalog::parse(CATALOG).expect("fixture catalog")),
             chosen: None,
+            ..PnlSettings::default()
         });
         Self {
             desk: Some(PaperDesk::new(account)),

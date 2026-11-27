@@ -90,7 +90,7 @@ Unreadable directories/files, invalid UTF-8, missing/duplicate baseline records,
 
 This guard is not complete semantic coupling analysis. It does not expand macros or procedural derives, resolve synthesized protected names, follow indirect helper authority, count root-carrying free functions, or reject net-neutral rewrites inside a root's existing line budget. A helper called from a tiny root method can grow outside the root total. These are documented limits, not negative tests advertised as rejected cases. Same-leaf-name protected declarations are rejected as ambiguous duplicates rather than semantically resolved.
 
-The baseline is a reviewed source contract, not tamper-proof policy. Explicit contract/cap amendments remain visible review changes. No automatic SE2=5 claim follows from adding a scanner. Reassessment must use the unchanged quantick-score rubric at the actual integrated SHA together with realistic native and foreign-workspace evidence; the coordinator owns that reassessment and final integration proof.
+The baseline is a reviewed source contract, not tamper-proof policy. Explicit contract/cap amendments remain visible review changes. Adding a scanner proves no boundary by itself: realistic native and foreign-workspace evidence at the actual integrated SHA does, and the coordinator owns that final integration proof.
 
 ## Fixtures and validation record
 

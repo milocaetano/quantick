@@ -415,3 +415,31 @@ fn report_menus_offer_one_scope_per_button_with_its_label() {
     );
     assert_eq!(labels(tagged), ["Report #breakout", "Report #fade"]);
 }
+
+#[test]
+fn the_symbol_filter_reads_each_chosen_folder_from_both_journals() {
+    let scratch = ScratchDir::new("symbol-filter");
+    let dir = scratch.join("paper");
+    let win = SessionKey::parse("WINZ26/simulator.csv").unwrap();
+    let btc = SessionKey::parse("BTCUSDT/simulator.csv").unwrap();
+    let eth = SessionKey::parse("ETHUSDT/simulator.csv").unwrap();
+    write_session(&dir, &win, None, &[3000]);
+    write_session(&dir, &win.for_broker(), None, &[1000]);
+    write_session(&dir, &btc, None, &[2000]);
+    write_session(&dir, &eth, None, &[4000]);
+    let chosen = ["BTCUSDT", "WINZ26"].map(str::to_owned).into();
+    let history = journals::load_symbols(&dir, &chosen);
+    let closes: Vec<_> = history
+        .rows
+        .iter()
+        .map(|row| (row.symbol.as_str(), row.trade.closed_ms))
+        .collect();
+    assert_eq!(
+        closes,
+        vec![("WINZ26", 1000), ("BTCUSDT", 2000), ("WINZ26", 3000)],
+        "broker and simulator WIN, BTC, in closing order; ETH left out"
+    );
+    assert_eq!((history.files, history.sessions.len()), (3, 3));
+    let all = journals::load_symbols(&dir, &Default::default());
+    assert_eq!(all.rows.len(), 4, "an empty choice reads every symbol");
+}

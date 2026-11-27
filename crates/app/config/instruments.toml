@@ -19,8 +19,10 @@
 # WINUSDT, which is why no shipped entry is a prefix.
 #
 # Fields (decimals are strings, so a value is never rounded through a float):
-#   currency     the currency P&L is in; currencies are never converted or
-#                added together.
+#   currency     the currency P&L is in. Currencies are never added
+#                together; a report converts them only when the trader asks
+#                it to merge (Merge all), at a stored daily rate, always
+#                labelled with the rates it used and what it could not convert.
 #   point_value  money per 1.0 of price, per 1 unit of quantity.
 #                B3: tick value / tick size. Linear crypto: 1 (quote asset).
 #                Forex: the contract size per lot (quote currency).
@@ -48,6 +50,24 @@ version = 1
 # money | points_per_contract | points_times_qty. Absent: money where a
 # point value is known, points per contract where not.
 # primary = "money"
+
+# Codes a merged report counts as one currency: a stablecoin read as its
+# peg, at exactly 1. Your own file adds to these.
+[currencies]
+same = { USDT = "USD", USDC = "USD" }
+
+# The pairs a merged report converts through, both ways: one rate per day,
+# the venue's daily close, read from rates.csv beside the journal folder.
+# The app fills that file from the venue at startup; a day it holds no rate
+# for is listed as not converted, never guessed. Your own file adds pairs.
+#   from, to  one `from` is worth the rate in `to`
+#   venue     who publishes the daily candle: binance
+#   symbol    the venue's market for the pair
+[[rates]]
+from = "USDT"
+to = "BRL"
+venue = "binance"
+symbol = "USDTBRL"
 
 # --- B3 futures (BRL). Step and minimum 1 contract. -------------------------
 # Mini index: R$0.20 per point, tick 5 points (R$1.00 per tick).
@@ -148,7 +168,8 @@ price_unit = "quote"
 # MT5 FOREX mode: profit = (close - open) x contract size x lots, in the QUOTE
 # currency. Contract size and lot step are the broker's; read them from the
 # terminal's symbol specification before uncommenting. A USDJPY profit is in
-# JPY and stays in JPY: nothing here converts it.
+# JPY and stays in JPY: only a merged report converts it, through a pair
+# declared under [[rates]].
 # Source: mql5.com/en/docs/constants/environment_state/marketinfoconstants,
 # mql5.com/en/docs/trading/ordercalcprofit
 #

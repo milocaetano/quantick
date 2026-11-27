@@ -413,3 +413,85 @@ fn a_long_pick_reads_back_its_newest_days() {
     assert_eq!(listed[MAX_LISTED_DAYS - 1], last.iso());
     assert_eq!(read["applied_day_count"], "100");
 }
+
+#[test]
+fn symbols_and_merge_calls_set_the_selection_and_the_currency_and_refuse_the_unknown() {
+    let scratch = crate::scratch::ScratchDir::new("report-merge");
+    for symbol in ["BTCUSDT", "WINZ26"] {
+        std::fs::create_dir_all(scratch.path().join(symbol)).unwrap();
+    }
+    let mut host = Host {
+        desk: Some(PaperDesk::new(
+            quantick_paper::PaperAccount::with_trades_dir(scratch.path().to_owned()),
+        )),
+        dir: scratch.path().to_owned(),
+    };
+    let mut access = FakeAccess::with_budget(0);
+    let mut call =
+        |host: &mut Host, input| open(host, &mut access, &FakeWindow::assistant(), &input);
+    let chosen = call(
+        &mut host,
+        json!({"action":"symbols", "symbols":["WINZ26", "BTCUSDT"]}),
+    )
+    .unwrap();
+    assert_eq!(chosen["symbols"], json!(["BTCUSDT", "WINZ26"]));
+    assert_eq!(chosen["currencies"], json!(["BRL", "USD"]));
+    assert_eq!(chosen["merge"], Value::Null, "per asset until asked");
+    let error = call(
+        &mut host,
+        json!({"action":"symbols", "symbols":["ETHUSDT"]}),
+    )
+    .unwrap_err();
+    let details = error.context.details.unwrap();
+    assert_eq!(details["code"], "unknown_symbol");
+    assert_eq!(details["symbols"], json!(["BTCUSDT", "WINZ26"]));
+
+    let merged = call(&mut host, json!({"action":"merge", "currency":"brl"})).unwrap();
+    assert_eq!(merged["merge"], "BRL");
+    let wire = &merged["merged"];
+    assert_eq!(wire["currency"], "BRL");
+    assert_eq!(
+        wire["rates"],
+        json!([{"day":"2026-11-20", "from":"USDT", "to":"BRL", "rate":"5.8"}]),
+        "the rates used, per day"
+    );
+    assert_eq!(wire["rate_count"], "1");
+    assert_eq!(wire["net"], "58");
+    assert!(
+        wire["caption"]
+            .as_str()
+            .unwrap()
+            .starts_with("Merged in BRL")
+    );
+    let desk = host.desk.as_ref().unwrap();
+    assert_eq!(
+        desk.account
+            .pnl_settings()
+            .merge_currency
+            .as_ref()
+            .map(|c| c.code()),
+        Some("BRL"),
+        "the pick becomes Merge all's default"
+    );
+    assert_eq!(
+        call(&mut host, json!({"action":"merge", "currency":"BRL"})).unwrap(),
+        merged,
+        "a retry sets the same merge"
+    );
+
+    let error = call(&mut host, json!({"action":"merge", "currency":"EUR"})).unwrap_err();
+    let details = error.context.details.unwrap();
+    assert_eq!(details["code"], "invalid_currency");
+    assert_eq!(details["currencies"], json!(["BRL", "USD"]));
+    let desk = host.desk.as_ref().unwrap();
+    assert_eq!(
+        desk.report_merge.as_ref().map(|c| c.code()),
+        Some("BRL"),
+        "a refused currency leaves the merge in force"
+    );
+    let apart = call(&mut host, json!({"action":"merge", "currency":null})).unwrap();
+    assert_eq!(
+        (apart["merge"].clone(), apart["merged"].clone()),
+        (Value::Null, Value::Null)
+    );
+}

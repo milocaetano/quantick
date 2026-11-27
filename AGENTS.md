@@ -40,7 +40,7 @@ and `.agents/skills/`.
 | `replay` | Recorded sessions, playback clock; told the time. Test support: `replay::test_support`. |
 | `paper` | Paper account, risk, journal and report. |
 | `sim` | `TradingVenue` impl; fills only on tape, never quotes. |
-| `trading` | Order vocabulary and the `TradingVenue` port. |
+| `trading` | Orders, `TradingVenue` port, rates. |
 | `broker-mt5` | MT5 broker `TradingVenue`; owns one socket. |
 | `feed` | `FeedEvent`/`FeedCommand`, adapters; owns runtimes, threads, clock |
 | `feed-binance`, `feed-hyperliquid`, `feed-mt5` | Produce trades. |

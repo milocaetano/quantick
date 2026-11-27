@@ -122,7 +122,7 @@ fn a_ledger_row_names_its_market_its_clock_its_age_and_its_ending() {
 /// The typed-period field answers a value it cannot read with an
 /// acknowledgement - "a typed `2d` must never do nothing quietly". When
 /// the report lived on the host that was one call to `show_toast`; now
-/// it is an outbox, a `ReportResponse` and a host that has to forward
+/// it is an outbox, the report's `Effects` and a host that has to forward
 /// it, which is three places for the message to die. It died in the
 /// first draft of exactly that seam, and no test in the suite noticed,
 /// so this is the test that would have.
@@ -176,6 +176,7 @@ fn paper_report_filter_input_recuts_before_dependent_paint() {
             sessions: Default::default(),
         },
         symbols: vec!["X".to_owned()],
+        rates: Default::default(),
     }));
     let env = ReportEnv {
         symbol: "X",

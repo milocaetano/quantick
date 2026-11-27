@@ -34,6 +34,90 @@
         }
       ]
     },
+    "MergedWire": {
+      "description": "What a merge converted, with which rates, and what it left out.",
+      "properties": {
+        "assets": {
+          "description": "The merged symbols, each with its own currency.",
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "caption": {
+          "description": "The caption under the merged curve.",
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "net": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "The merged net in `currency`."
+        },
+        "rate_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "rates": {
+          "description": "The rates used per day, oldest first; past 16, only the newest 16.",
+          "items": {
+            "$ref": "#/$defs/RateUsedWire"
+          },
+          "type": "array"
+        },
+        "unconverted": {
+          "description": "What was not converted, never guessed; past 16, only the first 16.",
+          "items": {
+            "$ref": "#/$defs/UnconvertedWire"
+          },
+          "type": "array"
+        },
+        "unconverted_count": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "currency",
+        "assets",
+        "rates",
+        "rate_count",
+        "unconverted",
+        "unconverted_count",
+        "net",
+        "caption"
+      ],
+      "type": "object"
+    },
+    "RateUsedWire": {
+      "description": "One rate a merged report converted with.",
+      "properties": {
+        "day": {
+          "description": "YYYY-MM-DD, the civil day of the closes it converted.",
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "rate": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "day",
+        "from",
+        "to",
+        "rate"
+      ],
+      "type": "object"
+    },
     "ReportResult": {
       "properties": {
         "action": {
@@ -91,6 +175,38 @@
       ],
       "type": "object"
     },
+    "UnconvertedWire": {
+      "description": "Trades of one symbol on one day a merge left out.",
+      "properties": {
+        "day": {
+          "type": "string"
+        },
+        "from": {
+          "description": "The currency without a rate, for `no_rate`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "`point_value_unset` or `no_rate`.",
+          "type": "string"
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "trades": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "symbol",
+        "day",
+        "reason",
+        "trades"
+      ],
+      "type": "object"
+    },
     "WireU64": {
       "pattern": "^(0|[1-9][0-9]*)$",
       "type": "string"
@@ -138,8 +254,40 @@
           },
           "type": "array"
         },
+        "currencies": {
+          "description": "The currencies a merge can read in.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "loaded": {
           "type": "boolean"
+        },
+        "merge": {
+          "description": "The merge in force; null reads per asset.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "merge_note": {
+          "description": "Why a merge asked of a points report kept one curve per instrument.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "merged": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MergedWire"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the merge converted; null per asset or in points."
         },
         "net_points": {
           "$ref": "#/$defs/CanonicalDecimal"
@@ -168,6 +316,13 @@
             "null"
           ]
         },
+        "symbols": {
+          "description": "The symbols chosen; empty reads every symbol.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "timezone": {
           "type": "string"
         },
@@ -190,6 +345,8 @@
         "applied_days",
         "applied_day_count",
         "timezone",
+        "symbols",
+        "currencies",
         "trade_count",
         "unreadable_files",
         "skipped_rows",

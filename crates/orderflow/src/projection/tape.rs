@@ -53,10 +53,6 @@ impl TapeDotGeometry {
             && (0.0..=1.0).contains(&y)
     }
 
-    fn position(self, mark: &AggressionPrimitive) -> (f64, f64) {
-        self.point(mark.x, mark.y)
-    }
-
     /// Pixels from the tape's left end and top of normalized `(x, y)`.
     fn point(self, x: f64, y: f64) -> (f64, f64) {
         (
@@ -636,45 +632,6 @@ pub(super) fn combine_tape_facts<'a>(
         moment.absorb_fact(mark);
     }
     Some(moment.finish(Decimal::ONE))
-}
-
-/// One shared radius cap preserves all area ratios when an axis transform
-/// or an expiring maximum brings otherwise immutable groups closer together.
-pub(super) fn tape_radius_limit(
-    marks: &[AggressionPrimitive],
-    sizing: DotSizing,
-    bubbles: &BubbleStyle,
-    lane: &LiveLaneStyle,
-    geometry: TapeDotGeometry,
-) -> f32 {
-    let shown: Vec<_> = marks.iter().filter(|mark| geometry.visible(mark)).collect();
-    let full = sizing.full_quantity(shown.iter().copied(), true);
-    let radii: Vec<_> = shown
-        .iter()
-        .map(|mark| sizing.radius(bubbles, lane, mark, full))
-        .collect();
-    let mut neighbours = Neighbours::new(
-        f64::from(bubbles.max_radius.max(f32::MIN_POSITIVE)) * 2.0,
-        geometry,
-    );
-    let mut share = 1.0_f64;
-    for (index, mark) in shown.iter().enumerate() {
-        let (x, y) = geometry.position(mark);
-        for other in
-            neighbours.candidates(mark.x, mark.y, f64::from(radii[index] + bubbles.max_radius))
-        {
-            let (other_x, other_y) = geometry.position(shown[other]);
-            let clearance = f64::from(
-                radii[index] + radii[other]
-                    - SMALLER_DOT_OVERLAP_SHARE * radii[index].min(radii[other]),
-            );
-            if clearance > 0.0 {
-                share = share.min((x - other_x).hypot(y - other_y) / clearance);
-            }
-        }
-        neighbours.insert(index, mark.x, mark.y);
-    }
-    bubbles.max_radius * share.clamp(0.0, 1.0) as f32
 }
 
 #[cfg(test)]

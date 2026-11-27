@@ -29,6 +29,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use quantick_trading::{Currency, InstrumentMoney, MoneySource};
+
+use crate::rates::{CurrenciesRecord, CurrencyRules, RateRecord};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 
@@ -186,6 +188,8 @@ pub struct InstrumentCatalog {
     /// Keys this file switches off, for an overlay to remove.
     disabled: BTreeSet<String>,
     primary: Option<PnlPrimary>,
+    /// Which codes are one currency, and the pairs a merge converts through.
+    currencies: CurrencyRules,
 }
 
 #[derive(Deserialize)]
@@ -196,6 +200,10 @@ struct CatalogFile {
     display: DisplayRecord,
     #[serde(default)]
     instruments: BTreeMap<String, SpecRecord>,
+    #[serde(default)]
+    currencies: CurrenciesRecord,
+    #[serde(default)]
+    rates: Vec<RateRecord>,
 }
 
 #[derive(Deserialize, Default)]
@@ -341,6 +349,7 @@ impl InstrumentCatalog {
             entries,
             disabled,
             primary,
+            currencies: CurrencyRules::parse(&file.currencies, &file.rates)?,
         })
     }
 
@@ -365,6 +374,7 @@ impl InstrumentCatalog {
                 }
                 catalog.entries.extend(overlay.entries);
                 catalog.primary = overlay.primary.or(catalog.primary);
+                catalog.currencies.overlay(overlay.currencies);
                 (catalog, None)
             }
             Err(error) => (catalog, Some(format!("trader catalog ignored: {error}"))),
@@ -392,6 +402,12 @@ impl InstrumentCatalog {
     #[must_use]
     pub fn default_primary(&self) -> Option<PnlPrimary> {
         self.primary
+    }
+
+    /// Which codes count as one currency and the pairs rates are kept for.
+    #[must_use]
+    pub fn currencies(&self) -> &CurrencyRules {
+        &self.currencies
     }
 }
 

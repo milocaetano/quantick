@@ -64,7 +64,7 @@ impl Paint<'_, '_> {
             .show(ctx, |ui| {
                 #[cfg(any(feature = "scenario-harness", test))]
                 self.native.scroll_probe.report(ui);
-                if self.draw_report_filters(ui) {
+                if self.draw_report_filters(ui, env) {
                     self.update(Intent::ReloadReport);
                 }
                 if let Some(scope) = self.report_scope_label() {
@@ -92,6 +92,9 @@ impl Paint<'_, '_> {
                     Some(view) if !view.rows.is_empty() => {
                         draw_report_tiles(ui, view);
                         ui.add_space(8.0);
+                        if let Some(caption) = view.merge.caption() {
+                            ui.label(egui::RichText::new(caption).small());
+                        }
                         draw_equity_curve(ui, view, CURVE_MIN_H_PX);
                         ui.add_space(4.0);
                         // The grids fill whatever height the user gave the
@@ -175,7 +178,7 @@ impl Paint<'_, '_> {
     /// support line stating the anchor out loud. Returns whether the
     /// history must be re-read; anything it wants the *host* to do goes
     /// into `asked`.
-    fn draw_report_filters(&mut self, ui: &mut egui::Ui) -> bool {
+    fn draw_report_filters(&mut self, ui: &mut egui::Ui, env: &ReportEnv<'_>) -> bool {
         let palette = theme::get(ui.ctx());
         let mut reload = false;
         ui.horizontal_wrapped(|ui| {
@@ -184,30 +187,14 @@ impl Paint<'_, '_> {
                     .color(palette.text_muted())
                     .small(),
             );
-            let selected = self
-                .report_symbol()
-                .clone()
-                .unwrap_or_else(|| "All symbols".to_owned());
-            let symbols = self.report_symbols().to_vec();
-            egui::ComboBox::from_id_salt("paper_report_symbol")
-                .width(140.0)
-                .selected_text(selected)
-                .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_label(self.report_symbol().is_none(), "All symbols")
-                        .clicked()
-                    {
-                        self.update(Intent::Symbol(None));
-                        reload = true;
+            // A menu, not a combo: it stays open while symbols are ticked.
+            ui.menu_button(self.symbols_summary(), |ui| {
+                for (symbol, mut on, label) in self.symbol_choices(env.pnl) {
+                    if ui.checkbox(&mut on, label).changed() {
+                        self.update(Intent::ToggleSymbol(symbol));
                     }
-                    for symbol in symbols {
-                        let on = self.report_symbol().as_deref() == Some(symbol.as_str());
-                        if ui.selectable_label(on, &symbol).clicked() {
-                            self.update(Intent::Symbol(Some(symbol)));
-                            reload = true;
-                        }
-                    }
-                });
+                }
+            });
             ui.separator();
             ui.label(
                 egui::RichText::new("Source")
@@ -306,6 +293,30 @@ impl Paint<'_, '_> {
                         ui.small_button(icons::X).on_hover_text(back).clicked(),
                     )
                 };
+                let merge = self.merge_controls(env.pnl, env.symbol);
+                if let Some((current, offered)) = merge.currency {
+                    egui::ComboBox::from_id_salt("paper_report_merge_currency")
+                        .selected_text(current.code())
+                        .show_ui(ui, |ui| {
+                            for currency in offered {
+                                let label =
+                                    ui.selectable_label(currency == current, currency.code());
+                                if label.clicked() {
+                                    self.update(Intent::MergeCurrency(currency));
+                                }
+                            }
+                        });
+                }
+                if let Some(merged) = merge.switch {
+                    for (on, label, ask) in [
+                        (false, "Per asset", None),
+                        (true, "Merge all", Some(merge.default)),
+                    ] {
+                        if ui.selectable_label(merged == on, label).clicked() && merged != on {
+                            self.update(Intent::Merge(ask.clone()));
+                        }
+                    }
+                }
                 let (current, modes) = (env.pnl.primary(env.symbol), env.pnl.modes(env.symbol));
                 if let Some(primary) = pnl_mode_switch(ui, current, modes) {
                     self.update(Intent::PnlPrimary(primary));

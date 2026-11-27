@@ -131,6 +131,10 @@ impl SharedSettings {
                 state.paper_capital = records_from_capital(capital);
                 state.instrument_money = records_from_book(book);
                 state.pnl_primary = pnl.chosen.map(|primary| primary.token().to_owned());
+                state.report_merge_currency = pnl
+                    .merge_currency
+                    .as_ref()
+                    .map(|currency| currency.code().to_owned());
             }
             Self::Strategies {
                 strategies,

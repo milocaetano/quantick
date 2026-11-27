@@ -224,7 +224,7 @@ fn dense_ordinary_frontier_uses_eligible_volume_before_the_final_collision_cap()
     );
     assert!(
         after[0] >= 7.0 && after[1] >= 14.0,
-        "the shared cap cannot cancel the readable ordinary scale: {after:?}"
+        "the opening burst cannot cancel the readable ordinary scale: {after:?}"
     );
     assert!(after[after.len() / 2] >= before[before.len() / 2] * 10.0);
     assert!(

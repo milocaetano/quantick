@@ -24,6 +24,7 @@ pub mod fit;
 pub mod journals;
 pub mod layout;
 pub mod ledger_state;
+pub mod merge;
 pub mod readout;
 pub mod scope;
 pub mod scroll_probe;
@@ -428,6 +429,8 @@ pub struct ReportView {
     pub net_tint: rust_decimal::Decimal,
     /// What the wording above was worded under.
     pnl_key: Option<crate::pnl::PnlKey>,
+    /// The merge it was cut under; per asset until [`Self::merged`].
+    pub merge: merge::MergeView,
 }
 
 impl ReportView {
@@ -514,6 +517,7 @@ impl ReportView {
             net_text: (String::new(), String::new()),
             net_tint: rust_decimal::Decimal::ZERO,
             pnl_key: None,
+            merge: merge::MergeView::default(),
         }
     }
 

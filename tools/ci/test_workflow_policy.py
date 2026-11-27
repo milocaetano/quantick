@@ -85,9 +85,18 @@ class WorkflowPolicy(unittest.TestCase):
 
     def test_required_jobs_are_every_gated_job(self):
         self.assertEqual("gate", REQUIRED[0])
-        self.assertEqual(set(REQUIRED) | {"classify", "fast", "rust-skip", "read-cost", "read-cost-ledger"},
+        self.assertEqual(set(REQUIRED) | {"classify", "fast", "rust-skip", "read-cost", "read-cost-ledger", "ci-ok"},
                          set(JOB_BODIES))
         self.assertIn("RUST_SKIP_CHECK='rust-skip'", FULL)
+
+    def test_ci_ok_waits_on_every_full_job_and_never_skips(self):
+        # A branch rule reads a skipped job as passing, so the one check it can
+        # require runs on every event and waits on the whole verdict.
+        body = JOB_BODIES["ci-ok"]
+        needs = re.search(r"^    needs: \[(.*)\]$", body, re.MULTILINE)[1].split(", ")
+        self.assertEqual(["classify", *REQUIRED, "rust-skip"], needs)
+        self.assertEqual("always()", scalar(body, "if"))
+        self.assertIn('sh .claude/hooks/full_ci.sh verify . "$HEAD_SHA"', body)
 
     def test_every_rust_job_waits_on_the_mode_alone(self):
         for name in RUST_JOBS:
@@ -152,7 +161,10 @@ class WorkflowPolicy(unittest.TestCase):
         self.assertNotIn("cargo", classify)
         self.assertNotIn("rust-setup", classify)
         self.assertNotIn("Decide what this head needs", JOB_BODIES["gate"])
+        # `ci-ok` sums up the verdict, so it is the one job that waits on it.
         for name, body in JOB_BODIES.items():
+            if name == "ci-ok":
+                continue
             with self.subTest(job=name):
                 self.assertNotRegex(body, r"(?m)^    needs: .*\bgate\b")
 

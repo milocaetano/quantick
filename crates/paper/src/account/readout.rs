@@ -34,6 +34,11 @@ impl PaperAccount {
         self.pnl.chosen = Some(primary);
     }
 
+    /// Apply a surface's P&L pick: the leading figure or the merge currency.
+    pub fn pick_pnl(&mut self, pick: crate::pnl::PnlPick) {
+        self.pnl.pick(pick);
+    }
+
     /// Lead with the other figure: money gives way to points per contract,
     /// either points figure to money. What a click on a chart leg asks for -
     /// the same switch, so the ticket shows what the chart now reads.

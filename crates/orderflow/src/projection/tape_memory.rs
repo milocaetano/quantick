@@ -9,7 +9,7 @@ use rust_decimal::prelude::ToPrimitive as _;
 
 use super::dots::window_start;
 use super::model::f64_span;
-use super::tape::{TapeReference, position_tape_with, tape_radius_limit};
+use super::tape::{TapeReference, position_tape_with};
 use super::tape_group::{
     Group, NativeKey, PreviewDot, SettledReference, merge_groups, preview_groups,
 };
@@ -50,8 +50,8 @@ pub struct TapeDotView {
     pub geometry: TapeDotGeometry,
 }
 
-/// The visible groups and one common area scale; horizontal padding continues
-/// to use the configured radius, never this possibly smaller collision cap.
+/// The visible groups and one common area scale. The radius is the configured
+/// one: no pair of neighbours shrinks every disc, and discs may overlap.
 pub struct TapeDotFrame {
     pub marks: Vec<AggressionPrimitive>,
     pub max_radius: f32,
@@ -455,18 +455,10 @@ impl TapeDotMemory {
             .map(|group| group.mark.clone())
             .chain(active.into_iter().map(|dot: PreviewDot| dot.mark))
             .collect();
-        self.draw(
-            shown,
-            reference_quantities,
-            marks,
-            view,
-            sizing,
-            bubbles,
-            lane,
-        )
+        self.draw(shown, reference_quantities, marks, view, sizing, bubbles)
     }
 
-    /// Place, size and cap `shown`, the groups' marks with their volumes
+    /// Place and size `shown`, the groups' marks with their volumes
     /// eligible for the automatic reference, and pass the candle marks of
     /// `marks` through.
     #[allow(clippy::too_many_arguments)]
@@ -478,7 +470,6 @@ impl TapeDotMemory {
         view: TapeDotView,
         sizing: DotSizing,
         bubbles: &BubbleStyle,
-        lane: &LiveLaneStyle,
     ) -> TapeDotFrame {
         position_tape_with(
             &mut shown,
@@ -515,19 +506,10 @@ impl TapeDotMemory {
         for mark in &mut shown {
             mark.size = normalized_area_size(mark.quantity, full);
         }
-        let final_sizing = DotSizing {
-            typed_full: Some(full),
-            ..sizing
-        };
-        let max_radius = if lane.stable_size && sizing.typed_full.is_some() {
-            bubbles.max_radius
-        } else {
-            tape_radius_limit(&shown, final_sizing, bubbles, lane, view.geometry)
-        };
         shown.extend(marks.iter().filter(|mark| !mark.live).cloned());
         TapeDotFrame {
             marks: shown,
-            max_radius,
+            max_radius: bubbles.max_radius,
             full_quantity: full,
         }
     }

@@ -327,8 +327,8 @@ impl TapeDotMemory {
             },
         );
         let _ = measure_stage("rendered_group_clone", || (), |_| frame.marks.clone());
-        let (_, radius) = measure_stage(
-            "coordinates_area_and_radius_cap",
+        let _ = measure_stage(
+            "coordinates_and_area",
             || frame.marks.clone(),
             |mut shown| {
                 crate::projection::position_tape_at(
@@ -343,20 +343,10 @@ impl TapeDotMemory {
                     mark.size =
                         crate::projection::normalized_area_size(mark.quantity, frame.full_quantity);
                 }
-                let radius = super::tape_radius_limit(
-                    &shown,
-                    DotSizing {
-                        typed_full: Some(frame.full_quantity),
-                        ..sizing
-                    },
-                    &style.bubbles,
-                    &style.live_lane,
-                    view.geometry,
-                );
-                (shown, radius)
+                shown
             },
         );
-        assert_eq!(radius, frame.max_radius);
+        assert_eq!(frame.max_radius, style.bubbles.max_radius);
         eprintln!(
             "TAPE_MEMORY_STAGE_BOUNDARY native={} retained_groups={} forming_keys={} rendered={}; fixed warmed forming frame; excludes epoch prep, seal/coincidence passes, final reference selection/sort, input clone, UI/pending/GPU; stages are not a total",
             marks.len(),

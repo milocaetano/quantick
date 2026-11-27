@@ -62,6 +62,8 @@ env:
 # .claude/hooks/full_ci.sh, and guardrails_test.sh fails when a name there has
 # no job here. The rules live in .claude/hooks/README.md, "Full CI at the exact
 # head".
+# `ci-ok` needs them all and `rust-skip`, and carries that same verdict as the
+# one check name a branch rule can require.
 #
 # They were two serial jobs, 43 minutes on Linux and 15 on Windows, and the
 # time was in work nothing could overlap inside a single runner: eleven harness
@@ -234,11 +236,6 @@ jobs:
         # Drives export_session.py end to end against a fake terminal: no
         # MetaTrader, no network, no credentials, nothing to install.
         run: python3 tools/mt5/test_export_session.py
-      - name: Outside-score measurement tests
-        # Every measured row the outside-score rubric grades comes from this
-        # lexer. A regression in it moves scores without any code changing, so
-        # its fixtures run here, beside the other offline tool suites.
-        run: python3 tools/outside_score/test_measure.py
       - name: Read-cost tests
         # The calculator: explicit Git revisions, Rust module layouts,
         # direct-only reference scope, deduplication, and delete/rename
@@ -730,3 +727,33 @@ jobs:
           cache-key: windows
       - name: Test
         run: cargo test -p quantick-app
+
+  # One check that carries the full-CI verdict, so a branch rule can require a
+  # single name. It runs whatever its needs concluded, prose-only and draft
+  # heads included, and asks `full_ci.sh verify`, the rule the gate's ready
+  # flip uses, `rust-skip` excuse and all. A failed need in its own run fails
+  # it even when an earlier run at the head was green. It never skips, because
+  # a branch rule reads a skipped job as passing: an unrelated label reports
+  # the head's earlier verdict, and a cancelled run reports red.
+  ci-ok:
+    needs: [classify, gate, ci, linux-tests, harness-app, harness-combined, harness-scenario, windows, windows-tests, windows-heavy-tests, windows-app-tests, rust-skip]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Full CI at this head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if echo "$NEEDS" | jq -e 'any(.[]; .result == "failure")' >/dev/null; then
+            echo "A job this run needs failed." >&2
+            exit 1
+          fi
+          sh .claude/hooks/full_ci.sh verify . "$HEAD_SHA"

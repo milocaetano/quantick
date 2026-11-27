@@ -11,8 +11,8 @@
 //! meanwhile.
 
 use super::{
-    AggressionCluster, AggressionPrimitive, BubbleStyle, DotSizing, Group, LiveLaneStyle,
-    TapeDotFrame, TapeDotMemory, TapeDotView, TapeSource, keys_native_cells, window_start,
+    AggressionCluster, AggressionPrimitive, BubbleStyle, DotSizing, Group, TapeDotFrame,
+    TapeDotMemory, TapeDotView, TapeSource, keys_native_cells, window_start,
 };
 use crate::projection::constants::{
     COMPLETE_CELL_UNITS, FRAME_WORK_BUDGET, REREAD_FRONTIER, SEALED_CELL_UNITS, WINDOW_UNITS,
@@ -166,7 +166,6 @@ impl TapeDotMemory {
         view: TapeDotView,
         sizing: DotSizing,
         bubbles: &BubbleStyle,
-        lane: &LiveLaneStyle,
         opening_bursts: &[i64],
     ) -> TapeDotFrame {
         if !keys_native_cells(sizing, view) {
@@ -189,14 +188,6 @@ impl TapeDotMemory {
                     .collect()
             });
         let shown = kept.iter().map(|group| group.mark.clone()).collect();
-        self.draw(
-            shown,
-            reference_quantities,
-            marks,
-            view,
-            sizing,
-            bubbles,
-            lane,
-        )
+        self.draw(shown, reference_quantities, marks, view, sizing, bubbles)
     }
 }

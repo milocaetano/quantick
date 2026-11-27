@@ -148,7 +148,10 @@ fn source_edits_leave_context_and_all_readouts_follow_the_union_across_reloads()
             })),
         );
         state.ensure_report_view(tz, PnlReader::plain());
-        Model::update(&mut state, Intent::Symbol(Some("X".to_owned())));
+        Model::update(
+            &mut state,
+            Intent::Symbols(BTreeSet::from(["X".to_owned()])),
+        );
         Model::update(&mut state, Intent::Days(DaySet::single(day)));
         for (selection, count, net) in [
             (SourceFilter::Broker.into(), 1, 3),
@@ -165,7 +168,7 @@ fn source_edits_leave_context_and_all_readouts_follow_the_union_across_reloads()
         ] {
             Model::update(&mut state, Intent::Source(selection));
             assert!(state.report_scope().is_none());
-            assert_eq!(state.report_symbol().as_deref(), Some("X"));
+            assert_eq!(state.report_symbol(), Some("X"));
             assert_eq!(state.picked_days(), &DaySet::single(day));
             for reload in [
                 Intent::ReloadReport,
@@ -175,7 +178,7 @@ fn source_edits_leave_context_and_all_readouts_follow_the_union_across_reloads()
             ] {
                 assert_eq!(
                     Model::update(&mut state, reload).load,
-                    Some(Load::Report(Some("X".to_owned())))
+                    Some(Load::Report(BTreeSet::from(["X".to_owned()])))
                 );
                 Model::update(&mut state, loaded_report(rows.clone()));
                 state.ensure_report_view(tz, PnlReader::plain());

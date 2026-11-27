@@ -156,7 +156,7 @@ fn a_tape_path_clips_an_offscreen_excursion_without_reconnecting_visible_dots() 
                 assert_eq!(circles[0].radius, 5.0);
                 assert_eq!(
                     circles[1].radius, 10.0,
-                    "offscreen volume cannot set the visible reference or collision cap"
+                    "offscreen volume cannot set the visible reference"
                 );
             }
         }

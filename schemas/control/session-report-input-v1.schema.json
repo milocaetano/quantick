@@ -234,6 +234,50 @@
         "tag"
       ],
       "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Set the symbols the report reads outright, as its multi-select does;\nan empty list reads every symbol. A symbol with no journal folder\nrefuses the call with `unknown_symbol`.",
+      "properties": {
+        "action": {
+          "const": "symbols",
+          "type": "string"
+        },
+        "symbols": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        }
+      },
+      "required": [
+        "action",
+        "symbols"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Merge every curve into one money curve in `currency`, or read per\nasset with null. The currency must be one the report offers (the\nselection's currencies and USD), else `invalid_currency`.",
+      "properties": {
+        "action": {
+          "const": "merge",
+          "type": "string"
+        },
+        "currency": {
+          "maxLength": 8,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
     }
   ],
   "title": "ReportInput"

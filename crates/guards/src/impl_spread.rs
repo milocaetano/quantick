@@ -5,10 +5,7 @@
 //! more file keeps every file under 1,500 lines while the type grows without
 //! bound, and every file that holds a piece of it reaches into the same
 //! private state. Splitting a hub that way is file-size proxy gaming — the
-//! files shrink and the coupling does not. The outside-score rubric grades
-//! exactly this (A3 in `docs/quality/outside-score-rubric.md`: the largest
-//! `impl_spread` among crates over 20,000 production lines), and nothing
-//! failed when it grew.
+//! files shrink and the coupling does not, and nothing failed when it grew.
 //!
 //! So it is a ratchet now. For every crate over [`QUALIFYING_LINES`]
 //! production lines, each type is counted by the distinct production files
@@ -21,7 +18,7 @@
 //! # What is counted
 //!
 //! The definition is `tools/outside_score/measure.py`'s, ported in [`lex`]
-//! so the guard and the score agree on every tree whose crates have distinct
+//! so the guard and that script agree on every tree whose crates have distinct
 //! directory names, as this tree's do: test files and
 //! `#[cfg(test)]` items are out, a crate's production lines are its non-blank
 //! code lines once comments and literals are blanked, and an inherent impl is
@@ -35,8 +32,8 @@
 //! keyed by that directory and named by its leaf, so two nested crates that
 //! share a leaf name stay two crates here; the script merges them under one
 //! row, a shape this tree does not have. The shared corpus in
-//! `tools/outside_score/fixtures/` pins the per-file definition: both test
-//! suites read its `expected.tsv`.
+//! `tools/outside_score/fixtures/` pins the per-file definition: the guard's
+//! tests read its `expected.tsv`.
 //!
 //! The edit-time [`check_file`] answers with the whole-tree verdict
 //! restricted to the edited file's crate, never a narrower question, so the
@@ -63,8 +60,8 @@ pub const BASELINE_FILE: &str = "crates/guards/impl-spread-baseline.txt";
 /// inherent impls may span in a qualifying crate.
 pub const LABEL: &str = "impl-spread";
 
-/// Production lines a crate must exceed before its types are counted — the
-/// rubric's line for a large crate.
+/// Production lines a crate must exceed before its types are counted: the
+/// size at which one type can grow into a hub spread across many files.
 pub const QUALIFYING_LINES: usize = 20_000;
 
 /// The tree every crate is taken from.
