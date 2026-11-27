@@ -3,8 +3,7 @@
 An atomic usability audit of the whole `crates/app` surface: every tab, tool,
 panel, dialog and gesture, carried out by six independent reviewers over the
 code on `main`. Each claim carries a `file:line` reference. This document is
-the synthesis; the six full per-area reports live in
-[`ux-audit-2026-08/`](ux-audit-2026-08/).
+the synthesis; the six full per-area reports live in git history.
 
 **Audit base:** `main @ 2856238` (2026-08-04). PR #120 (chart layer
 visibility) merged after the audit snapshot, so findings about the toolbar
@@ -48,8 +47,7 @@ provenance-only token.
 
 ## 2. Pain point 1 — closing / seeing the open trade
 
-Confirmed on both halves, three blockers. Full detail:
-[`paper-trading.md`](ux-audit-2026-08/paper-trading.md).
+Confirmed on both halves, three blockers.
 
 Root causes:
 
@@ -85,8 +83,6 @@ Redesign (approved direction):
   line); a closed-trades ledger in the Trading tab; fill markers on candles.
 
 ## 3. Pain point 2 — how the timeframe chart opens
-
-Full detail: [`tabs-timeframe.md`](ux-audit-2026-08/tabs-timeframe.md).
 
 Root cause: **two routes that are not the same feature, and the obvious one is
 broken.**
@@ -126,8 +122,6 @@ workspace so the user's own choice becomes their default; optionally expose
 
 ## 4. Pain point 3 — editing indicator properties
 
-Full detail: [`indicators.md`](ux-audit-2026-08/indicators.md).
-
 Four independent root causes:
 
 1. **No legend — the on-screen object is inert.** No overlay legend exists
@@ -157,13 +151,13 @@ show the scripts folder + rescan).
 
 ## 5. Remaining areas — headline findings
 
-- **Drawing tools** ([`drawing-tools.md`](ux-audit-2026-08/drawing-tools.md)):
+- **Drawing tools**:
   blockers — drawings do not survive a restart (no `save()` on the app);
   all chart navigation is dead while a tool is armed. Majors — no trend line,
   no line styles, style neither presetable nor remembered, no right-click
   menu, no delete-all, no magnet/snap, tool shortcuts stay live while the
   rail is hidden.
-- **Chart canvas** ([`chart-canvas.md`](ux-audit-2026-08/chart-canvas.md)):
+- **Chart canvas**:
   blocker — projection caps drop tape data silently (log-only, against the
   CLAUDE.md honesty rule). Majors — zero inspection of any flow mark (a
   bubble with ten encodings answers no questions), crosshair is a mode that
@@ -171,7 +165,7 @@ show the scripts folder + rescan).
   no canvas gesture is discoverable (one cursor on the whole canvas), no
   back-to-live control, overloaded double-click, wheel zoom anchored to the
   right edge instead of the pointer.
-- **App chrome** ([`app-chrome.md`](ux-audit-2026-08/app-chrome.md)):
+- **App chrome**:
   blockers — a bad config file kills the process before any window opens;
   Binance/Hyperliquid can never escalate to an actionable `Attention` notice.
   Majors — feed/symbol switching destroys the chart with no warning or undo,
@@ -221,7 +215,7 @@ drawing tools, chart canvas, app chrome) by separate reviewers over the code
 at `main @ 2856238`, without running the app — pixel-level claims are
 inferences from constants and are marked as such in the reports. Severities:
 Blocker / Major / Minor / Nit; Nielsen heuristics cited per finding. The
-per-area reports under [`ux-audit-2026-08/`](ux-audit-2026-08/) contain the
+per-area reports in git history contain the
 full atomic inventories (every control with `file:line`), the exact user
 flows as implemented, all findings, and quick-win vs structural
 recommendations.
