@@ -1,10 +1,9 @@
 //! Where a script instance may ring: any placement the kernel knows.
 
 use quantick_engine::{Bar, Side};
-use quantick_strategy::{
-    Anywhere, CrossDirection, FixedRange, LineCross, Placement, Reach, Region,
-};
 use rust_decimal::Decimal;
+
+use crate::{Anywhere, CrossDirection, FixedRange, LineCross, Placement, Reach, Region};
 
 /// The placement an instance was armed with. Only a drawn region needs the
 /// chart to resolve it — per bar, since a rectangle has a time span — so it

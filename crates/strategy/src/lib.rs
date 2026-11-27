@@ -74,6 +74,7 @@ mod region;
 pub mod runner;
 #[cfg(test)]
 mod scratch;
+pub mod script;
 mod signal_action;
 pub mod sound;
 mod trigger;

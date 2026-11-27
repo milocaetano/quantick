@@ -3,11 +3,11 @@
 //! kernel knows decides where the alarm may ring.
 
 use quantick_engine::{Bar, Side};
-use quantick_script_trigger::{
-    ArmRefusal, ResolvedPlacement, Script, ScriptInstance, ScriptPlacement, ScriptState,
-};
 use quantick_sim::{Command, VenueEvent};
 use quantick_strategy::runner::StrategyPort;
+use quantick_strategy::script::{
+    ArmRefusal, ResolvedPlacement, Script, ScriptInstance, ScriptPlacement, ScriptState,
+};
 use quantick_strategy::{DisarmReason, Region, SignalAction};
 use rust_decimal::Decimal;
 

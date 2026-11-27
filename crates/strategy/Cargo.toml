@@ -9,6 +9,10 @@ publish.workspace = true
 [dependencies]
 quantick-alerts = { path = "../alerts" }
 quantick-engine = { path = "../engine" }
+# The bar projection and `Indicator` contract a script runs behind.
+quantick-indicators = { path = "../indicators" }
+# The compiler, the alert titles it reads and the runtime fault it keeps.
+quantick-pine = { path = "../pine" }
 quantick-sim = { path = "../sim" }
 # The one store-write gate (DS7) the bank asks before it writes.
 quantick-workspace = { path = "../workspace" }

@@ -6,10 +6,10 @@ use std::rc::Rc;
 use quantick_engine::Side;
 use quantick_indicators::{Ctx, FootprintBar, Indicator, IndicatorBar};
 use quantick_pine::ScriptIndicator;
-use quantick_strategy::{Signal, Trigger, TriggerContext};
 use rust_decimal::Decimal;
 
-use crate::script::{Script, ScriptFault};
+use super::compiled::{Script, ScriptFault};
+use crate::{Signal, Trigger, TriggerContext};
 
 /// How many closed bars re-warm a script at arm time: the deepest history a
 /// script may read through a dynamic offset (`MAX_BARS_BACK_CAP`), so its
