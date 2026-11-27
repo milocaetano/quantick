@@ -4449,6 +4449,26 @@ fn two_context_charts_on_one_bar_rule_mirror_a_shared_mark_once() {
     assert!(owners(bottom).is_empty());
 }
 
+/// A chart still settling its layout (its key has no scope yet) holds a set
+/// about to be replaced: it neither lends its marks nor borrows another's,
+/// or a mark both hold would paint twice.
+#[test]
+fn a_chart_still_settling_its_layout_neither_lends_nor_borrows() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let time = PaneSide::Time(0);
+    let held = &mut app.active_tab_mut().pane_mut(time).layout.drawings_key;
+    let key = held.as_mut().expect("the pane holds a key");
+    assert!(key.scope.take().is_some(), "it held its scope");
+
+    let owners = |viewer| app.active_tab().mirror_owners(viewer).collect::<Vec<_>>();
+    assert!(
+        owners(PaneSide::Flow.index()).is_empty(),
+        "it lends nothing"
+    );
+    assert!(owners(time.index()).is_empty(), "and borrows nothing");
+}
+
 /// Missing legacy workspace ownership stays quarantined when two context
 /// charts open it; a new scoped edit leaves both legacy slots intact.
 #[test]

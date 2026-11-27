@@ -2162,7 +2162,8 @@ fn the_status_bar_follows_the_focused_pane() {
 
 /// The inspector's All windows switch puts a mark on the flow pane showing
 /// another layout at once, lent by its own pane and never copied into the
-/// other layout's set; switched off, it leaves at once.
+/// other layout's set; with no pane on its layout left, the store lends it
+/// to every pane; switched off, it leaves at once.
 #[test]
 fn all_windows_shows_a_mark_on_a_pane_of_another_layout() {
     let ctx = egui::Context::default();
@@ -2170,22 +2171,31 @@ fn all_windows_shows_a_mark_on_a_pane_of_another_layout() {
     let time = PaneSide::Time(0);
     let point = pane_point(&app, time);
     click_chart(&mut app, &ctx, point);
-    app.layout_adapter()
+    let first = app
+        .active_tab()
+        .pane(time)
+        .layout
+        .layout_id()
+        .expect("a layout");
+    let levels = app
+        .layout_adapter()
         .create_layout(Some("levels"))
         .expect("second");
     run_frame(&mut app, &ctx);
     place_level(&mut app, time, 100.0);
     set_scope_on(&mut app, time, DrawingScope::AllCharts);
     run_frame(&mut app, &ctx);
-    let painted = |app: &QuantickApp| {
+    let painted_on = |app: &QuantickApp, side: PaneSide| {
         let tab = app.active_tab();
-        let viewer = tab.pane(PaneSide::Flow).drawings.layout();
-        let lent = tab.mirror_owners(PaneSide::Flow.index()).map(|owner| {
+        let viewer = tab.pane(side).drawings.layout();
+        let lent = tab.mirror_owners(side.index()).map(|owner| {
             let owner = tab.pane_at(owner).expect("owner");
             owner.drawings.lent_to(viewer).count()
         });
-        tab.pane(PaneSide::Flow).drawings.shown_count() + lent.sum::<usize>()
+        let stored = tab.lent_marks.source().drawings.lent_to(viewer).count();
+        tab.pane(side).drawings.shown_count() + lent.sum::<usize>() + stored
     };
+    let painted = |app: &QuantickApp| painted_on(app, PaneSide::Flow);
     let own = |app: &QuantickApp| app.active_tab().pane(time).drawings.shown_count();
     assert_eq!(own(&app), 1, "its own pane shows it");
     assert_eq!(painted(&app), 0, "the flow pane shows another layout");
@@ -2206,6 +2216,21 @@ fn all_windows_shows_a_mark_on_a_pane_of_another_layout() {
     assert_eq!(painted(&app), 1, "All windows reaches the other layout");
     let flow = &app.active_tab().pane(PaneSide::Flow).drawings;
     assert_eq!(flow.shown_count(), 0, "lent, never copied");
+
+    let tab = app.runtime.tabs.active_id();
+    let switch = |app: &mut QuantickApp, to| {
+        let switched = app.layout_adapter().switch_pane_layout(tab, time, to);
+        switched.expect("switched");
+    };
+    switch(&mut app, first);
+    run_frame(&mut app, &ctx);
+    for side in [PaneSide::Flow, time] {
+        assert_eq!(painted_on(&app, side), 1, "no pane holds levels: {side:?}");
+        let own = app.active_tab().pane(side).drawings.shown_count();
+        assert_eq!(own, 0, "lent, never copied: {side:?}");
+    }
+    switch(&mut app, levels);
+    run_frame(&mut app, &ctx);
 
     toggle(&mut app);
     run_frame(&mut app, &ctx);

@@ -176,6 +176,9 @@ pub struct Tab {
     /// only one bar-building path. `MAX_CONTEXT_PANES` is what bounds that
     /// cost. On the heap, never inline: 8 inline panes overflowed the stack.
     pub time_panes: Vec<ChartPane>,
+    /// The "All windows" marks of layouts no pane here holds, painted on
+    /// every pane and never copied into a set.
+    pub lent_marks: quantick_drawings::LentMarks,
     /// The strategies armed on the panes' drawings and the alarm sounds
     /// they raised, walked through each live print; the app plays the
     /// sounds through the [`AlertSink`](crate::audio::AlertSink) port.
@@ -249,6 +252,7 @@ impl Tab {
             flow_pane: ChartPane::flow(flow_pane_id, spec, symbol.clone()),
             chip_label: String::new(),
             time_panes: Vec::new(),
+            lent_marks: Default::default(),
             market: Default::default(),
             alarm_labels: Default::default(),
             canvas: layout::TabCanvas::default(),

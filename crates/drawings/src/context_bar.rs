@@ -50,9 +50,6 @@ pub struct Capabilities {
     /// Whether the gear earns its slot. It does not when the inspector is
     /// pinned: its destination is already on screen.
     pub settings: bool,
-    /// Whether this drawing has enough market-time information to be shown
-    /// on the tab's other charts: the sharing slot is enabled.
-    pub sharing: bool,
     /// Whether the OHLC magnet moves this object's anchors: a tool that
     /// snaps by its own rule has no magnet to switch.
     pub magnet: bool,
@@ -130,7 +127,6 @@ mod tests {
             glyph_size: false,
             authored: false,
             settings: true,
-            sharing: true,
             magnet: true,
             position,
             draw_again: false,

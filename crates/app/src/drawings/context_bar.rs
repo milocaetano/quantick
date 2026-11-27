@@ -364,7 +364,6 @@ pub fn capabilities(object: &BarObject<'_>) -> Capabilities {
         glyph_size: object.glyph_size.is_some(),
         authored: object.author.is_some(),
         settings: object.settings_available,
-        sharing: object.shareable,
         magnet: object.magnet.is_some(),
         draw_again: object.draw_again.is_some(),
         position: object.position.is_some(),

@@ -45,18 +45,24 @@ mod shared_tests;
 pub enum SharedEdit {
     /// Take the selection, without moving anything.
     Select(usize),
-    /// Put one anchor at this instant and price.
+    /// Put one anchor at this instant and price. `time_projected`: the
+    /// other chart projected the instant ([`ChartPoint::time_projected`]),
+    /// and the anchor says so here too.
     MoveAnchor {
         index: usize,
         anchor: usize,
         time_ms: i64,
         price: f64,
+        time_projected: bool,
     },
     /// Shift every anchor of the object by this much time and price.
+    /// `time_projected`: the time was measured between instants the other
+    /// chart projected, so an anchor it moves is projected from then on.
     Translate {
         index: usize,
         delta_ms: i64,
         delta_price: f64,
+        time_projected: bool,
     },
 }
 
@@ -457,21 +463,23 @@ impl SharedMarksMut<'_> {
                 anchor,
                 time_ms,
                 price,
+                time_projected,
             } => {
                 let Some(bar) = self.projection.series.slot_of_time(time_ms) else {
                     return;
                 };
-                self.drawings.move_anchor(
-                    index,
-                    anchor,
-                    ChartPoint::at_time(bar, price, Some(time_ms)),
-                );
+                let point = ChartPoint {
+                    time_projected,
+                    ..ChartPoint::at_time(bar, price, Some(time_ms))
+                };
+                self.drawings.move_anchor(index, anchor, point);
             }
             SharedEdit::Translate {
                 index,
                 delta_ms,
                 delta_price,
-            } => self.translate(index, delta_ms, delta_price),
+                time_projected,
+            } => self.translate(index, delta_ms, delta_price, time_projected),
         }
     }
 
@@ -485,7 +493,10 @@ impl SharedMarksMut<'_> {
     /// of the object where this pane's series cannot reach moves nothing at
     /// all, rather than leaving a shape with one end on a bar and the other on
     /// an instant that has none.
-    fn translate(self, index: usize, delta_ms: i64, delta_price: f64) {
+    ///
+    /// A projected time stays projected, and a projected delta makes the
+    /// anchors it moves projected: a guess is never saved as exact.
+    fn translate(self, index: usize, delta_ms: i64, delta_price: f64, projected: bool) {
         let Some(drawing) = self.drawings.items().get(index) else {
             return;
         };
@@ -500,11 +511,10 @@ impl SharedMarksMut<'_> {
             let Some(bar) = self.projection.series.slot_of_time(time) else {
                 return;
             };
-            moved.push(ChartPoint::at_time(
-                bar,
-                point.price + delta_price,
-                Some(time),
-            ));
+            moved.push(ChartPoint {
+                time_projected: point.time_projected || (projected && delta_ms != 0),
+                ..ChartPoint::at_time(bar, point.price + delta_price, Some(time))
+            });
         }
         for (anchor, point) in moved.into_iter().enumerate() {
             self.drawings.move_anchor(index, anchor, point);
@@ -553,12 +563,12 @@ impl PaneGestures {
         };
         let magnet = pointer.magnet || self.shared_drag_magnet;
         let snap = self.shared_drag_snap;
-        let Some((time_ms, price)) =
+        let Some(mark) =
             shared_mark_at(projection, cached_bands, &pointer, position, (magnet, snap))
         else {
             return;
         };
-        self.advance_shared_drag(time_ms, price, outcome);
+        self.advance_shared_drag(mark, outcome);
     }
 
     fn begin_shared_drag(
@@ -626,7 +636,11 @@ impl PaneGestures {
         true
     }
 
-    fn advance_shared_drag(&mut self, time_ms: i64, price: f64, outcome: &mut PointerOutcome) {
+    /// `mark` is the dated point under the pointer ([`shared_mark_at`]).
+    fn advance_shared_drag(&mut self, mark: ChartPoint, outcome: &mut PointerOutcome) {
+        let Some(time_ms) = mark.time_ms else {
+            return;
+        };
         // Every edit this gesture emits belongs to the pane the gesture took
         // hold of, whatever the pointer is over now.
         outcome.shared.owner = self.shared_drag_owner;
@@ -636,23 +650,26 @@ impl PaneGestures {
                     index,
                     anchor,
                     time_ms,
-                    price,
+                    price: mark.price,
+                    time_projected: mark.time_projected,
                 });
                 outcome.set_cursor(GestureCursor::Resize);
             }
             SharedDrag::Body { index } => {
-                if let Some((last_time, last_price)) = self.shared_pointer_mark {
+                let last = self.shared_pointer_mark;
+                if let Some((last, last_time)) = last.and_then(|last| Some((last, last.time_ms?))) {
                     outcome.shared.edit = Some(SharedEdit::Translate {
                         index,
                         delta_ms: time_ms - last_time,
-                        delta_price: price - last_price,
+                        delta_price: mark.price - last.price,
+                        time_projected: mark.time_projected || last.time_projected,
                     });
                 }
                 outcome.set_cursor(GestureCursor::Move);
             }
             SharedDrag::None => {}
         }
-        self.shared_pointer_mark = Some((time_ms, price));
+        self.shared_pointer_mark = Some(mark);
     }
 }
 
@@ -669,17 +686,17 @@ pub(super) fn shared_drag_of(pick: &SharedPick, magnet: bool) -> SharedDrag {
     }
 }
 
-/// The market instant and price the pointer is on, the magnet read as the
-/// held object's own pane reads it: a level's over every visible candle, a
-/// mark's at the bar's low or high, anything else's over the candle under
-/// the pointer.
+/// The point the pointer is on, dated (a projected time included), the
+/// magnet read as the held object's own pane reads it: a level's over every
+/// visible candle, a mark's at the bar's low or high, anything else's over
+/// the candle under the pointer.
 fn shared_mark_at(
     projection: &DrawingProjection<'_>,
     cached_bands: &[Band],
     pointer: &SharedPointer,
     position: Px,
     (magnet, snap): (bool, AnchorSnap),
-) -> Option<(i64, f64)> {
+) -> Option<ChartPoint> {
     let band = band::band_at(cached_bands, position)?;
     let snap = match snap {
         AnchorSnap::VisibleLevels | AnchorSnap::BarLow | AnchorSnap::BarHigh => snap,
@@ -694,7 +711,7 @@ fn shared_mark_at(
             snap,
             band,
         )
-        .and_then(|point| Some((point.time_ms?, point.price)))
+        .filter(|point| point.time_ms.is_some())
 }
 
 fn shared_hover_cursor(

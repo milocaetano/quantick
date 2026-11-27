@@ -172,6 +172,12 @@ impl<T: ToolCatalog> Drawings<T> {
     /// series instead — which is exactly where the trader put it. A mark just
     /// read from the file is the exception ([`Drawing::saved_frame`]).
     ///
+    /// A projected time ([`ChartPoint::time_projected`]) is an instant only
+    /// where `clocked`: a series that cuts by time names the future by its
+    /// clock. Elsewhere it is a guess at a pace the re-cut no longer has, and
+    /// the anchor keeps its distance past the end like an undated one,
+    /// never clamped onto the newest bar.
+    ///
     /// Rate: once per re-cut, never per frame or per trade, over a handful of
     /// objects. The undo stacks travel with the live items for the same
     /// reason [`Self::shift_bars`] moves them — undoing later must not
@@ -180,11 +186,12 @@ impl<T: ToolCatalog> Drawings<T> {
         &mut self,
         old_slots: usize,
         new_slots: usize,
+        clocked: bool,
         slot_of: impl Fn(i64) -> Option<f32>,
     ) {
         self.each_copy(|items| {
             for drawing in items {
-                reanchor_drawing(drawing, (old_slots, new_slots), &slot_of);
+                reanchor_drawing(drawing, (old_slots, new_slots), clocked, &slot_of);
             }
         });
     }
@@ -199,13 +206,14 @@ impl<T: ToolCatalog> Drawings<T> {
     /// had grown to cover its instant. Only flagged objects are re-asked: a
     /// mark the series already backs keeps the exact spot the trader gave it.
     ///
-    /// Rate: once per history arrival, over a handful of objects.
-    pub fn resettle_off_series(&mut self, slot_of: impl Fn(i64) -> Option<f32>) {
+    /// Rate: once per history arrival, over a handful of objects. `clocked`
+    /// as for [`Self::reanchor`].
+    pub fn resettle_off_series(&mut self, clocked: bool, slot_of: impl Fn(i64) -> Option<f32>) {
         self.each_copy(|items| {
             for drawing in items.iter_mut().filter(|drawing| drawing.off_series) {
                 // Same length either side: an undated anchor already moved
                 // with the shift and has nothing to re-ask.
-                reanchor_drawing(drawing, (0, 0), &slot_of);
+                reanchor_drawing(drawing, (0, 0), clocked, &slot_of);
             }
         });
     }
@@ -262,19 +270,8 @@ impl<T: ToolCatalog> Drawings<T> {
     /// directly; the timestamp behind each anchor is what every *other* pane
     /// reads, so leaving it stale would drag a mark on one chart and leave
     /// its shared twin standing where it used to be. Only the pane knows how
-    /// to name the instant under a slot, so it hands the answers back here.
-    pub fn set_times(&mut self, index: usize, times: &[Option<i64>]) {
-        let mut times = times.iter();
-        self.restamp(index, |point| {
-            if let Some(time) = times.next() {
-                point.time_ms = *time;
-                point.time_projected = false;
-            }
-        });
-    }
-
-    /// [`Self::set_times`] with the pane naming each anchor's instant itself,
-    /// a projected one included (`PaneSeriesRead::stamp`).
+    /// to name the instant under a slot, a projected one included
+    /// (`PaneSeriesRead::stamp`), so it names each anchor's here.
     pub fn restamp(&mut self, index: usize, stamp: impl FnMut(&mut ChartPoint)) {
         if let Some(drawing) = self.items.get_mut(index) {
             drawing.points.iter_mut().for_each(stamp);
@@ -411,18 +408,19 @@ fn reanchor_payload<T: ToolCatalog>(drawing: &mut crate::Drawing<T>, before: &[C
 fn reanchor_drawing<T>(
     drawing: &mut Drawing<T>,
     slots: (usize, usize),
+    clocked: bool,
     slot_of: &impl Fn(i64) -> Option<f32>,
 ) {
     let saved_frame = std::mem::take(&mut drawing.saved_frame);
     let reference = drawing
         .points
         .iter()
-        .find_map(|point| Some((point.bar, point.time_ms?)));
+        .find_map(|point| Some((point.bar, dated(point, clocked)?)));
     let Some((saved_bar, time)) = reference.filter(|_| saved_frame) else {
         // Undated throughout, a saved mark has neither an instant nor a
         // known end to measure from: it keeps the bars it was saved at.
         let slots = if saved_frame { (0, 0) } else { slots };
-        drawing.off_series = reanchor_points(&mut drawing.points, slots, slot_of);
+        drawing.off_series = reanchor_points(&mut drawing.points, slots, clocked, slot_of);
         return;
     };
     let landed = slot_of(time);
@@ -430,32 +428,40 @@ fn reanchor_drawing<T>(
     let undated = drawing
         .points
         .iter_mut()
-        .filter(|point| point.time_ms.is_none());
+        .filter(|point| dated(point, clocked).is_none());
     for point in undated {
         point.bar += shift;
     }
     // Dated anchors keep their own rule; undated ones moved above and see no
     // change of length here.
-    drawing.off_series = reanchor_points(&mut drawing.points, (0, 0), slot_of);
+    drawing.off_series = reanchor_points(&mut drawing.points, (0, 0), clocked, slot_of);
     // Parked on slot 0, the reference has not left the file's frame yet:
     // the history that settles it later must carry the undated anchors too.
     drawing.saved_frame = landed.is_none();
 }
 
+/// The instant a re-cut asks the series for `point` by: its time, unless
+/// that time is projected and the series is not `clocked` (see
+/// [`Drawings::reanchor`]).
+fn dated(point: &ChartPoint, clocked: bool) -> Option<i64> {
+    point.time_ms.filter(|_| clocked || !point.time_projected)
+}
+
 /// Anchors re-expressed against a re-cut series of `new_slots` that held
 /// `old_slots`: each onto its instant's slot, or with no instant by however
 /// many slots the series grew. `true` when an instant is off the new series
-/// (that anchor parks on slot 0).
+/// (that anchor parks on slot 0). `clocked` as for [`Drawings::reanchor`].
 pub fn reanchor_points(
     points: &mut [ChartPoint],
     (old_slots, new_slots): (usize, usize),
+    clocked: bool,
     slot_of: &impl Fn(i64) -> Option<f32>,
 ) -> bool {
     #[allow(clippy::cast_precision_loss)]
     let past_end = new_slots as f32 - old_slots as f32;
     let mut off_series = false;
     for point in points {
-        let Some(time) = point.time_ms else {
+        let Some(time) = dated(point, clocked) else {
             point.bar += past_end;
             continue;
         };

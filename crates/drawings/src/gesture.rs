@@ -217,11 +217,12 @@ impl PaneMarksMut<'_> {
     /// change: the trader placed them and the trader removes them.
     pub fn reanchor(self, old_slots: usize) {
         let slots = (old_slots, self.series.slots());
+        let clocked = self.series.cuts_by_time();
         let slot_of = |time| self.series.slot_of_time(time);
-        self.drawings.reanchor(slots.0, slots.1, slot_of);
+        self.drawings.reanchor(slots.0, slots.1, clocked, slot_of);
         // A body drag in flight holds its own copy of the anchors: same map.
         if let Some(from) = self.gestures.translate_from.as_mut() {
-            crate::reanchor_points(&mut from.free, slots, &slot_of);
+            crate::reanchor_points(&mut from.free, slots, clocked, &slot_of);
         }
     }
 
@@ -230,8 +231,9 @@ impl PaneMarksMut<'_> {
     pub fn shift_bars(self, delta: isize) {
         self.drawings.shift_bars(delta);
         self.gestures.shift_bars(delta);
+        let clocked = self.series.cuts_by_time();
         self.drawings
-            .resettle_off_series(|time| self.series.slot_of_time(time));
+            .resettle_off_series(clocked, |time| self.series.slot_of_time(time));
     }
 }
 
@@ -309,7 +311,7 @@ pub struct PaneGestures {
     /// See [`Self::shared_drag`].
     pub shared_drag_pending_from: Option<Px>,
     /// See [`Self::shared_drag`].
-    pub shared_pointer_mark: Option<(i64, f64)>,
+    pub shared_pointer_mark: Option<ChartPoint>,
     /// The held mark's own magnet, joining the rail's for this gesture.
     pub shared_drag_magnet: bool,
     /// The held mark's tool snap, which picks the magnet's candidates.

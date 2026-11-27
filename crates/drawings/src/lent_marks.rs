@@ -1,0 +1,90 @@
+//! The "All windows" marks of a market's layouts that no chart of a tab
+//! holds, lent to every chart of that tab.
+//!
+//! Contract: a chart holds its own market/workspace/layout set
+//! (`pane_sync`), and a chart of the same tab holding another layout's set
+//! lends its marks live, editable where they are held. A layout no chart of
+//! the tab holds has no chart to lend from, so its "All windows" marks are
+//! read here from the store, painted beside the charts' own and never
+//! copied into their sets: nothing here is written back, and nothing here
+//! takes an edit. Only the tab's workspace lends. Owner: the tab, which
+//! follows the store each frame.
+
+use crate::gesture::SharedSource;
+use crate::{DrawingTool, Drawings};
+use quantick_workspace::layout_document::SavedDrawing;
+use quantick_workspace::market_settings::{DrawingKey, DrawingScope, MarketKey, PaneRole};
+use quantick_workspace::market_settings_store::MarketSettingsStore;
+use smallvec::SmallVec;
+
+#[cfg(test)]
+#[path = "lent_marks_tests.rs"]
+mod lent_marks_tests;
+
+/// The scopes a tab's charts hold: one per chart at most.
+type HeldScopes = SmallVec<[DrawingScope; 8]>;
+
+/// See the module docs.
+#[derive(Default)]
+pub struct LentMarks {
+    marks: Drawings<DrawingTool>,
+    /// What `marks` was read for: the store's revision, the market and the
+    /// scopes the tab's charts held then.
+    read_for: Option<(u64, MarketKey, HeldScopes)>,
+}
+
+impl LentMarks {
+    /// Read again what the market's other layouts lend a tab whose charts
+    /// hold `held`, once the store or those keys moved; an idle frame
+    /// compares and allocates nothing. A key without its scope (a chart
+    /// still settling its layout) neither holds nor asks.
+    pub fn follow<'a>(
+        &mut self,
+        store: &MarketSettingsStore,
+        held: impl IntoIterator<Item = &'a DrawingKey>,
+    ) {
+        let mut ready = held.into_iter().filter(|key| key.scope.is_some());
+        let Some(first) = ready.next() else {
+            if self.read_for.take().is_some() {
+                self.marks = Drawings::default();
+            }
+            return;
+        };
+        let market = &first.market;
+        let mut scopes: HeldScopes = std::iter::once(first)
+            .chain(ready)
+            .filter(|key| key.market == *market)
+            .filter_map(|key| key.scope)
+            .collect();
+        scopes.sort_unstable();
+        scopes.dedup();
+        let revision = store.revision();
+        let read = self.read_for.as_ref();
+        if read.is_some_and(|(at, held, then)| *at == revision && held == market && *then == scopes)
+        {
+            return;
+        }
+        let workspace = scopes[0].workspace;
+        let lends = |scope: DrawingScope| scope.workspace == workspace && !scopes.contains(&scope);
+        let settings = store.settings();
+        let lent: Vec<SavedDrawing> = settings
+            .keys()
+            .filter(|key| key.role == PaneRole::AllTimeframes && key.market == *market)
+            .filter(|key| key.scope.is_some_and(lends))
+            .flat_map(|key| settings.drawings(&key).to_vec())
+            .filter(|entry| entry.all_windows && entry.all_timeframes())
+            .collect();
+        self.marks = Drawings::default();
+        self.marks.adopt(crate::saved::live(&lent, first));
+        self.read_for = Some((revision, market.clone(), scopes));
+    }
+
+    /// The marks as a chart paints another's: see [`SharedSource`].
+    #[must_use]
+    pub fn source(&self) -> SharedSource<'_> {
+        SharedSource {
+            drawings: &self.marks,
+            content_editing: None,
+        }
+    }
+}

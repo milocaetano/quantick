@@ -954,18 +954,40 @@ impl Tab {
     /// The panes whose shared marks `viewer` shows. Every pane of a market and
     /// layout scope holds its set itself: one holding the viewer's adds nothing
     /// (another layout's lends its "All windows" marks), and of two holding
-    /// another only the first does, or a shared mark would paint twice.
+    /// another only the first does, or a shared mark would paint twice. A
+    /// pane still settling its layout (a key without its scope) neither
+    /// lends nor borrows: the set it holds is about to be replaced.
     pub(crate) fn mirror_owners(&self, viewer: PaneIndex) -> impl Iterator<Item = PaneIndex> + '_ {
-        let key = move |pane: PaneIndex| {
-            let key = self.pane_at(pane)?.layout.drawings_key.as_ref();
-            key.map(|key| (&key.market, key.scope))
-        };
+        let key = move |pane: PaneIndex| self.pane_at(pane)?.layout.drawings_key.as_ref();
+        let settling = move |pane| key(pane).is_some_and(|key| key.scope.is_none());
+        let set = move |pane| key(pane).map(|key| (&key.market, key.scope));
         (0..self.pane_count()).filter(move |&owner| {
-            let same_set = |other: PaneIndex| key(owner).is_some() && key(other) == key(owner);
+            let same_set = |other: PaneIndex| set(owner).is_some() && set(other) == set(owner);
             owner != viewer
+                && !settling(owner)
+                && !settling(viewer)
                 && !same_set(viewer)
                 && !(0..owner).any(|earlier| earlier != viewer && same_set(earlier))
         })
+    }
+
+    /// Bring the marks lent by layouts no pane of this tab holds up to
+    /// `store` (`quantick_drawings::LentMarks`).
+    pub(crate) fn follow_lent_marks(
+        &mut self,
+        store: &quantick_workspace::market_settings_store::MarketSettingsStore,
+    ) {
+        let Self {
+            flow_pane,
+            time_panes,
+            lent_marks,
+            ..
+        } = self;
+        let panes = std::iter::once(&*flow_pane).chain(time_panes.iter());
+        lent_marks.follow(
+            store,
+            panes.filter_map(|pane| pane.layout.drawings_key.as_ref()),
+        );
     }
 
     /// Land what each pane did to the other's marks on the store that holds
@@ -1016,19 +1038,13 @@ impl Tab {
         }
     }
 
-    /// Cross-pane drawings: each pane paints the shared marks of the other.
-    ///
-    /// Nothing happens on an unsplit tab — one pane has no other pane to
-    /// borrow marks from, and the drawing is already on the only chart there
-    /// is. Scope stops here, at the tab: the panes below hold one symbol on
-    /// one feed, which is what makes a price level mean the same thing on
-    /// both (`docs/ux/drawing-tools-2026-08.md` §D7).
+    /// Cross-pane drawings: each pane paints the shared marks of the other,
+    /// and those lent by layouts no pane of the tab holds. Scope stops here,
+    /// at the tab: the panes below hold one symbol on one feed, which is what
+    /// makes a price level mean the same thing on both
+    /// (`docs/ux/drawing-tools-2026-08.md` §D7).
     fn paint_shared_drawings(&self, painter: &egui::Painter) {
-        let count = self.pane_count();
-        if count < 2 {
-            return;
-        }
-        for viewer in 0..count {
+        for viewer in 0..self.pane_count() {
             if self.canvas.pane_collapsed(PaneSide::from_index(viewer)) {
                 continue;
             }
@@ -1040,6 +1056,10 @@ impl Tab {
                     pane.hit_test()
                         .paint_shared_from(painter, source.shared_source());
                 }
+            }
+            if pane.layout.drawing_scope_ready() {
+                pane.hit_test()
+                    .paint_shared_from(painter, self.lent_marks.source());
             }
         }
     }

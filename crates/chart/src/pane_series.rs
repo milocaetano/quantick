@@ -327,7 +327,7 @@ impl<'a> PaneSeriesRead<'a> {
     pub fn stamp(&self, point: &mut ChartPoint) {
         point.time_ms = self.anchor_time(point.bar);
         point.time_projected = false;
-        if point.time_ms.is_some() || self.spec.spec().time_interval_ms().is_some() {
+        if point.time_ms.is_some() || self.cuts_by_time() {
             return;
         }
         let projected = Viewport::slot_of(point.bar).and_then(|slot| {
@@ -347,7 +347,7 @@ impl<'a> PaneSeriesRead<'a> {
     /// the newest bar, and while the pane has too few bars to project. Only
     /// the pane's own anchors take it: a mirror still fades such an instant.
     pub fn projected_slot_at_time(&self, time: i64) -> Option<f32> {
-        if self.spec.spec().time_interval_ms().is_some() {
+        if self.cuts_by_time() {
             return None;
         }
         let last = self.slots().checked_sub(1)?;
@@ -355,6 +355,13 @@ impl<'a> PaneSeriesRead<'a> {
         let ahead = time.checked_sub(self.slot_open_time(last)?)?;
         #[allow(clippy::cast_precision_loss)]
         (ahead >= step).then(|| last as f32 + ahead as f32 / step as f32)
+    }
+
+    /// Whether the bars run on a fixed interval, so the time past the newest
+    /// one is the clock's and never a projection: a re-cut re-asks a
+    /// projected anchor by its instant only here.
+    pub fn cuts_by_time(&self) -> bool {
+        self.spec.spec().time_interval_ms().is_some()
     }
 
     /// The mean time one bar of the trade-built series took over the newest

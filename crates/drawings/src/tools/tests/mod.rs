@@ -1169,7 +1169,7 @@ fn reanchoring_carries_an_unfinished_draft_too() {
         ChartPoint::at_time(6.0, 100.0, Some(1_700_000_006_000))
     ));
 
-    drawings.reanchor(10, 5, halved);
+    drawings.reanchor(10, 5, false, halved);
 
     let draft = drawings.draft().expect("the draft survives the re-cut");
     assert_eq!(draft.points[0].bar, 3.0);
@@ -1205,7 +1205,7 @@ fn reanchoring_puts_an_anchor_on_the_slot_its_timestamp_now_lands_on() {
         ChartPoint::at_time(6.0, 100.0, Some(1_700_000_006_000)),
     );
 
-    drawings.reanchor(10, 5, halved);
+    drawings.reanchor(10, 5, false, halved);
 
     assert_eq!(drawings.items()[0].points[0].bar, 3.0);
     assert_eq!(drawings.items()[0].points[0].price, 100.0);
@@ -1219,7 +1219,7 @@ fn reanchoring_keeps_an_undated_anchor_past_the_end_of_the_new_series() {
     // written nothing and there is no instant to look up.
     drawings.place(tool("horizontal-line"), ChartPoint::at(12.0, 100.0));
 
-    drawings.reanchor(10, 5, halved);
+    drawings.reanchor(10, 5, false, halved);
 
     // Still two bars past the newest, now that the newest is bar 5.
     assert_eq!(drawings.items()[0].points[0].bar, 7.0);
@@ -1235,7 +1235,7 @@ fn reanchoring_flags_an_anchor_the_new_series_cannot_reach() {
 
     // A symbol switch: the new instrument's series does not cover the
     // instant this mark was drawn at.
-    drawings.reanchor(10, 5, |_| None);
+    drawings.reanchor(10, 5, false, |_| None);
 
     assert!(drawings.items()[0].off_series, "the mark must say so");
     assert_eq!(
@@ -1256,7 +1256,7 @@ fn reanchoring_travels_with_the_undo_history() {
     drawings.translate_selected(4.0, 0.0);
     drawings.commit_gesture();
 
-    drawings.reanchor(10, 5, halved);
+    drawings.reanchor(10, 5, false, halved);
     drawings.undo();
 
     // Undo must not resurrect a coordinate from the series that is gone.
@@ -1276,10 +1276,10 @@ fn history_growth_puts_an_off_series_mark_back_on_its_instant() {
     drawings.begin_gesture();
     drawings.translate_selected(0.0, 1.0);
     drawings.commit_gesture();
-    drawings.reanchor(10, 5, |_| None);
+    drawings.reanchor(10, 5, false, |_| None);
     drawings.shift_bars(3);
 
-    drawings.resettle_off_series(halved);
+    drawings.resettle_off_series(false, halved);
 
     assert!(!drawings.items()[0].off_series, "the series reaches it now");
     assert_eq!(drawings.items()[0].points[0].bar, 3.0, "on its own instant");
@@ -1295,10 +1295,10 @@ fn history_growth_that_still_misses_the_instant_keeps_the_fade() {
         tool("horizontal-line"),
         ChartPoint::at_time(6.0, 100.0, Some(1_700_000_006_000)),
     );
-    drawings.reanchor(10, 5, |_| None);
+    drawings.reanchor(10, 5, false, |_| None);
     drawings.shift_bars(3);
 
-    drawings.resettle_off_series(|_| None);
+    drawings.resettle_off_series(false, |_| None);
 
     assert!(drawings.items()[0].off_series);
     assert_eq!(
@@ -1320,7 +1320,7 @@ fn history_growth_leaves_a_mark_on_the_series_where_it_is() {
     );
     drawings.shift_bars(3);
 
-    drawings.resettle_off_series(|_| Some(9.5));
+    drawings.resettle_off_series(false, |_| Some(9.5));
 
     assert!((drawings.items()[0].points[0].bar - 5.3).abs() < 1e-5);
 }
@@ -1348,7 +1348,7 @@ fn an_off_series_zone_fades_but_keeps_its_fill() {
 }
 
 #[test]
-fn setting_times_rewrites_the_instants_behind_the_anchors() {
+fn restamping_rewrites_the_instants_behind_the_anchors() {
     let mut drawings = Drawings::default();
     let rectangle = tool("rectangle");
     drawings.place(
@@ -1361,18 +1361,51 @@ fn setting_times_rewrites_the_instants_behind_the_anchors() {
     );
 
     drawings.translate_selected(2.0, 0.0);
-    drawings.set_times(0, &[Some(1_700_000_003_000), Some(1_700_000_005_000)]);
+    drawings.restamp(0, |point| {
+        point.time_ms = point.time_ms.map(|time| time + 2_000);
+        point.time_projected = point.bar > 4.0;
+    });
 
     let times: Vec<_> = drawings.items()[0]
         .points
         .iter()
-        .map(|point| point.time_ms)
+        .map(|point| (point.time_ms, point.time_projected))
         .collect();
     assert_eq!(
         times,
-        [Some(1_700_000_003_000), Some(1_700_000_005_000)],
+        [
+            (Some(1_700_000_003_000), false),
+            (Some(1_700_000_005_000), true)
+        ],
         "a moved mark carries its new instants, or its shared twin stays behind"
     );
+}
+
+/// A projected anchor time is a guess at the pace of the bars it was placed
+/// on: a re-cut of a chart that does not cut by time keeps the anchor's
+/// distance past the end, as for an undated one; a time chart's clock
+/// re-asks it by its instant.
+#[test]
+fn reanchoring_re_asks_a_projected_anchor_only_on_a_clocked_series() {
+    for (clocked, bar, what) in [
+        (false, 7.0, "two bars past the newest still"),
+        (true, 6.0, "on the slot its instant lands on"),
+    ] {
+        let mut drawings = Drawings::default();
+        let point = ChartPoint {
+            time_projected: true,
+            ..ChartPoint::at_time(12.0, 100.0, Some(1_700_000_012_000))
+        };
+        drawings.place(tool("horizontal-line"), point);
+        drawings.reanchor(10, 5, clocked, halved);
+        assert_eq!(drawings.items()[0].points[0].bar, bar, "{what}");
+
+        drawings.items_mut()[0].off_series = true;
+        drawings.shift_bars(1);
+        drawings.resettle_off_series(clocked, |_| Some(0.5));
+        let resettled = if clocked { 0.5 } else { bar + 1.0 };
+        assert_eq!(drawings.items()[0].points[0].bar, resettled, "{what}");
+    }
 }
 
 /// The honesty hole a symbol switch opens, and the one `off_series`

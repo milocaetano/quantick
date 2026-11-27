@@ -282,6 +282,7 @@ fn an_anchor_moved_on_another_pane_lands_on_this_panes_own_bar() {
             anchor: 0,
             time_ms: 1_011_000,
             price: 101.5,
+            time_projected: false,
         },
     );
     let point = drawings.items()[0].points[0];
@@ -301,6 +302,7 @@ fn a_body_drag_on_another_pane_moves_every_anchor_by_the_same_time() {
             index: 0,
             delta_ms: 3_000,
             delta_price: 2.0,
+            time_projected: false,
         },
     );
     let point = drawings.items()[0].points[0];
@@ -322,6 +324,7 @@ fn a_locked_mark_or_an_unplaceable_drag_moves_nothing() {
             index: 0,
             delta_ms: 3_000,
             delta_price: 2.0,
+            time_projected: false,
         },
     );
     apply(
@@ -331,6 +334,7 @@ fn a_locked_mark_or_an_unplaceable_drag_moves_nothing() {
             anchor: 0,
             time_ms: 1_011_000,
             price: 101.5,
+            time_projected: false,
         },
     );
     assert_eq!(locked.items()[0].points, before, "the lock holds");
@@ -342,7 +346,106 @@ fn a_locked_mark_or_an_unplaceable_drag_moves_nothing() {
             index: 0,
             delta_ms: -600_000,
             delta_price: 0.0,
+            time_projected: false,
         },
     );
     assert_eq!(free.items()[0].points, before, "no slot, no move");
+}
+
+/// A time the other chart projected stays projected here: an anchor moved
+/// to it, an anchor a projected delta moves, and a projected anchor any
+/// drag moves. Only a drag that moves no time keeps an exact anchor exact.
+#[test]
+fn a_projected_time_from_another_pane_is_never_saved_as_exact() {
+    let translate = |delta_ms, time_projected| SharedEdit::Translate {
+        index: 0,
+        delta_ms,
+        delta_price: 0.0,
+        time_projected,
+    };
+    let move_to = SharedEdit::MoveAnchor {
+        index: 0,
+        anchor: 0,
+        time_ms: 1_011_000,
+        price: 101.5,
+        time_projected: true,
+    };
+    for (projected, edit, expected, what) in [
+        (false, move_to, true, "moved onto a projected instant"),
+        (
+            false,
+            translate(3_000, true),
+            true,
+            "moved by a projected delta",
+        ),
+        (
+            true,
+            translate(3_000, false),
+            true,
+            "a projected anchor moved",
+        ),
+        (false, translate(0, true), false, "no time moved"),
+        (false, translate(3_000, false), false, "exact throughout"),
+    ] {
+        let mut drawings = line_on_bar_four();
+        drawings.items_mut()[0].points[0].time_projected = projected;
+        apply(&mut drawings, edit);
+        let point = drawings.items()[0].points[0];
+        assert_eq!(point.time_projected, expected, "{what}");
+    }
+}
+
+/// The mirror's side: a drag onto a projected instant says so in the edit
+/// it sends, for a handle and for a body measured from or to one.
+#[test]
+fn a_drag_on_a_mirror_sends_the_projected_flag_with_its_instant() {
+    let at = |time_ms, time_projected| ChartPoint {
+        time_projected,
+        ..ChartPoint::at_time(4.5, 100.0, Some(time_ms))
+    };
+    let mut gestures = PaneGestures {
+        shared_drag: SharedDrag::Anchor {
+            index: 0,
+            anchor: 0,
+        },
+        shared_drag_owner: Some(1),
+        ..Default::default()
+    };
+    let mut outcome = PointerOutcome::default();
+    gestures.advance_shared_drag(at(1_030_000, true), &mut outcome);
+    assert!(
+        matches!(
+            outcome.shared.edit,
+            Some(SharedEdit::MoveAnchor {
+                time_projected: true,
+                ..
+            })
+        ),
+        "{:?}",
+        outcome.shared.edit
+    );
+
+    for (from, to, expected) in [
+        (false, true, true),
+        (true, false, true),
+        (false, false, false),
+    ] {
+        gestures.shared_drag = SharedDrag::Body { index: 0 };
+        gestures.shared_pointer_mark = Some(at(1_020_000, from));
+        let mut outcome = PointerOutcome::default();
+        gestures.advance_shared_drag(at(1_030_000, to), &mut outcome);
+        let Some(SharedEdit::Translate {
+            delta_ms,
+            time_projected,
+            ..
+        }) = outcome.shared.edit
+        else {
+            panic!("no translate: {:?}", outcome.shared.edit);
+        };
+        assert_eq!(
+            (delta_ms, time_projected),
+            (10_000, expected),
+            "{from} to {to}"
+        );
+    }
 }

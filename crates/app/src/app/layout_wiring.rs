@@ -310,6 +310,10 @@ impl LayoutAdapter<'_> {
         self.seed_new_panes();
         self.follow_market_changes();
         self.persist_changed_drawings();
+        let store = self.store.market();
+        self.tabs
+            .iter_mut()
+            .for_each(|tab| tab.follow_lent_marks(store));
         self.book
             .persist_drawings(self.store, Instant::now(), false);
     }

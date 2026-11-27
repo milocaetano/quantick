@@ -6,7 +6,6 @@ const PLAIN: Capabilities = Capabilities {
     authored: false,
     glyph_size: false,
     settings: true,
-    sharing: true,
     magnet: true,
     position: false,
     draw_again: false,
@@ -45,7 +44,6 @@ fn the_bar_has_no_overflow_menu() {
                 glyph_size: bits & 1 == 0 && bits & 64 == 0,
                 authored: bits & 2 != 0,
                 settings: bits & 4 != 0,
-                sharing: bits & 8 != 0,
                 magnet: bits & 16 != 0,
                 draw_again: bits & 32 != 0,
                 position: bits & 64 != 0,
@@ -93,7 +91,6 @@ fn an_unsupported_property_is_absent_not_disabled() {
         authored: false,
         glyph_size: true,
         settings: true,
-        sharing: true,
         magnet: true,
         position: false,
         draw_again: false,
@@ -144,7 +141,6 @@ fn the_bar_is_one_row_of_touch_targets() {
             authored: false,
             glyph_size: true,
             settings: false,
-            sharing: true,
             magnet: true,
             position: false,
             draw_again: true,
@@ -190,15 +186,6 @@ fn the_magnet_sits_beside_lock_and_only_where_it_snaps() {
         !own_rule.contains(&Slot::Magnet),
         "a tool that snaps by its own rule has no dead magnet"
     );
-}
-
-#[test]
-fn an_unshareable_drawing_keeps_its_sharing_slot_so_the_gear_stays_put() {
-    let cells = slots(Capabilities {
-        sharing: false,
-        ..PLAIN
-    });
-    assert_eq!(cells, slots(PLAIN), "the slot stays, disabled");
 }
 
 #[test]
