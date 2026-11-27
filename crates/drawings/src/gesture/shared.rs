@@ -420,7 +420,10 @@ impl DrawingProjection<'_> {
             let projected = projected.then(|| self.series.projected_slot_at_time(time));
             let future = self.series.future_slot_at_time(time);
             if let Some(future) = future.or(projected.flatten()) {
-                anchors.push(ChartPoint::at_time(future + 0.5, point.price, Some(time)));
+                anchors.push(ChartPoint {
+                    time_projected: point.time_projected,
+                    ..ChartPoint::at_time(future + 0.5, point.price, Some(time))
+                });
                 continue;
             }
             // The other clamp: a time past the end of this pane's series

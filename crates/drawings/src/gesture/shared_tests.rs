@@ -39,6 +39,11 @@ fn rectangle(from_ms: i64, to_ms: i64) -> Mark {
 }
 
 fn reprojected(state: &ChartState, drawing: &Mark) -> (Vec<f32>, bool) {
+    let (anchors, clamped) = reprojected_points(state, drawing);
+    (anchors.iter().map(|anchor| anchor.bar).collect(), clamped)
+}
+
+fn reprojected_points(state: &ChartState, drawing: &Mark) -> (Vec<ChartPoint>, bool) {
     let spec = SpecSelector::new(BarSpec::Tick(2));
     let viewport = Viewport::new();
     let indicators = IndicatorViews::new();
@@ -52,7 +57,7 @@ fn reprojected(state: &ChartState, drawing: &Mark) -> (Vec<f32>, bool) {
         indicators: &indicators,
     };
     let (anchors, clamped) = projection.reproject(drawing).expect("the series has bars");
-    (anchors.iter().map(|anchor| anchor.bar).collect(), clamped)
+    (anchors.to_vec(), clamped)
 }
 
 /// The trader's report: a rectangle shown on all charts arrived on the
@@ -470,6 +475,11 @@ fn a_projected_corner_runs_on_past_the_mirrors_newest_bar() {
         let mut drawing = rectangle(1_000, 2_200);
         drawing.points[1].time_projected = projected;
         assert_eq!(reprojected(&state, &drawing), expected, "{what}");
+        let (anchors, _) = reprojected_points(&state, &drawing);
+        assert_eq!(
+            anchors[1].time_projected, projected,
+            "{what}: the copy keeps its label"
+        );
     }
 }
 
