@@ -32,6 +32,7 @@ use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage}
 use quantick_control_handlers::market_palette::MarketPaletteOwners;
 use quantick_control_handlers::notify::AttentionHost as _;
 use quantick_control_handlers::script_alarms::journal as journal_scripts;
+use quantick_control_handlers::wire::settings_sections::SettingsSection;
 use quantick_feed::stall::Stall;
 use quantick_ui_model::market_palette::Intent as PaletteUiIntent;
 use quantick_ui_model::strategy_popup::Intent::SettleArm;
@@ -489,8 +490,7 @@ impl QuantickApp {
         let lead = statusbar::StatusLead::of(tab, stall, now_ms, open);
         scratch.status = statusbar::draw(ctx, &self.status_model(), self.runtime.tz, &lead);
         if scratch.status.open_display_settings {
-            let display =
-                quantick_control_handlers::wire::settings_sections::SettingsSection::Display;
+            let display = SettingsSection::Display;
             super::menu_bar::apply_menu_command_on(self, ctx, MenuCommand::OpenSettings(display));
             ctx.request_repaint();
         }

@@ -6,6 +6,7 @@ use eframe::egui;
 use quantick_control_handlers::wire::canvas::{
     LAYOUT_PICKER_CAPABILITY_ID, OPEN_WINDOW_MENU_CAPABILITY_ID, PICK_LAYOUT_CAPABILITY_ID,
 };
+use quantick_control_handlers::wire::workspace_book::WORKSPACE_SAVE_TO_CAPABILITY_ID;
 use quantick_ui_model::canvas_popovers::picked;
 use quantick_workspace::canvas::LayoutMarks;
 
@@ -157,8 +158,7 @@ fn publish(
     workspace.description = state.colour.map(|colour| colour.describe(dark));
     controls.push(workspace);
     if let Some(floppy) = rects.floppy {
-        let save =
-            Some(quantick_control_handlers::wire::workspace_book::WORKSPACE_SAVE_TO_CAPABILITY_ID);
+        let save = Some(WORKSPACE_SAVE_TO_CAPABILITY_ID);
         controls.push(control(
             "capsule.save",
             "Save workspace",
