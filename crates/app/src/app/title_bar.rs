@@ -96,7 +96,7 @@ pub(super) fn chips_of(
                 label: tab.chip_label().to_owned(),
                 workspace: book.tab_workspace(id).to_owned(),
                 venue_code: config.feed_code(&tab.feed_id).into_owned(),
-                symbol_ink: book.tab_colour(id).and_then(ink),
+                symbol_ink: book.tab_colour(id).map(ink),
                 tag_fill: tab.paper.account.route_tone().rgb(),
                 icon,
                 quote,
