@@ -39,6 +39,7 @@ pub mod rates;
 mod venue;
 mod wire;
 
+#[cfg(any(test, feature = "fake"))]
 pub mod fake;
 
 pub use broker::{AccountFacts, BrokerConnector, BrokerVenue, LinkState, MarginMode, TradeMode};

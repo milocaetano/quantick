@@ -1699,10 +1699,8 @@ mod tests {
 /// `#[cfg(test)]` cannot serve them: the attribute is false when this crate is
 /// compiled as a dependency, and the items would vanish exactly where they are
 /// wanted. This repo's answer to that is a module declared as test support and
-/// documented as part of what the crate is, the way `engine::fixture` and
-/// `control::fake` are, rather than a cargo feature — no crate here has a
-/// `[features]` section, and adding one for this would be a second way to do a
-/// solved thing.
+/// documented as part of what the crate is, the way `engine::fixture` is,
+/// rather than a cargo feature.
 ///
 /// Everything here reaches a `pub(crate)` item, so the module boundary is the
 /// only door: a production caller cannot move a playhead by accident, because

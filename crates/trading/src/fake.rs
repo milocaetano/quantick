@@ -7,9 +7,9 @@
 //! execution happens. Anything paper-specific that leaks into the port stops
 //! compiling here, which is the point.
 //!
-//! It is shipped rather than hidden behind `#[cfg(test)]` for the same
-//! reason `quantick_control::fake` is: the implementations that have to
-//! prove themselves against it live in other crates.
+//! It sits behind the `fake` feature as well as `#[cfg(test)]`: the
+//! implementations that have to prove themselves against it live in other
+//! crates, which enable the feature from `[dev-dependencies]` only.
 
 use quantick_engine::{Side, Trade};
 use rust_decimal::Decimal;

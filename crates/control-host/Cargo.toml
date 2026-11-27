@@ -18,5 +18,9 @@ schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+[dev-dependencies]
+# The reference host and registry the contract tests run against.
+quantick-control = { path = "../control", features = ["fake"] }
+
 [lints]
 workspace = true

@@ -20,7 +20,7 @@ adapters that run one:
   They describe these adapters, so they are declared beside them;
   `quantick-app`'s `config` re-exports them for its own callers.
 - `replay::test_support` — published on purpose rather than test-only, the
-  way `engine::fixture` and `control::fake` are: a detached `ReplayLink` and
+  way `engine::fixture` is: a detached `ReplayLink` and
   the two published-state setters a worker drives. The tests that need them
   live in `quantick-app`, where `#[cfg(test)]` cannot reach.
 - `hooks` — `HookSpec` and `declare_hooks!`, the one-line declaration a module

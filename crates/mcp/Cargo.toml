@@ -11,11 +11,20 @@ publish.workspace = true
 name = "quantick-mcp"
 path = "src/main.rs"
 
+[features]
+# The reference fakes (`fake`), for other crates' tests: enabled only from a
+# `[dev-dependencies]` entry, so no shipped build compiles them.
+fake = []
+
 [dependencies]
 quantick-control = { path = "../control" }
 quantick-control-local = { path = "../control-local" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+# `tests/fake_gateway.rs` serves the reference registry.
+quantick-control = { path = "../control", features = ["fake"] }
 
 [lints]
 workspace = true
