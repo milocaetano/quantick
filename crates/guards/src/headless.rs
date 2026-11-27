@@ -925,7 +925,7 @@ fn z() { let f = std::collections::HashSet::new(); }
     /// with a hole in it: asserting only that every scanned crate is named
     /// leaves a crate *added to the sentence* and forgotten here silently
     /// unscanned — unguarded, which looks green and is worse than a failure.
-    /// That is the same reason `graph`'s `every_crate_is_covered` exists.
+    /// That is the same reason `graph`'s `every_crate_is_ranked` exists.
     fn crates_the_sentence_names(sentence: &str) -> Vec<String> {
         let list = sentence
             .split_once("That is ")

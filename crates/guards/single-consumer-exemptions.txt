@@ -38,3 +38,12 @@ platform consumed by `app` only; the OS-window exception: the native window call
 ui-model consumed by `app` only; the headless UI model contract and shared surface catalog requested in #922 intentionally have one shipped desktop view host. Domain rules remain in their existing crates.
 # `script-trigger` left it when `backtest` began running a script's orders
 # over a recorded session.
+# The three venues below joined when `app` moved them to `[dev-dependencies]`
+# under `APP_DEPENDENCY_CEILING` (`crates/guards/src/graph.rs`): `app` named
+# them only in tests, so `feed` was already the one shipped path to them.
+# Each is a venue adapter the feed host runs behind `FeedEvent`, and feeds
+# never depend on each other. One consumer is the design: the feed host is
+# the only runtime a venue may run in.
+feed-binance consumed by `feed` only; a venue adapter, as above.
+feed-hyperliquid consumed by `feed` only; a venue adapter, as above.
+feed-mt5 consumed by `feed` only; a venue adapter, as above.

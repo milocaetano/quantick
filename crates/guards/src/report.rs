@@ -128,10 +128,11 @@ pub fn render(root: &Path) -> Rendered {
         portable,
     );
     // The two architecture invariants, as numbers a merge can be diffed on:
-    // how wide the graph is, and whether the headless rule still holds. Both
+    // how wide and deep the graph is, and whether the headless rule holds. All
     // are measurements here and enforcement elsewhere -- `--report` describes
     // the tree, it does not judge it.
-    row(&mut out, "graph.edges", graph::edges());
+    row(&mut out, "graph.edges", graph::edges(root));
+    row(&mut out, "graph.max_depth", graph::max_depth(root));
     // The count, then the list: which crates have one consumer, and who.
     let single = single_consumer::single_consumers(root);
     row(&mut out, "graph.single_consumer", single.len());
