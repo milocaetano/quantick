@@ -229,10 +229,10 @@ fn a_profile_dropped_past_the_newest_bar_reopens_where_it_was_closed() {
 
     // The pane's first bars settle the re-anchor the adoption deferred: the
     // saved series' length is unknown there, so it is asked as zero.
-    reopened.reanchor(0, 3, false, tape_slot(7, 9));
+    reopened.reanchor(0, 3, i64::MAX, tape_slot(7, 9));
     assert!(reopened.items()[0].off_series, "print 4 is not loaded yet");
     reopened.shift_bars(7);
-    reopened.resettle_off_series(false, tape_slot(0, 9));
+    reopened.resettle_off_series(i64::MAX, tape_slot(0, 9));
 
     assert_eq!(bars(&reopened), before);
     assert!(!reopened.items()[0].off_series);
@@ -245,7 +245,7 @@ fn a_profile_dropped_past_the_newest_bar_keeps_its_span_on_a_longer_history() {
     let (mut reopened, before) = reopened_profile();
 
     // Five older prints in front: print 4 now sits on slot 9.
-    reopened.reanchor(15, 15, false, tape_slot(-5, 9));
+    reopened.reanchor(15, 15, i64::MAX, tape_slot(-5, 9));
 
     assert_eq!(bars(&reopened), [before[0] + 5.0, before[1] + 5.0]);
 }
@@ -293,4 +293,31 @@ fn a_projected_anchor_time_round_trips_and_an_exact_one_writes_no_flag() {
     let mark = read.to_drawing(DrawingId(1)).unwrap();
     assert!(mark.time_projected() && mark.shareable());
     assert!(mark.all_timeframes(), "it still shows on every cut");
+}
+
+/// A level dropped past the newest bar of a tick chart, its time projected,
+/// reopened: once the history reaches that time it lands by time, not by the
+/// bar number it was saved at; while it does not, it keeps its saved bar.
+#[test]
+fn a_projected_mark_reopened_under_longer_history_lands_by_time() {
+    for (first, last, bar, what) in [
+        (-5, 19, 17.0, "print 12 sits on slot 17 now"),
+        (-5, 9, 12.5, "the tape has not reached it yet"),
+    ] {
+        let mut live = Drawings::default();
+        let point = ChartPoint {
+            time_projected: true,
+            ..ChartPoint::at_time(12.5, 100.0, Some(print_time(12.0)))
+        };
+        assert!(live.place(tool("horizontal-line"), point));
+        let mut settings = MarketSettings::default();
+        let key = flow("BTCUSDT");
+        store_marks(&mut settings, &key, "tick:100", live.items(), &[]);
+        let file = parse_settings(&to_text(&settings).unwrap()).unwrap();
+        let mut reopened = Drawings::default();
+        reopened.adopt(pane_marks(&file, &key, "tick:100"));
+        let slots = usize::try_from(last - first + 1).unwrap();
+        reopened.reanchor(0, slots, print_time(last as f32), tape_slot(first, last));
+        assert_eq!(reopened.items()[0].points[0].bar, bar, "{what}");
+    }
 }

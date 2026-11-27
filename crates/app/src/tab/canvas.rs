@@ -14,6 +14,7 @@ use quantick_engine::bar_selection::BarInputAvailability;
 use quantick_workspace::canvas::{
     Hand, PANE_MENU_BUTTON_PX, RailHolds, RailLook, rail_marks, seat_slot,
 };
+use quantick_workspace::market_settings_store::MarketSettingsStore;
 use smallvec::SmallVec;
 
 use super::{FOCUS_FRAME_PX, SharedPicks, Tab};
@@ -973,21 +974,11 @@ impl Tab {
 
     /// Bring the marks lent by layouts no pane of this tab holds up to
     /// `store` (`quantick_drawings::LentMarks`).
-    pub(crate) fn follow_lent_marks(
-        &mut self,
-        store: &quantick_workspace::market_settings_store::MarketSettingsStore,
-    ) {
-        let Self {
-            flow_pane,
-            time_panes,
-            lent_marks,
-            ..
-        } = self;
-        let panes = std::iter::once(&*flow_pane).chain(time_panes.iter());
-        lent_marks.follow(
-            store,
-            panes.filter_map(|pane| pane.layout.drawings_key.as_ref()),
-        );
+    pub(crate) fn follow_lent_marks(&mut self, store: &MarketSettingsStore) {
+        let panes = std::iter::once(&self.flow_pane).chain(&self.time_panes);
+        let keys = panes.filter_map(|pane| pane.layout.drawings_key.as_ref());
+        self.lent_marks
+            .follow(store, keys, &self.flow_pane.drawings);
     }
 
     /// Land what each pane did to the other's marks on the store that holds
@@ -1048,7 +1039,11 @@ impl Tab {
             if self.canvas.pane_collapsed(PaneSide::from_index(viewer)) {
                 continue;
             }
-            let Some(pane) = self.pane_at(viewer) else {
+            // A pane with its marks hidden shows none lent to it either.
+            let Some(pane) = self
+                .pane_at(viewer)
+                .filter(|pane| !pane.drawings.all_hidden())
+            else {
                 continue;
             };
             for owner in self.mirror_owners(viewer) {

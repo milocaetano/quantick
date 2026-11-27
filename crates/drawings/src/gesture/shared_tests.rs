@@ -449,3 +449,26 @@ fn a_drag_on_a_mirror_sends_the_projected_flag_with_its_instant() {
         );
     }
 }
+
+/// A mirror runs a projected anchor on past its newest bar at its own pace,
+/// unfaded, where the owner draws it; an exact time there still clamps.
+#[test]
+fn a_projected_corner_runs_on_past_the_mirrors_newest_bar() {
+    let state = tape(&PRINTS_MS);
+    for (projected, expected, what) in [
+        (
+            true,
+            (vec![0.5, 4.5], false),
+            "two slots on at 300 ms a slot",
+        ),
+        (
+            false,
+            (vec![0.5, 2.5], true),
+            "an exact instant past the end",
+        ),
+    ] {
+        let mut drawing = rectangle(1_000, 2_200);
+        drawing.points[1].time_projected = projected;
+        assert_eq!(reprojected(&state, &drawing), expected, "{what}");
+    }
+}

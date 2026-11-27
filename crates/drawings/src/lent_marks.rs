@@ -37,8 +37,19 @@ impl LentMarks {
     /// Read again what the market's other layouts lend a tab whose charts
     /// hold `held`, once the store or those keys moved; an idle frame
     /// compares and allocates nothing. A key without its scope (a chart
-    /// still settling its layout) neither holds nor asks.
+    /// still settling its layout) neither holds nor asks. The marks wear
+    /// `ground`'s ink (the tab's flow chart's), as its own marks do.
     pub fn follow<'a>(
+        &mut self,
+        store: &MarketSettingsStore,
+        held: impl IntoIterator<Item = &'a DrawingKey>,
+        ground: &Drawings<DrawingTool>,
+    ) {
+        self.read(store, held);
+        self.marks.follow_ground_of(ground);
+    }
+
+    fn read<'a>(
         &mut self,
         store: &MarketSettingsStore,
         held: impl IntoIterator<Item = &'a DrawingKey>,
@@ -73,6 +84,8 @@ impl LentMarks {
             .filter(|key| key.scope.is_some_and(lends))
             .flat_map(|key| settings.drawings(&key).to_vec())
             .filter(|entry| entry.all_windows && entry.all_timeframes())
+            // A profile or VWAP folds this pane's bars; nothing folds a lent one.
+            .filter(|entry| ![crate::frvp::TOOL_ID, crate::avwap::TOOL_ID].contains(&&*entry.tool))
             .collect();
         self.marks = Drawings::default();
         self.marks.adopt(crate::saved::live(&lent, first));

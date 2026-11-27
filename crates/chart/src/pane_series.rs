@@ -232,10 +232,7 @@ impl<'a> PaneSeriesRead<'a> {
         // Past the newest bar first: on a time chart that space has an exact
         // clock, and asking `slot_at_time` there would clamp a future anchor
         // onto the right edge instead of letting it run on.
-        // A projected time past the newest bar of a tick, volume or renko
-        // chart goes back where `stamp` named it, not onto the newest bar.
-        let future = self.future_slot_at_time(time);
-        if let Some(future) = future.or_else(|| self.projected_slot_at_time(time)) {
+        if let Some(future) = self.future_slot_at_time(time) {
             return Some(future + 0.5);
         }
         // Before the first bar this pane holds. `slot_at_time` answers slot 0
@@ -249,6 +246,18 @@ impl<'a> PaneSeriesRead<'a> {
         let slot = self.slot_at_time(time)?.min(slots.checked_sub(1)?);
         #[allow(clippy::cast_precision_loss)]
         Some(slot as f32 + 0.5)
+    }
+
+    /// [`Self::slot_of_time`] for an anchor's time, `projected` as its
+    /// [`ChartPoint::time_projected`] says: a projected time past the newest
+    /// bar of a chart that does not cut by time goes back where its pace
+    /// puts it ([`Self::projected_slot_at_time`]). An exact one never does:
+    /// inside a forming bar older than the pace it is that bar, not a
+    /// future one.
+    pub fn slot_of_anchor(&self, time: i64, projected: bool) -> Option<f32> {
+        let ahead = projected.then(|| self.projected_slot_at_time(time));
+        let ahead = ahead.flatten().map(|slot| slot + 0.5);
+        ahead.or_else(|| self.slot_of_time(time))
     }
 
     /// Where an instant later than this pane's newest bar falls, as a
@@ -345,7 +354,7 @@ impl<'a> PaneSeriesRead<'a> {
     /// than the newest bar of a chart that does not cut by time falls, at
     /// [`Self::projected_bar_ms`] per slot. `None` on a time chart, inside
     /// the newest bar, and while the pane has too few bars to project. Only
-    /// the pane's own anchors take it: a mirror still fades such an instant.
+    /// a time flagged projected takes it ([`Self::slot_of_anchor`]).
     pub fn projected_slot_at_time(&self, time: i64) -> Option<f32> {
         if self.cuts_by_time() {
             return None;
@@ -358,10 +367,22 @@ impl<'a> PaneSeriesRead<'a> {
     }
 
     /// Whether the bars run on a fixed interval, so the time past the newest
-    /// one is the clock's and never a projection: a re-cut re-asks a
-    /// projected anchor by its instant only here.
+    /// one is the clock's and never a projection.
     pub fn cuts_by_time(&self) -> bool {
         self.spec.spec().time_interval_ms().is_some()
+    }
+
+    /// Up to when a projected anchor time is an instant a re-cut looks up:
+    /// every one where the bars [`Self::cuts_by_time`], and elsewhere those
+    /// the newest bar opened at or after. A later one is still a guess at a
+    /// pace, kept by its distance past the end. `i64::MIN` with no bars.
+    pub fn projected_dated_until(&self) -> i64 {
+        if self.cuts_by_time() {
+            return i64::MAX;
+        }
+        let last = self.slots().checked_sub(1);
+        let open = last.and_then(|last| self.slot_open_time(last));
+        open.unwrap_or(i64::MIN)
     }
 
     /// The mean time one bar of the trade-built series took over the newest

@@ -357,7 +357,11 @@ fn an_anchor_past_a_tick_charts_newest_bar_takes_a_projected_time() {
         None,
         "no exact clock"
     );
-    assert_eq!(series.slot_of_time(projected), Some(4.5), "the inverse");
+    assert_eq!(
+        series.slot_of_anchor(projected, true),
+        Some(4.5),
+        "the inverse"
+    );
 
     let short = tape(3, 4);
     let series = read(&[], &short, &spec);
@@ -398,4 +402,48 @@ fn the_projection_follows_the_newest_bars_pace() {
     let spec = SpecSelector::new(BarSpec::Tick(1));
     assert!(read(&[], &state, &spec).slots() > PROJECTION_WINDOW_BARS + 10);
     assert_eq!(read(&[], &state, &spec).projected_bar_ms(), Some(1_000));
+}
+
+/// A forming bar that has run longer than the pace: an exact time inside it
+/// is that bar, a projected time runs on at the pace, and a re-cut looks a
+/// projected time up only once the newest bar has opened past it.
+#[test]
+fn only_a_projected_time_runs_on_past_a_long_forming_bar() {
+    let at = [0, 1, 2, 3, 4, 5, 6, 7, 8, 30].map(|second| TAPE_START_MS + second * 1_000);
+    let trades: Vec<Trade> = at
+        .into_iter()
+        .zip(0..)
+        .map(|(timestamp_ms, index)| Trade {
+            timestamp_ms,
+            ..print_at(index)
+        })
+        .collect();
+    let mut state = ChartState::new(BarSpec::Tick(4));
+    state.ingest_backfill(&trades);
+    let spec = SpecSelector::new(BarSpec::Tick(4));
+    let series = read(&[], &state, &spec);
+    assert_eq!(series.projected_bar_ms(), Some(4_000));
+    for (time, projected, slot, what) in [
+        (
+            TAPE_START_MS + 30_000,
+            false,
+            2.5,
+            "an exact time stays on the forming bar",
+        ),
+        (
+            TAPE_START_MS + 16_000,
+            true,
+            4.5,
+            "a projected time runs on at the pace",
+        ),
+        (
+            TAPE_START_MS + 4_000,
+            true,
+            1.5,
+            "one inside the tape is looked up",
+        ),
+    ] {
+        assert_eq!(series.slot_of_anchor(time, projected), Some(slot), "{what}");
+    }
+    assert_eq!(series.projected_dated_until(), TAPE_START_MS + 8_000);
 }

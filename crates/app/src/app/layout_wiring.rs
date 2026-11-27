@@ -310,10 +310,6 @@ impl LayoutAdapter<'_> {
         self.seed_new_panes();
         self.follow_market_changes();
         self.persist_changed_drawings();
-        let store = self.store.market();
-        self.tabs
-            .iter_mut()
-            .for_each(|tab| tab.follow_lent_marks(store));
         self.book
             .persist_drawings(self.store, Instant::now(), false);
     }
@@ -954,11 +950,14 @@ impl LayoutAdapter<'_> {
         }
     }
 
-    /// Each frame before a write: `quantick_drawings::PaneMarks::follow_store`.
+    /// Each frame before a write: `quantick_drawings::PaneMarks::follow_store`,
+    /// and each tab's lent marks.
     fn follow_quiet_recuts(&mut self) {
         let (store, session) = (self.store.market(), self.store.session());
-        for pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
-            marks_of(pane).follow_store(store, session);
+        for tab in self.tabs.iter_mut() {
+            tab.follow_lent_marks(store);
+            tab.panes_mut()
+                .for_each(|pane| marks_of(pane).follow_store(store, session));
         }
     }
 

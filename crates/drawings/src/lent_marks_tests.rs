@@ -33,6 +33,15 @@ fn store() -> MarketSettingsStore {
         mark.set_all_timeframes(true);
         mark.all_windows = all_windows;
     }
+    let profile = DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == crate::frvp::TOOL_ID)
+        .expect("registered test tool");
+    assert!(!drawings.place(profile, ChartPoint::at_time(1.0, 70.0, Some(T0))));
+    assert!(drawings.place(profile, ChartPoint::at_time(2.0, 75.0, Some(T0 + 1))));
+    let mark = drawings.items_mut().last_mut().expect("placed");
+    mark.set_all_timeframes(true);
+    mark.all_windows = true;
     let mut settings = MarketSettings::default();
     let owner = key(scope(1));
     persist_pane(
@@ -62,7 +71,11 @@ fn a_tab_is_lent_the_all_windows_marks_of_layouts_none_of_its_charts_holds() {
         ..key(scope(2))
     };
     for (held, shown, what) in [
-        (vec![key(scope(2))], vec![90.0], "its All windows mark only"),
+        (
+            vec![key(scope(2))],
+            vec![90.0],
+            "its All windows level only, no profile",
+        ),
         (
             vec![key(scope(2)), key(scope(1))],
             vec![],
@@ -80,7 +93,7 @@ fn a_tab_is_lent_the_all_windows_marks_of_layouts_none_of_its_charts_holds() {
         ),
     ] {
         let mut lent = LentMarks::default();
-        lent.follow(&store, &held);
+        lent.follow(&store, &held, &Drawings::default());
         assert_eq!(lent_prices(&lent), shown, "{what}");
     }
 }
@@ -92,7 +105,7 @@ fn a_lent_mark_leaves_once_the_store_turns_it_off() {
     let mut store = store();
     let held = [key(scope(2))];
     let mut lent = LentMarks::default();
-    lent.follow(&store, &held);
+    lent.follow(&store, &held, &Drawings::default());
     assert_eq!(lent_prices(&lent), [90.0]);
 
     let set = key(scope(1)).all_timeframes_key();
@@ -100,6 +113,6 @@ fn a_lent_mark_leaves_once_the_store_turns_it_off() {
     let mut items = settings.drawings(&set).to_vec();
     items.iter_mut().for_each(|entry| entry.all_windows = false);
     settings.replace(&set, items, |_| true);
-    lent.follow(&store, &held);
+    lent.follow(&store, &held, &Drawings::default());
     assert!(lent_prices(&lent).is_empty());
 }

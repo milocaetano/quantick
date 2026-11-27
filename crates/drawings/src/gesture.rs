@@ -217,12 +217,13 @@ impl PaneMarksMut<'_> {
     /// change: the trader placed them and the trader removes them.
     pub fn reanchor(self, old_slots: usize) {
         let slots = (old_slots, self.series.slots());
-        let clocked = self.series.cuts_by_time();
+        let dated_until = self.series.projected_dated_until();
         let slot_of = |time| self.series.slot_of_time(time);
-        self.drawings.reanchor(slots.0, slots.1, clocked, slot_of);
+        self.drawings
+            .reanchor(slots.0, slots.1, dated_until, slot_of);
         // A body drag in flight holds its own copy of the anchors: same map.
         if let Some(from) = self.gestures.translate_from.as_mut() {
-            crate::reanchor_points(&mut from.free, slots, clocked, &slot_of);
+            crate::reanchor_points(&mut from.free, slots, dated_until, &slot_of);
         }
     }
 
@@ -231,9 +232,9 @@ impl PaneMarksMut<'_> {
     pub fn shift_bars(self, delta: isize) {
         self.drawings.shift_bars(delta);
         self.gestures.shift_bars(delta);
-        let clocked = self.series.cuts_by_time();
+        let dated_until = self.series.projected_dated_until();
         self.drawings
-            .resettle_off_series(clocked, |time| self.series.slot_of_time(time));
+            .resettle_off_series(dated_until, |time| self.series.slot_of_time(time));
     }
 }
 

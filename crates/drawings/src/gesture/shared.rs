@@ -413,8 +413,13 @@ impl DrawingProjection<'_> {
             // on the same fixed interval its bars already run on — which is
             // where a trend line pointing into the future belongs. Without
             // this the future end of a shared line would pile up on the right
-            // edge instead of running on.
-            if let Some(future) = self.series.future_slot_at_time(time) {
+            // edge instead of running on. A time projected past the newest bar
+            // of a tick, volume or renko chart runs on at this pane's pace, as
+            // on its own: pinned and faded here, it would jump under the hand.
+            let projected = point.time_projected;
+            let projected = projected.then(|| self.series.projected_slot_at_time(time));
+            let future = self.series.future_slot_at_time(time);
+            if let Some(future) = future.or(projected.flatten()) {
                 anchors.push(ChartPoint::at_time(future + 0.5, point.price, Some(time)));
                 continue;
             }
@@ -465,7 +470,8 @@ impl SharedMarksMut<'_> {
                 price,
                 time_projected,
             } => {
-                let Some(bar) = self.projection.series.slot_of_time(time_ms) else {
+                let series = &self.projection.series;
+                let Some(bar) = series.slot_of_anchor(time_ms, time_projected) else {
                     return;
                 };
                 let point = ChartPoint {
@@ -508,11 +514,12 @@ impl SharedMarksMut<'_> {
             let Some(time) = point.time_ms.and_then(|time| time.checked_add(delta_ms)) else {
                 return;
             };
-            let Some(bar) = self.projection.series.slot_of_time(time) else {
+            let time_projected = point.time_projected || (projected && delta_ms != 0);
+            let Some(bar) = self.projection.series.slot_of_anchor(time, time_projected) else {
                 return;
             };
             moved.push(ChartPoint {
-                time_projected: point.time_projected || (projected && delta_ms != 0),
+                time_projected,
                 ..ChartPoint::at_time(bar, point.price + delta_price, Some(time))
             });
         }

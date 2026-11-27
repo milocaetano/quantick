@@ -2189,6 +2189,19 @@ fn a_shared_drawing_is_painted_on_the_other_pane_of_the_tab() {
         both_panes > own_pane_only,
         "sharing must add strokes on the other pane: {own_pane_only} -> {both_panes}"
     );
+
+    let others: Vec<PaneSide> = app.active_tab().panes().map(|(_, side)| side).collect();
+    for side in others.into_iter().filter(|side| *side != PaneSide::Flow) {
+        app.active_tab_mut()
+            .pane_mut(side)
+            .drawings
+            .set_all_hidden(true);
+    }
+    let hidden = drawing_strokes(&run_frame(&mut app, &ctx));
+    assert_eq!(
+        hidden, own_pane_only,
+        "a pane with its marks hidden paints none lent to it"
+    );
 }
 
 /// Every chart of the market holds a mark shown on all timeframes itself: it is
