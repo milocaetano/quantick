@@ -228,7 +228,6 @@ fn native_painted_radii(style: &OrderflowRenderStyle) -> (Vec<f32>, Vec<f32>) {
         },
         style.dot_sizing.unwrap(),
         &style.bubbles,
-        &style.live_lane,
         &[],
     );
     assert_eq!(

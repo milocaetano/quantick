@@ -179,7 +179,7 @@ mod tests {
             ".claude/skills/GOAL-notes/SKILL.md",
             "docs/control-plane/screenshot-evidence-proof.md",
             "docs/control-plane/history/pr5c-evidence.md",
-            "docs/quality/quantick-score-rubric.md",
+            "docs/quality/session-length.md",
             "crates/control/src/evidence.rs",
             "tools/evidence/capture_screenshot_evidence.py",
         ] {
@@ -201,7 +201,7 @@ mod tests {
         fs::write(root.join(".claude/GOAL.md"), "live goal\n").expect("writable");
         fs::write(root.join(".claude/GOAL-archive-old.md"), "archive\n").expect("writable");
         fs::write(root.join("docs/quality/run-evidence.md"), "dossier\n").expect("writable");
-        fs::write(root.join("docs/quality/rubric.md"), "kept\n").expect("writable");
+        fs::write(root.join("docs/quality/notes.md"), "kept\n").expect("writable");
         let (code, _) =
             git(root.path(), &["add", ".claude/GOAL-archive-old.md"]).expect("git runs");
         assert_eq!(code, 0, "git add succeeds");
@@ -218,7 +218,7 @@ mod tests {
             ".claude/GOAL.md",
             ".claude/GOAL-archive-old.md",
             "docs/quality/run-evidence.md",
-            "docs/quality/rubric.md",
+            "docs/quality/notes.md",
         ] {
             let from_scan: Vec<_> = check(root.path())
                 .into_iter()

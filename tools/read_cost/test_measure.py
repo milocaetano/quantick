@@ -371,5 +371,23 @@ class ReadCostTest(unittest.TestCase):
         self.assertTrue(first.endswith("\n"))
 
 
+class ProductionLexerCorpusTest(unittest.TestCase):
+    # fixtures/expected.tsv is also read by the impl-spread guard's port
+    # (crates/guards/src/impl_spread/tests.rs): one table, two readers, so the
+    # frozen lexer this calculator loads and the guard cannot drift apart.
+    def test_the_shared_corpus_measures_as_expected(self):
+        lexer = read_cost.PRODUCTION
+        fixtures = os.path.join(HERE, "..", "outside_score", "fixtures")
+        with open(os.path.join(fixtures, "expected.tsv"), encoding="utf-8") as f:
+            table = [line.split("\t") for line in f.read().splitlines() if line and not line.startswith("#")]
+        self.assertTrue(table)
+        for name, lines, impls in table:
+            with open(os.path.join(fixtures, name), encoding="utf-8") as f:
+                code, _ = lexer.mask(f.read())
+            prod = lexer.blank_spans(code, lexer.test_spans(code))
+            self.assertEqual(lexer.code_lines(prod), int(lines), name)
+            self.assertEqual(lexer.inherent_impls(prod), [] if impls == "-" else impls.split(","), name)
+
+
 if __name__ == "__main__":
     unittest.main()

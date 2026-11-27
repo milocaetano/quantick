@@ -1,4 +1,4 @@
-//! Hot-path work against session length — SE6's regression check.
+//! Hot-path work against session length: the regression check that it stays flat.
 //!
 //! One pane's live paths, each run after a *short* and a *long* session of
 //! dense prints, then driven through the same window of live work; the work
@@ -72,7 +72,7 @@ const LONG_SESSION: usize = RETAINED_TRADES_PER_PANE;
 /// size, only on the contrast: an O(history) cost still grows tenfold.
 const FAST_SHORT_SESSION: usize = 20 * SUSTAINED_TRADES_PER_S as usize;
 /// The fast variant's long session: 200 seconds, 10x the short one — the
-/// smallest ratio the rubric's "two lengths" reading accepts.
+/// smallest ratio that still tells an O(history) cost from a flat one.
 const FAST_LONG_SESSION: usize = 10 * FAST_SHORT_SESSION;
 /// The fast variant's two sessions.
 const FAST_SESSIONS: [usize; 2] = [FAST_SHORT_SESSION, FAST_LONG_SESSION];

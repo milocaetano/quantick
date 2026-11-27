@@ -87,7 +87,7 @@ fn navigation_takes_the_painted_stand_in_and_rejects_its_late_rebuild() {
     rebuilds.stand_in = Some(Arc::new(painted));
     let mut slot = TapeDotMemory::default();
     let taken = rebuilds.take_displayed(&mut slot);
-    let actual = taken.draw_retained(&[], view, sizing, &bubbles, &lane, &[]);
+    let actual = taken.draw_retained(&[], view, sizing, &bubbles, &[]);
     assert_eq!(actual.marks, expected.marks);
     assert_eq!(taken.retained_group_count(), 1);
     assert_eq!(slot.retained_group_count(), 0);

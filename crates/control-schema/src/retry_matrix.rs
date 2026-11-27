@@ -1,8 +1,9 @@
 //! What a client does when a call that changes something did not answer.
 //!
-//! A+ gate 5 asks one question of every capability an agent can reach: does it
-//! support safe retry and deduplication, or does it declare that it cannot be
-//! retried and give enough readback to reconcile an uncertain outcome? The
+//! An agent that retries a call must not repeat its effect, so every capability
+//! an agent can reach answers one question: does it support safe retry and
+//! deduplication, or does it declare that it cannot be retried and give enough
+//! readback to reconcile an uncertain outcome? The
 //! descriptors answer half of that — each publishes an
 //! [`quantick_control::registry::IdempotencyPolicy`] — and
 //! `gateway/idempotency.rs` enforces it. The other

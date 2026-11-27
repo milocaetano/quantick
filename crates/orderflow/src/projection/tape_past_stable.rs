@@ -123,7 +123,6 @@ impl PastTapeMemory {
             view,
             inputs.sizing,
             inputs.bubbles,
-            inputs.lane,
             inputs.opening_bursts,
         )
     }
