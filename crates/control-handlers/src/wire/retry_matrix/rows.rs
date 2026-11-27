@@ -4,12 +4,12 @@ use crate::wire::readback::{Readback, flatten, total};
 
 macro_rules! family_readbacks {
     ($args:tt $($family:ident { wire: $wire:tt, handlers: $handlers:tt, actions: $actions:tt })*) => {
-        /// Order is irrelevant: the document is rendered in registry order. A
-        /// row without the `readbacks` facet contributes an empty slice.
+        /// Order is irrelevant: the document is rendered in registry order.
         pub const FAMILIES: &[&[Readback]] = &[$(family_readbacks!(@family $family $wire),)*];
     };
     (@family $family:ident [$(catalog,)? readbacks]) => { crate::wire::$family::READBACKS };
-    (@family $family:ident $wire:tt) => { &[] };
+    (@family $family:ident none) => { &[] };
+    (@family $family:ident [$(catalog)?]) => { &[] };
 }
 
 quantick_control::control_families!(family_readbacks);
