@@ -52,7 +52,8 @@ pub fn public_contract_documents() -> Vec<PublicContractDocument> {
             is_json_schema: true,
         })
         .collect::<Vec<_>>();
-    let registry = crate::fake::reference_registry().expect("reference capability registry must be valid");
+    let registry =
+        crate::fake::reference_registry().expect("reference capability registry must be valid");
     documents.push(PublicContractDocument {
         file_name: "reference-capabilities-v1.json",
         document: serde_json::json!({
