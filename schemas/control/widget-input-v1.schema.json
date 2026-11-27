@@ -4,7 +4,7 @@
   "description": "Which pane.",
   "properties": {
     "id": {
-      "description": "`depth`, `big_trades`, `liquidations`, `open_interest` or\n`spot_perp_cvd`.",
+      "description": "`depth`, `big_trades`, `liquidations` or `open_interest`.",
       "type": "string"
     }
   },
