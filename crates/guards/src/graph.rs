@@ -161,7 +161,6 @@ const WORKSPACE_RULES: Rules<'static> = Rules {
 };
 
 impl Rules<'_> {
-    /// Whether `from → to` is a signed exception.
     fn excepts(&self, from: &str, to: &str) -> bool {
         self.exceptions.contains(&(from, to))
     }
