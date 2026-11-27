@@ -90,6 +90,7 @@ fn every_trade_call_docks_decodes_refuses_and_journals_through_one_adapter() {
         link: LinkState::Offline,
         latency_ms: None,
         latency_hop: None,
+        latency_at_source: false,
         tape_age_ms: Some(12_000),
         limits: SyncLimits::default(),
         notice: None,

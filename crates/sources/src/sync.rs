@@ -115,6 +115,9 @@ pub struct Desync {
     pub latency_ms: Option<i64>,
     /// The provider's name for the hop that owns most of it.
     pub latency_hop: Option<&'static str>,
+    /// Whether the prints were already late when the source handed them over
+    /// (`FeedLatency::late_at_source`).
+    pub latency_at_source: bool,
     pub tape_age_ms: Option<i64>,
     pub limits: SyncLimits,
     /// What the feed's own notice says, when it says anything.
@@ -125,9 +128,13 @@ impl Desync {
     /// Whether the pause offers its own Reconnect beside the tape: only on a
     /// link that is up, late or stale. A link that is down already has the
     /// status word's and the overlay's, and an attempt shows no control.
+    /// Nor for latency the source owns: a new connection reads the same late
+    /// source, and on 2026-11-27 pressing it was the trader's only answer to a
+    /// MetaTrader 30 s behind.
     #[must_use]
     pub fn offers_reconnect(&self) -> bool {
         self.link == LinkState::Up
+            && !(self.reading == SyncReading::Latency && self.latency_at_source)
     }
 
     /// The refusal a paused entry answers with: the cause, then what still

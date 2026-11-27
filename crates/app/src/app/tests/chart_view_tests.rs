@@ -494,10 +494,10 @@ fn a_late_feed_pauses_the_toolbar_buy_and_offers_reconnect() {
 
     app.active_tab_mut().link.forced_latency = Some(feed::FeedLatency {
         arrival_lag_ms: 900,
-        source_lag_ms: Some(820),
+        source_lag_ms: Some(80),
         source_lag_peak_ms: None,
-        transport_lag_ms: Some(80),
-        hop: Some("MT5"),
+        transport_lag_ms: Some(820),
+        hop: Some("chart"),
         prints: 4,
     });
     run_frame(&mut app, &ctx);

@@ -71,6 +71,10 @@ pub fn assess(input: &SyncInput<'_>) -> Option<Desync> {
         link: input.link,
         latency_ms,
         latency_hop: input.latency.and_then(|split| split.hop),
+        latency_at_source: input
+            .latency
+            .as_ref()
+            .is_some_and(FeedLatency::late_at_source),
         tape_age_ms: input.tape_age_ms,
         limits,
         notice: headline(input.notice).map(str::to_owned),

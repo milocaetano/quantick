@@ -167,6 +167,7 @@ fn paused(tape_age_ms: i64) -> Desync {
         link: LinkState::Up,
         latency_ms: None,
         latency_hop: None,
+        latency_at_source: false,
         tape_age_ms: Some(tape_age_ms),
         limits: SyncLimits::default(),
         notice: None,
