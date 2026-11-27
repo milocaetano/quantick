@@ -472,3 +472,43 @@ fn a_projected_corner_runs_on_past_the_mirrors_newest_bar() {
         assert_eq!(reprojected(&state, &drawing), expected, "{what}");
     }
 }
+
+/// A mark whose edge was timed at an estimate settles on this pane: exact
+/// where a bar holds it, projected past the newest bar.
+#[test]
+fn restamping_settles_an_estimated_edge_on_this_panes_bars() {
+    let state = seconds(20);
+    let spec = SpecSelector::new(BarSpec::Tick(1));
+    let viewport = Viewport::new();
+    let indicators = IndicatorViews::new();
+    for (bar, time, projected, what) in [
+        (11.5, 1_011_000, false, "a bar holds it: exact"),
+        (21.5, 1_021_000, true, "past the newest bar: projected"),
+    ] {
+        let mut drawings = line_on_bar_four();
+        let estimate = ChartPoint {
+            time_projected: true,
+            ..ChartPoint::at_time(bar, 100.0, Some(1_000))
+        };
+        drawings.items_mut()[0].points[0] = estimate;
+        SharedMarksMut {
+            projection: DrawingProjection {
+                series: PaneSeriesRead {
+                    history_prefix: &[],
+                    state: &state,
+                    spec: &spec,
+                },
+                viewport: &viewport,
+                indicators: &indicators,
+            },
+            drawings: &mut drawings,
+        }
+        .restamp(0);
+        let point = drawings.items()[0].points[0];
+        assert_eq!(
+            (point.time_ms, point.time_projected),
+            (Some(time), projected),
+            "{what}"
+        );
+    }
+}

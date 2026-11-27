@@ -4462,6 +4462,21 @@ fn two_context_charts_on_one_bar_rule_mirror_a_shared_mark_once() {
     assert!(owners(bottom).is_empty());
 }
 
+/// A pane with its marks hidden shows no other pane's marks, so it takes
+/// none either: paint and pick ask the same gate.
+#[test]
+fn a_pane_with_hidden_marks_neither_paints_nor_takes_anothers() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let time = PaneSide::Time(0);
+    assert!(app.active_tab().shared_viewer(time.index()).is_some());
+    app.active_tab_mut()
+        .pane_mut(time)
+        .drawings
+        .set_all_hidden(true);
+    assert!(app.active_tab().shared_viewer(time.index()).is_none());
+}
+
 /// A chart still settling its layout (its key has no scope yet) holds a set
 /// about to be replaced: it neither lends its marks nor borrows another's,
 /// or a mark both hold would paint twice.

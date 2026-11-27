@@ -454,6 +454,16 @@ pub struct SharedMarksMut<'a> {
 }
 
 impl SharedMarksMut<'_> {
+    /// Name every anchor of the mark at `index` its market time as the
+    /// trader's hand would after a move (`PaneSeriesRead::stamp`): exact on
+    /// a bar or a time chart's clock, projected past the newest bar of a
+    /// chart that does not cut by time. What an edit made without this
+    /// pane's series (a width set by a call) settles through.
+    pub fn restamp(self, index: usize) {
+        let series = self.projection.series;
+        self.drawings.restamp(index, |point| series.stamp(point));
+    }
+
     /// Apply an edit another pane of this tab made to one of this pane's
     /// shared marks, back in this pane's own bar space.
     ///

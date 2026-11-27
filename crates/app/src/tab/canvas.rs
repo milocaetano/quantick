@@ -909,10 +909,7 @@ impl Tab {
         };
 
         for viewer in 0..count {
-            if self.canvas.pane_collapsed(PaneSide::from_index(viewer)) {
-                continue;
-            }
-            let Some(pane) = self.pane_at(viewer) else {
+            let Some(pane) = self.shared_viewer(viewer) else {
                 continue;
             };
             // Only the pane the pointer is actually over is asked. Besides
@@ -950,6 +947,15 @@ impl Tab {
             }
         }
         picks
+    }
+
+    /// The pane at `viewer` while it shows other panes' marks: on screen,
+    /// its own marks not hidden. Paint and pick both ask it, so a mark is
+    /// never taken where it is not drawn.
+    pub(crate) fn shared_viewer(&self, viewer: PaneIndex) -> Option<&crate::pane::ChartPane> {
+        let shown = !self.canvas.pane_collapsed(PaneSide::from_index(viewer));
+        let pane = self.pane_at(viewer).filter(|_| shown)?;
+        (!pane.drawings.all_hidden()).then_some(pane)
     }
 
     /// The panes whose shared marks `viewer` shows. Every pane of a market and
@@ -1036,14 +1042,7 @@ impl Tab {
     /// (`docs/ux/drawing-tools-2026-08.md` §D7).
     fn paint_shared_drawings(&self, painter: &egui::Painter) {
         for viewer in 0..self.pane_count() {
-            if self.canvas.pane_collapsed(PaneSide::from_index(viewer)) {
-                continue;
-            }
-            // A pane with its marks hidden shows none lent to it either.
-            let Some(pane) = self
-                .pane_at(viewer)
-                .filter(|pane| !pane.drawings.all_hidden())
-            else {
+            let Some(pane) = self.shared_viewer(viewer) else {
                 continue;
             };
             for owner in self.mirror_owners(viewer) {

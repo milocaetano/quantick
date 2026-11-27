@@ -330,9 +330,9 @@ impl<'a> PaneSeriesRead<'a> {
     /// Name the market time behind `point`'s slot, the trader's hand placing
     /// or moving it: [`Self::anchor_time`] where it is exact, and past the
     /// newest bar of a chart that does not cut by time a time projected at
-    /// [`Self::projected_bar_ms`] per slot, marked
-    /// [`ChartPoint::time_projected`] so the drawing can say so and still
-    /// show on the market's other charts.
+    /// [`Self::projected_bar_ms`] per slot from [`Self::projection_origin`],
+    /// marked [`ChartPoint::time_projected`] so the drawing can say so and
+    /// still show on the market's other charts.
     pub fn stamp(&self, point: &mut ChartPoint) {
         point.time_ms = self.anchor_time(point.bar);
         point.time_projected = false;
@@ -340,14 +340,24 @@ impl<'a> PaneSeriesRead<'a> {
             return;
         }
         let projected = Viewport::slot_of(point.bar).and_then(|slot| {
-            let last = self.slots().checked_sub(1)?;
+            let (last, origin, step) = self.projection_origin()?;
             let ahead = i64::try_from(slot.checked_sub(last)?).ok()?;
-            let step = self.projected_bar_ms()?;
-            self.slot_open_time(last)?
-                .checked_add(ahead.checked_mul(step)?)
+            origin.checked_add(ahead.checked_mul(step)?)
         });
         point.time_projected = projected.is_some();
         point.time_ms = projected;
+    }
+
+    /// The newest slot, the instant a projection counts from and its step:
+    /// the newest bar's open, or one step before its latest print once that
+    /// bar has run longer than a step, so the first slot past it is never
+    /// timed before a print the chart already shows.
+    fn projection_origin(&self) -> Option<(usize, i64, i64)> {
+        let last = self.slots().checked_sub(1)?;
+        let step = self.projected_bar_ms()?;
+        let open = self.slot_open_time(last)?;
+        let latest = self.candle_at_slot(last).map_or(open, |bar| bar.close_time);
+        Some((last, open.max(latest.saturating_sub(step)), step))
     }
 
     /// The inverse of [`Self::stamp`]'s projection: where an instant later
@@ -359,9 +369,8 @@ impl<'a> PaneSeriesRead<'a> {
         if self.cuts_by_time() {
             return None;
         }
-        let last = self.slots().checked_sub(1)?;
-        let step = self.projected_bar_ms()?;
-        let ahead = time.checked_sub(self.slot_open_time(last)?)?;
+        let (last, origin, step) = self.projection_origin()?;
+        let ahead = time.checked_sub(origin)?;
         #[allow(clippy::cast_precision_loss)]
         (ahead >= step).then(|| last as f32 + ahead as f32 / step as f32)
     }

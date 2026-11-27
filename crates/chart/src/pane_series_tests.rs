@@ -405,8 +405,9 @@ fn the_projection_follows_the_newest_bars_pace() {
 }
 
 /// A forming bar that has run longer than the pace: an exact time inside it
-/// is that bar, a projected time runs on at the pace, and a re-cut looks a
-/// projected time up only once the newest bar has opened past it.
+/// is that bar, a projected time runs on at the pace from its latest print
+/// (never timed before it), and a re-cut looks a projected time up only
+/// once the newest bar has opened past it.
 #[test]
 fn only_a_projected_time_runs_on_past_a_long_forming_bar() {
     let at = [0, 1, 2, 3, 4, 5, 6, 7, 8, 30].map(|second| TAPE_START_MS + second * 1_000);
@@ -431,7 +432,7 @@ fn only_a_projected_time_runs_on_past_a_long_forming_bar() {
             "an exact time stays on the forming bar",
         ),
         (
-            TAPE_START_MS + 16_000,
+            TAPE_START_MS + 34_000,
             true,
             4.5,
             "a projected time runs on at the pace",
@@ -444,6 +445,19 @@ fn only_a_projected_time_runs_on_past_a_long_forming_bar() {
         ),
     ] {
         assert_eq!(series.slot_of_anchor(time, projected), Some(slot), "{what}");
+    }
+    for (bar, time, what) in [
+        (
+            3.5,
+            30_000,
+            "the first slot past is the latest print, not before it",
+        ),
+        (4.5, 34_000, "the next a step on"),
+    ] {
+        let mut point = ChartPoint::at_time(bar, 100.0, None);
+        series.stamp(&mut point);
+        let stamped = (point.time_ms, point.time_projected);
+        assert_eq!(stamped, (Some(TAPE_START_MS + time), true), "{what}");
     }
     assert_eq!(series.projected_dated_until(), TAPE_START_MS + 8_000);
 }
