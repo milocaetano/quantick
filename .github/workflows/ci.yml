@@ -49,10 +49,8 @@ env:
 # (the flip to ready of a `full-ci` draft whose full run is already green at
 # this head). Anything but `build` skips every Rust job and runs `rust-skip`.
 #
-# A draft push then runs `fast`: clippy and the affected tests. Nine
-# build/test jobs — `ci`,
-# `linux-tests`, `harness-app`, `harness-combined` and `harness-scenario` on
-# Linux, `windows`, `windows-tests`, `windows-heavy-tests` and
+# A draft push then runs `fast`: clippy and the affected tests. Seven
+# build/test jobs — `ci`, `linux-tests` and `harness` on Linux, `windows`, `windows-tests`, `windows-heavy-tests` and
 # `windows-app-tests` on Windows — run on every push to main, every
 # push to a ready PR, the flip to ready, and on a draft carrying the `full-ci`
 # label. `pr-gate` refuses `gh pr ready` until `gate` and every one of them is
@@ -70,16 +68,15 @@ env:
 # feature sets each relinking quantick-app, one `cargo test --workspace` per
 # platform, and — on Linux — eighteen minutes of a Python step that scanned the
 # debug binary once per registry name. The scan reads the binary once now
-# (tools/ci/binary_hook_scan.py); the rest is split across runners. Every job
-# carries the steps it carried before, with the same commands.
+# (tools/ci/binary_hook_scan.py); the rest is split across runners, and the
+# harness sets now share one test run (see `harness`).
 #
 # What is left after the debug-info cut above is one shape: a job is as long as
 # the longest single run of `cargo` inside it, so the remaining reductions come
 # from putting two such runs on two runners rather than one. `ci` handed its
-# `cargo test --workspace` to `linux-tests`, `windows-tests` handed half its
-# crates to `windows-heavy-tests`, and the eleven harness builds were dealt
-# again across the same three jobs so no one of them owns three long relinks.
-# None of that changes a command or its arguments.
+# `cargo test --workspace` to `linux-tests`, and `windows-tests` handed half
+# its crates to `windows-heavy-tests`. The harness sets went the other way:
+# they all run the same tests, so `harness` links once and checks the rest.
 #
 # One cache per platform, written by the job that builds the whole workspace on
 # it — `ci` on Linux, `windows` on Windows — on a green push to main only, and
@@ -547,69 +544,45 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-  # The app's harness feature sets, split across three jobs so the relinks
-  # overlap. Every one of them is a check the serial job ran before, with the
-  # same command; the split changes where they run, never whether. Which job
-  # carries which set is a balancing decision and nothing more — the sets are
-  # independent, so any partition runs the same eleven builds.
-  #
-  # The deal was made again once the debug-info cut changed what each build
-  # costs. Every `cargo test` here relinks quantick-app under a feature set it
-  # has not linked before, at roughly 110s to 170s, and the `cargo check` steps
-  # cost a tenth of that; three long relinks in one job was 430s while another
-  # job sat at 251s. Each job now owns two long relinks and some change, which
-  # is why a set sometimes sits beside a family it is not named after.
-  harness-app:
+  # The app's harness feature sets. Only `cfg(feature)` code differs between
+  # them, and every set lists the same tests (`cargo test -- --list`), so one
+  # test run under `harness`, the union, executes all of them; each other set
+  # is compiled with its tests by a `cargo check`, a tenth of a relink, so a
+  # gate that only compiles under one family still fails here. The drawings
+  # crate gets its own harness test because no app run executes its tests.
+  harness:
     needs: classify
     if: *full-ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust-setup
-      - name: Test opt-in quick-range harness
-        run: cargo test -p quantick-app --features quick-range-harness
-      - name: Test opt-in drawing harness
-        run: cargo test -p quantick-app --features drawing-harness
-      - name: Check control and quick-range harnesses
-        run: cargo check -p quantick-app --all-targets --features control-harness,quick-range-harness
-      - name: Check control and drawing harnesses
-        run: cargo check -p quantick-app --all-targets --features control-harness,drawing-harness
-
-  harness-combined:
-    needs: classify
-    if: *full-ci
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/rust-setup
-      - name: Test combined drawing harnesses
-        run: cargo test -p quantick-app --features drawing-harness,quick-range-harness
       - name: Test all app harness families
         run: cargo test -p quantick-app --features harness
       - name: Build the capture binary
-        # What `ui-harness` launches: every family, outside `cfg(test)`. It
-        # stays beside the step above because both are `--features harness`:
-        # the test run has just compiled that feature set, so the build is a
-        # link and not a second compile.
+        # What `ui-harness` launches: every family, outside `cfg(test)`. The
+        # test run has just compiled that feature set, so this is a link.
         run: cargo build -p quantick-app --features harness
-
-  harness-scenario:
-    needs: classify
-    if: *full-ci
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/rust-setup
-      - name: Test opt-in scenario harness
-        run: cargo test -p quantick-app --features scenario-harness
-      - name: Test opt-in control harness
-        run: cargo test -p quantick-app --features control-harness
-      - name: Check scenario and control harnesses
-        run: cargo check -p quantick-app --all-targets --features scenario-harness,control-harness
-      - name: Check scenario and drawing harnesses
-        run: cargo check -p quantick-app --all-targets --features scenario-harness,drawing-harness
-      - name: Check scenario and quick-range harnesses
-        run: cargo check -p quantick-app --all-targets --features scenario-harness,quick-range-harness
+      - name: Test the drawings harness
+        run: cargo test -p quantick-drawings --features drawing-harness
+      - name: Check each app harness set
+        run: |
+          for set in \
+            quick-range-harness \
+            drawing-harness \
+            drawing-harness,quick-range-harness \
+            scenario-harness \
+            control-harness \
+            control-harness,quick-range-harness \
+            control-harness,drawing-harness \
+            scenario-harness,control-harness \
+            scenario-harness,drawing-harness \
+            scenario-harness,quick-range-harness
+          do
+            echo "::group::--features $set"
+            cargo check -p quantick-app --all-targets --features "$set"
+            echo "::endgroup::"
+          done
 
   # The second operating system the README is allowed to claim. It exists so
   # that sentence is backed by a workflow file rather than by memory: the
@@ -736,7 +709,7 @@ jobs:
   # a branch rule reads a skipped job as passing: an unrelated label reports
   # the head's earlier verdict, and a cancelled run reports red.
   ci-ok:
-    needs: [classify, gate, ci, linux-tests, harness-app, harness-combined, harness-scenario, windows, windows-tests, windows-heavy-tests, windows-app-tests, rust-skip]
+    needs: [classify, gate, ci, linux-tests, harness, windows, windows-tests, windows-heavy-tests, windows-app-tests, rust-skip]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
