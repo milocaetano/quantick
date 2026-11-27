@@ -127,9 +127,8 @@ denial is reported to the coordinator, never routed around.
 
 ## Full CI at the exact head
 
-One full CI run is ten jobs in `.github/workflows/ci.yml`: `gate`, `ci`,
-`linux-tests`, `harness-app`, `harness-combined` and `harness-scenario` on
-Linux, `windows`, `windows-tests`, `windows-heavy-tests` and
+One full CI run is eight jobs in `.github/workflows/ci.yml`: `gate`, `ci`,
+`linux-tests` and `harness` on Linux, `windows`, `windows-tests`, `windows-heavy-tests` and
 `windows-app-tests` on Windows, all in parallel once the ~20 s `classify` job
 has decided the head's mode. An agent
 iterating on a draft still needs a signal sooner than the full verdict, and
@@ -186,11 +185,11 @@ than in `Cargo.toml` so the profile the chart runs under is untouched.
 What remained was one shape: a job is as long as the longest single `cargo`
 run inside it. So `ci` handed `cargo test --workspace` to `linux-tests`, the
 non-app Windows run was dealt across `windows-tests` and
-`windows-heavy-tests`, and the eleven harness builds were dealt again across
-the same three jobs, which is why a feature set sometimes sits in a job not
-named after it.
+`windows-heavy-tests`. The harness feature sets went the other way: every set
+lists the same tests, so `harness` runs them once under `--features harness`
+and only compiles the other sets with `cargo check --all-targets`.
 
-Every command is the one it was; only where it runs changed. The split that
+The split that
 could rot silently is the Windows one — `cargo test --workspace` found new
 crates by itself, and three selectors do not — so
 `tools/ci/windows_test_coverage.py` reads the selectors back out of `ci.yml`,

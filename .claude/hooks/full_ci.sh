@@ -46,7 +46,7 @@
 
 set -u
 
-FULL_CI_CHECKS='gate ci linux-tests harness-app harness-combined harness-scenario windows windows-tests windows-heavy-tests windows-app-tests'
+FULL_CI_CHECKS='gate ci linux-tests harness windows windows-tests windows-heavy-tests windows-app-tests'
 RUST_SKIP_CHECK='rust-skip'
 
 operation=${1:-}
