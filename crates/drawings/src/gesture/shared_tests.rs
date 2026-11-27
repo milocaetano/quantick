@@ -522,3 +522,48 @@ fn restamping_settles_an_estimated_edge_on_this_panes_bars() {
         );
     }
 }
+
+/// A pick holds what its gesture needs of the mark from the press: the
+/// owning pane, where it was taken, and the mark's lock, magnet and snap.
+#[test]
+fn a_pick_holds_the_marks_lock_magnet_and_snap() {
+    let line = DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == "horizontal-line")
+        .expect("registered test tool");
+    let mut marks = Marks::default();
+    for price in [40.0, 60.0] {
+        assert!(marks.place(line, ChartPoint::at_time(1.0, price, Some(1_000))));
+    }
+    let mark = &mut marks.items_mut()[1];
+    (mark.locked, mark.magnet) = (true, true);
+    let expected = SharedPick {
+        owner: 2,
+        index: 1,
+        anchor: Some(0),
+        locked: true,
+        magnet: marks.items()[1].own_magnet(),
+        snap: line.anchor_snap(),
+    };
+    assert_eq!(SharedPick::of(2, &marks, (1, Some(0))), expected);
+    let body = SharedPick::of(2, &marks, (0, None));
+    assert!(
+        !body.locked && !body.magnet,
+        "the other mark's own: {body:?}"
+    );
+}
+
+/// The selection follows the object: the focused side while it holds one,
+/// else the first other side that does, else the focused side.
+#[test]
+fn the_selection_side_is_the_focused_one_unless_another_holds_it() {
+    let sides = [0, 1, 2];
+    let held = |selected: &'static [u8]| move |side: u8| selected.contains(&side);
+    assert_eq!(selection_side(1, sides, held(&[1, 2])), 1, "focused first");
+    assert_eq!(
+        selection_side(1, sides, held(&[2, 0])),
+        0,
+        "then side order"
+    );
+    assert_eq!(selection_side(1, sides, held(&[])), 1, "none holds one");
+}

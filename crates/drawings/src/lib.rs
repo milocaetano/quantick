@@ -72,7 +72,7 @@ mod look;
 mod pane_sync;
 mod saved;
 pub use layout_scope::retarget_layout;
-pub use lent_marks::LentMarks;
+pub use lent_marks::{LentMarks, mirror_owners};
 pub use object::{
     ChartPoint, DeleteOutcome, Drawing, DrawingAuthor, DrawingBand, DrawingId, DrawingScope,
     Duplicated, NewDrawing, PaneKey,

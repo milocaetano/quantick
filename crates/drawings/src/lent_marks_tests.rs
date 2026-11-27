@@ -116,3 +116,47 @@ fn a_lent_mark_leaves_once_the_store_turns_it_off() {
     lent.follow(&store, &held, &Drawings::default());
     assert!(lent_prices(&lent).is_empty());
 }
+
+/// The charts each chart of a tab holding `keys`, in tab order, mirrors.
+fn owners(keys: &[DrawingKey]) -> Vec<Vec<usize>> {
+    let key = |chart: usize| keys.get(chart);
+    let count = keys.len();
+    (0..count)
+        .map(|viewer| mirror_owners(count, viewer, key).collect())
+        .collect()
+}
+
+/// A chart mirrors each set it does not hold once, from the first chart
+/// holding it, and never the set it holds itself.
+#[test]
+fn a_chart_mirrors_each_set_it_does_not_hold_once() {
+    let (one, two) = (key(scope(1)), key(scope(2)));
+    let none: Vec<usize> = Vec::new();
+    assert_eq!(
+        owners(&[one.clone(), one.clone()]),
+        [none.clone(), none.clone()],
+        "each chart holds the one set"
+    );
+    assert_eq!(
+        owners(&[one, two.clone(), two]),
+        [vec![1], vec![0], vec![0]],
+        "the first of two charts holding a set lends it"
+    );
+}
+
+/// A chart still settling its layout (its key has no scope yet) holds a set
+/// about to be replaced: it neither lends its marks nor borrows another's,
+/// or a mark both hold would paint twice.
+#[test]
+fn a_chart_still_settling_its_layout_neither_lends_nor_borrows() {
+    let settling = DrawingKey {
+        scope: None,
+        ..key(scope(2))
+    };
+    let (one, three) = (key(scope(1)), key(scope(3)));
+    assert_eq!(
+        owners(&[one, settling, three]),
+        [vec![2], vec![], vec![0]],
+        "the settling chart lends nothing and borrows nothing"
+    );
+}

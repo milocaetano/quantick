@@ -21,6 +21,31 @@ use smallvec::SmallVec;
 #[path = "lent_marks_tests.rs"]
 mod lent_marks_tests;
 
+/// The charts of a tab whose shared marks the chart at `viewer` paints
+/// beside its own, given the drawing key each of the tab's `count` charts
+/// holds, in tab order. Every chart of a market and layout scope holds its
+/// set itself: one holding the viewer's adds nothing (another layout's lends
+/// its "All windows" marks), and of two holding another only the first does,
+/// or a shared mark would paint twice. A chart still settling its layout (a
+/// key without its scope) neither lends nor borrows: the set it holds is
+/// about to be replaced.
+pub fn mirror_owners<'a>(
+    count: usize,
+    viewer: usize,
+    key: impl Fn(usize) -> Option<&'a DrawingKey> + Copy + 'a,
+) -> impl Iterator<Item = usize> + 'a {
+    let settling = move |chart| key(chart).is_some_and(|key| key.scope.is_none());
+    let set = move |chart| key(chart).map(|key| (&key.market, key.scope));
+    (0..count).filter(move |&owner| {
+        let same_set = |other: usize| set(owner).is_some() && set(other) == set(owner);
+        owner != viewer
+            && !settling(owner)
+            && !settling(viewer)
+            && !same_set(viewer)
+            && !(0..owner).any(|earlier| earlier != viewer && same_set(earlier))
+    })
+}
+
 /// The scopes a tab's charts hold: one per chart at most.
 type HeldScopes = SmallVec<[DrawingScope; 8]>;
 

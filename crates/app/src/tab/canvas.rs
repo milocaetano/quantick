@@ -931,17 +931,8 @@ impl Tab {
                 let Some(source) = self.pane_at(owner) else {
                     continue;
                 };
-                if let Some((index, anchor)) =
-                    pane.hit_test().shared_pick(&source.drawings, position)
-                {
-                    picks.by_pane[viewer] = Some(SharedPick {
-                        owner,
-                        index,
-                        anchor,
-                        locked: source.drawings.items()[index].locked,
-                        magnet: source.drawings.items()[index].own_magnet(),
-                        snap: source.drawings.items()[index].tool.anchor_snap(),
-                    });
+                if let Some(hit) = pane.hit_test().shared_pick(&source.drawings, position) {
+                    picks.by_pane[viewer] = Some(SharedPick::of(owner, &source.drawings, hit));
                     break;
                 }
             }
@@ -958,24 +949,10 @@ impl Tab {
         (!pane.drawings.all_hidden()).then_some(pane)
     }
 
-    /// The panes whose shared marks `viewer` shows. Every pane of a market and
-    /// layout scope holds its set itself: one holding the viewer's adds nothing
-    /// (another layout's lends its "All windows" marks), and of two holding
-    /// another only the first does, or a shared mark would paint twice. A
-    /// pane still settling its layout (a key without its scope) neither
-    /// lends nor borrows: the set it holds is about to be replaced.
+    /// The panes whose shared marks `viewer` shows: `quantick_drawings::mirror_owners`.
     pub(crate) fn mirror_owners(&self, viewer: PaneIndex) -> impl Iterator<Item = PaneIndex> + '_ {
-        let key = move |pane: PaneIndex| self.pane_at(pane)?.layout.drawings_key.as_ref();
-        let settling = move |pane| key(pane).is_some_and(|key| key.scope.is_none());
-        let set = move |pane| key(pane).map(|key| (&key.market, key.scope));
-        (0..self.pane_count()).filter(move |&owner| {
-            let same_set = |other: PaneIndex| set(owner).is_some() && set(other) == set(owner);
-            owner != viewer
-                && !settling(owner)
-                && !settling(viewer)
-                && !same_set(viewer)
-                && !(0..owner).any(|earlier| earlier != viewer && same_set(earlier))
-        })
+        let key = move |pane| self.pane_at(pane)?.layout.drawings_key.as_ref();
+        quantick_drawings::mirror_owners(self.pane_count(), viewer, key)
     }
 
     /// Bring the marks lent by layouts no pane of this tab holds up to

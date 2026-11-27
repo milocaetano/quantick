@@ -98,6 +98,43 @@ pub struct SharedPick {
     pub snap: AnchorSnap,
 }
 
+impl SharedPick {
+    /// The mark at `index` of `owner`'s `marks`, taken by `anchor` (`None`
+    /// for the body), with what its gesture holds of it from the press.
+    #[must_use]
+    pub fn of(owner: PaneIndex, marks: &Marks, (index, anchor): (usize, Option<usize>)) -> Self {
+        let mark = &marks.items()[index];
+        Self {
+            owner,
+            index,
+            anchor,
+            locked: mark.locked,
+            magnet: mark.own_magnet(),
+            snap: mark.tool.anchor_snap(),
+        }
+    }
+}
+
+/// The side holding a tab's drawing selection, which is not always the
+/// `focused` one. A shared mark can be taken from any chart it appears on
+/// and stays in the store of the pane it was drawn on, so the inspector, the
+/// keyboard and the object manager follow the *object*, not the pane under
+/// the pointer: selecting a level on a context chart and pressing Delete
+/// deletes that level, wherever it lives. One pane holds a selection at a
+/// time (the tab drops the taker's on [`SharedEdit::Select`]), so `focused`
+/// is asked first, then the first other of `sides` that `holds` one.
+pub fn selection_side<S: Copy + PartialEq>(
+    focused: S,
+    sides: impl IntoIterator<Item = S>,
+    holds: impl Fn(S) -> bool,
+) -> S {
+    if holds(focused) {
+        return focused;
+    }
+    let mut others = sides.into_iter().filter(|side| *side != focused);
+    others.find(|side| holds(*side)).unwrap_or(focused)
+}
+
 /// What a pane did to another pane's marks in one frame.
 ///
 /// The gesture flags bracket the edits so a whole drag lands on the owning

@@ -45,7 +45,7 @@ pub use projection::{
 };
 pub use shared::{
     PaneIndex, SharedDrag, SharedEdit, SharedInteraction, SharedMarksMut, SharedPick,
-    SharedPointer, SharedSource,
+    SharedPointer, SharedSource, selection_side,
 };
 
 #[cfg(any(feature = "drawing-harness", test))]
