@@ -12,11 +12,11 @@
 //!
 //! Rate class: a human or an agent changing a preference. Never per trade.
 
+use crate::trade::no_chart_open;
 use crate::wire::pnl_display::{
     PNL_DISPLAY_EVENT_KIND, PnlDisplayMode, PnlDisplayResult, SetPnlDisplayInput, descriptor,
 };
 use crate::wire::session::MODULE_ID;
-use crate::wire::trade::no_chart_open;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::journal::NewEvent;
 use quantick_paper::account::PaperAccount;

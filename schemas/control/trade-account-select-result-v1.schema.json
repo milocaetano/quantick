@@ -1,114 +1,90 @@
 {
   "$defs": {
-    "WorkingOrderView": {
-      "description": "One working order, as a caller reads it back.",
+    "AccountRowView": {
+      "description": "One row of the account list, as the panel shows it.",
       "properties": {
-        "kind": {
+        "details": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "gesture": {
+          "description": "`click`, `hold` or `none`: what the panel's press does.",
           "type": "string"
         },
-        "order_id": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "price": {
-          "description": "Resting price, absent only for an order that has none.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "quantity": {
+        "hint": {
+          "description": "`in use`, `one click`, `hold`, or empty when the row is off.",
           "type": "string"
         },
-        "side": {
+        "state": {
+          "description": "`selected`, `enabled` or `off`.",
           "type": "string"
         },
-        "stop_loss": {
-          "description": "The protective stop riding this order, armed on its fill.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "take_profit": {
-          "description": "The protective target riding this order; see `stop_loss`.",
-          "type": [
-            "string",
-            "null"
-          ]
+        "title": {
+          "type": "string"
         }
       },
       "required": [
-        "order_id",
-        "side",
-        "kind",
-        "quantity"
+        "title",
+        "hint",
+        "state",
+        "gesture",
+        "details"
       ],
       "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "What every `trade.*` action answers with.\n\n`accepted` is the one field a caller must read. A refusal is not an\nerror return here for the same reason it is not one in the venue port:\nthe venue's messages are written to teach, and a result that carried\nonly a status code would throw away the sentence that says what to do\ninstead.",
+  "description": "The route and everything the panel says about it.",
   "properties": {
-    "accepted": {
-      "description": "Whether the venue took the request.",
-      "type": "boolean"
-    },
-    "mark_price": {
-      "description": "The last price the venue had been shown when this call landed.\n\nEvery refusal in this family is a statement about a price relative to\nthe market, so a caller that got one needs the market to understand\nit — and a caller that got an acceptance needs it to know what its\norder is resting away from. Absent before the first print, which is\nalso when nothing can be placed.",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "order_id": {
-      "description": "The order this call is about, once the venue has named it.",
-      "format": "uint64",
-      "minimum": 0,
-      "type": [
-        "integer",
-        "null"
-      ]
-    },
-    "rejected_because": {
-      "description": "The venue's own words when it did not. Absent when it did.",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "ruler_ticks": {
-      "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use.",
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
-    },
-    "selected_strategy": {
-      "description": "The named exit ladder the ticket is set to, if any. Every call in\nthis family reports it, because it is what the *next* order will\ncarry and a caller that placed one needs to know which ladder it\njust armed.",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "simulated": {
-      "description": "A reminder in every result: these fills are simulated.",
-      "type": "boolean"
-    },
-    "working_orders": {
-      "description": "Every order working after the call, so a caller never has to guess\nwhat the account looks like now.",
+    "accounts": {
       "items": {
-        "$ref": "#/$defs/WorkingOrderView"
+        "$ref": "#/$defs/AccountRowView"
       },
       "type": "array"
+    },
+    "broker_enabled": {
+      "description": "Whether broker routes are offered at all (`[broker.metatrader]`).",
+      "type": "boolean"
+    },
+    "footer": {
+      "description": "Why the broker row is off, when it is.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "leave_pending": {
+      "description": "A leave with exposure waits for `leave`.",
+      "type": "boolean"
+    },
+    "locked": {
+      "description": "The chart's source cannot route: the selector stays on the simulator.",
+      "type": "boolean"
+    },
+    "orders_to": {
+      "description": "Where orders go, in the toolbar notice's words.",
+      "type": "string"
+    },
+    "route": {
+      "description": "`sim`, `demo` or `real`.",
+      "type": "string"
+    },
+    "title": {
+      "description": "The Trading panel's title.",
+      "type": "string"
     }
   },
   "required": [
-    "accepted",
-    "working_orders",
-    "ruler_ticks",
-    "simulated"
+    "route",
+    "orders_to",
+    "title",
+    "broker_enabled",
+    "locked",
+    "accounts",
+    "leave_pending"
   ],
-  "title": "TradeResult",
+  "title": "AccountRouteResult",
   "type": "object"
 }

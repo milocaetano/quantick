@@ -37,17 +37,24 @@
 //! `quantick_session::paper`; what is here is decoding, refusals and the
 //! journal.
 
-pub use crate::wire::trade::*;
 pub use quantick_control_host::authority::CAPABILITY_VERSION;
+pub use quantick_control_host::authority::{TRADE_MODULE_ID, TRADE_PERMISSION_ID};
+
+use std::collections::BTreeSet;
 
 use quantick_civil::TzOffset;
 use quantick_control::{
-    error::ControlError,
-    registry::{CapabilityDescriptor, RegistryError},
+    error::{ControlError, codes},
+    id::{CapabilityId, CostClassId, ModuleId, RiskFlagId},
+    registry::{
+        Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
+        RegistryError, RevisionPolicy,
+    },
     wire::ActorContext,
 };
 use quantick_control_host::actions::ReplayTrace;
-use quantick_control_host::journal::NewEvent;
+use quantick_control_host::admission::known_error;
+use quantick_control_host::authority::{NO_CONFIRMATION_ID, TRADE_EFFECT_ID, UI_BOUNDED_COST_ID};
 use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{
     JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
@@ -59,13 +66,186 @@ use quantick_session::paper::{
     TradeCommand, TradeOutcome, TradeRefusal, TradeResult,
 };
 use quantick_sim::{Order, VenueEvent};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::JournalAccess;
 use crate::call::{Call, CallCx, CallSpec, dock_call};
 use crate::dock::ActionDock;
+use crate::wire::readback::{Readback, TRADE_UNREACHABLE_TEST, journal, snapshot};
+use crate::wire::session::PAPER_SCOPE_ID;
+use quantick_control::registry::IdempotencyPolicy::{Forbidden, Optional};
 
-pub use quantick_control_host::authority::{TRADE_MODULE_ID, TRADE_PERMISSION_ID};
+pub const PLACE_CAPABILITY_ID: &str = "trade.order.place";
+
+pub const BRACKET_CAPABILITY_ID: &str = "trade.order.bracket";
+
+/// What the two shaping calls journal under. They place nothing, so an
+/// order-placed event would put a phantom order in the trail the constants
+/// above exist to keep honest.
+pub const TICKET_EVENT_KIND: &str = "trade.ticket.changed";
+
+pub const SELECT_STRATEGY_CAPABILITY_ID: &str = "trade.strategy.select";
+
+pub const SET_RULER_CAPABILITY_ID: &str = "trade.ruler.set";
+
+pub const SET_RISK_CAPABILITY_ID: &str = "trade.risk.set";
+
+pub const SET_INSTRUMENT_MONEY_CAPABILITY_ID: &str = "trade.instrument.set_money";
+
+pub const CANCEL_CAPABILITY_ID: &str = "trade.order.cancel";
+
+/// The two one-shot position calls.
+pub const FLATTEN_CAPABILITY_ID: &str = "trade.position.flatten";
+
+pub const REVERSE_CAPABILITY_ID: &str = "trade.position.reverse";
+
+/// The order vocabulary the trade calls state, from its owner.
+pub use quantick_trading::{ActionEntryKind, ActionSide};
+
+/// The refusal every action gives when there is no chart to trade on.
+///
+/// A window with no tab is not a state this application reaches, and the
+/// point of answering rather than indexing is that the control plane must
+/// not be the thing that discovers otherwise by taking a live session down.
+pub fn no_chart_open() -> ControlError {
+    known_error(
+        codes::CAPABILITY_UNAVAILABLE,
+        "this window has no chart open",
+        true,
+    )
+}
+
+/// The shared shape of every descriptor here — one place for the risk
+/// posture, so a fourth action cannot quietly ship a gentler one.
+pub fn descriptor(
+    id: &str,
+    title: &str,
+    description: &str,
+    risk_reducing: bool,
+    stale_input_safety: &str,
+) -> CapabilityDescriptor {
+    CapabilityDescriptor {
+        id: CapabilityId::new(id).expect("static capability ID is valid"),
+        version: CAPABILITY_VERSION,
+        title: title.to_owned(),
+        description: description.to_owned(),
+        module: ModuleId::new(TRADE_MODULE_ID).expect("static module ID is valid"),
+        // `dock_call` sets both schemas from the call's own types.
+        input_schema: Value::Null,
+        output_schema: Value::Null,
+        examples: Vec::new(),
+        effect: quantick_control::id::EffectId::new(TRADE_EFFECT_ID)
+            .expect("static effect ID is valid"),
+        risk_flags: BTreeSet::<RiskFlagId>::new(),
+        read_only: false,
+        // Placing the same order twice places two orders. There is no key
+        // that could make that safe to retry, so the policy says so rather
+        // than offering one that does not hold.
+        idempotency: IdempotencyPolicy::Forbidden,
+        revision_policy: RevisionPolicy::OptionalForAdditive,
+        stale_input_safety: Some(stale_input_safety.to_owned()),
+        dry_run_supported: false,
+        // An order dies with the session, like every simulated position.
+        persistence: EffectPersistence::Transient,
+        reversible: true,
+        // Cancelling is not `destructive` in this registry's sense, and the
+        // first attempt at it here said so wrongly. Destructive means the
+        // trader's *work* is gone — a drawing, a layout, an annotation —
+        // and the registry answers that by demanding an expected revision,
+        // which this tier's envelopes forbid outright
+        // (`ObserverContract::prepare`), so the guard could never have run.
+        // A working order is an instruction, re-issuable in one call, and
+        // removing one only ever reduces exposure: that is exactly what
+        // `risk_reducing` is for, and it is the honest flag.
+        destructive: false,
+        risk_reducing,
+        required_permissions: [TRADE_PERMISSION_ID]
+            .into_iter()
+            .map(|id| quantick_control::id::PermissionId::new(id).expect("static permission"))
+            .collect(),
+        preconditions: Vec::new(),
+        confirmation_class: quantick_control::id::ConfirmationClassId::new(NO_CONFIRMATION_ID)
+            .expect("static confirmation class is valid"),
+        availability: Availability::available(),
+        expected_cost: ExpectedCost {
+            class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
+            max_items: None,
+            max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
+        },
+        pagination: None,
+    }
+}
+
+/// Which named exit ladder the ticket arms next.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SelectStrategyInput {
+    /// The strategy's name, exactly as `observe.session.paper` reports it.
+    /// Omitted or null selects none, which is the bare order the trader
+    /// brackets by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// How far the ruler walks the projected bracket from an aimed entry.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetRulerInput {
+    /// Distance in ticks, the same on both sides. Zero puts the ruler away
+    /// and leaves the next order bare.
+    pub ticks: u32,
+}
+
+/// What one trade may lose, and whether an entry over it is refused.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetRiskInput {
+    /// `off` leaves the size to whoever types it; `amount` reads `amount`;
+    /// `percent` reads `percent` against the capital declared for the
+    /// instrument's own currency.
+    pub basis: String,
+    /// The fixed amount one trade may lose, as a decimal string.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<String>,
+    /// The share of declared capital one trade may lose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub percent: Option<String>,
+    /// Declare the capital for `currency`. Both or neither: a capital with
+    /// no currency has nothing to be keyed by, and nothing here converts
+    /// between currencies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capital: Option<String>,
+    /// The currency `capital` is in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    /// Whether an entry over the risk per trade is refused. Left out, the
+    /// lock stays as it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<bool>,
+}
+
+/// What one point of an instrument is worth, and its smallest tradable size.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetInstrumentMoneyInput {
+    /// The symbol to declare for. Left out, the chart's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    /// What one point of price is worth per unit held, as a decimal string.
+    /// Given with either of the other two missing, the declaration is
+    /// cleared instead — which returns the instrument to "nothing here knows
+    /// what a point is worth", the same contract `set_ruler_step` uses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub point_value: Option<String>,
+    /// The smallest tradable increment of quantity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_step: Option<String>,
+    /// The currency the point value is in. Never converted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+}
 
 /// The active tab's paper desk as a trade action reaches it: the account the
 /// orders rest in, the ruler that shapes one order, and the bracket the
@@ -130,7 +310,7 @@ pub trait PaperOwner {
     }
     /// Where orders go and the account list, as the Trading panel shows
     /// them; `None` where the host keeps no route.
-    fn account_route(&mut self) -> Option<crate::wire::trade_account::AccountRouteResult> {
+    fn account_route(&mut self) -> Option<crate::trade_account::AccountRouteResult> {
         let read = self.route_call()?.read();
         Some(crate::trade_account::route_result(&read))
     }
@@ -167,28 +347,15 @@ fn answer(paper: &dyn PaperOwner, events: &[VenueEvent]) -> Result<TradeResult, 
     Ok(TradeResult::of(desk.account(), desk.ruler_ticks(), events))
 }
 
-/// Append one journal event naming who asked and what the venue answered.
-///
-/// Every ticket call and, through [`Call::entry`], every order call records,
-/// accepted or refused by the venue, and the actor rides
-/// in the event rather than beside it. An order placed by an operator that
-/// looked exactly like one the trader placed would be the authorship half of
-/// the honesty contract quietly dropped — and a refusal is worth recording
-/// too, since "the agent tried to buy here and was told no" is precisely the
-/// line a trader reviewing a session wants to find.
-fn journal<A: JournalAccess>(
-    access: &mut A,
-    actor: &ActorContext,
-    kind: &str,
-    result: &TradeResult,
-    asked: Value,
-) {
-    let payload = entry(asked, &json!(result));
-    access.record_event(NewEvent::by(TRADE_MODULE_ID, kind, actor, payload));
-}
-
 /// The journal payload: what was asked and what the venue answered, from the
 /// encoded [`TradeResult`].
+///
+/// Every ticket and order call records it, accepted or refused by the venue,
+/// and the actor rides in the event rather than beside it. An order placed by
+/// an operator that looked exactly like one the trader placed would be the
+/// authorship half of the honesty contract quietly dropped — and a refusal is
+/// worth recording too, since "the agent tried to buy here and was told no"
+/// is precisely the line a trader reviewing a session wants to find.
 fn entry(asked: Value, answer: &Value) -> Value {
     json!({
         "asked": asked,
@@ -242,96 +409,6 @@ fn paused_error(gate: &quantick_sources::sync::Desync) -> ControlError {
     error
 }
 
-fn select_strategy<H: PaperHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let mut owner = host.paper();
-    let paper = &mut *owner;
-    let asked = input.clone();
-    let input: SelectStrategyInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let desk = paper.active_desk_mut().ok_or_else(no_chart_open)?;
-    let strategies = desk.account().order_strategies().to_vec();
-    if let Some(name) = input.name.as_deref()
-        && !strategies.iter().any(|strategy| strategy.name == name)
-    {
-        return Err(ControlError::invalid_request(format!(
-            "no exit strategy is named `{name}`"
-        )));
-    }
-    desk.account_mut()
-        .set_order_strategies(strategies, input.name.as_deref());
-    paper.persist(SharedChange::OrderStrategies);
-    let result = answer(paper, &[])?;
-    journal(access, actor, TICKET_EVENT_KIND, &result, asked);
-    to_value(result)
-}
-
-fn set_ruler<H: PaperHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let mut owner = host.paper();
-    let paper = &mut *owner;
-    let asked = input.clone();
-    let input: SetRulerInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    paper
-        .active_desk_mut()
-        .ok_or_else(no_chart_open)?
-        .set_ruler_ticks(input.ticks);
-    let result = answer(paper, &[])?;
-    journal(access, actor, TICKET_EVENT_KIND, &result, asked);
-    to_value(result)
-}
-
-fn set_risk<H: PaperHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let mut owner = host.paper();
-    let paper = &mut *owner;
-    let asked = input.clone();
-    let input: SetRiskInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let edit = crate::ticket_money::risk_edit(&input)?;
-    paper
-        .active_desk_mut()
-        .ok_or_else(no_chart_open)?
-        .account_mut()
-        .apply_risk_edit(edit);
-    paper.persist(SharedChange::RiskSettings);
-    let result = answer(paper, &[])?;
-    journal(access, actor, TICKET_EVENT_KIND, &result, asked);
-    to_value(result)
-}
-
-fn set_instrument_money<H: PaperHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let mut owner = host.paper();
-    let paper = &mut *owner;
-    let asked = input.clone();
-    let input: SetInstrumentMoneyInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let desk = paper.active_desk_mut().ok_or_else(no_chart_open)?;
-    crate::ticket_money::declare_money(desk.account_mut(), &input)?;
-    paper.persist(SharedChange::RiskSettings);
-    let result = answer(paper, &[])?;
-    journal(access, actor, TICKET_EVENT_KIND, &result, asked);
-    to_value(result)
-}
-
 /// Every order and position call runs the command its input states where a
 /// click runs it.
 fn order<C, H: PaperHost + ?Sized>(
@@ -353,7 +430,6 @@ fn posture(spec: &CallSpec, risk_reducing: bool, stale_input_safety: &str) -> Ca
         spec.id,
         spec.title,
         spec.description,
-        Value::Null,
         risk_reducing,
         stale_input_safety,
     )
@@ -524,6 +600,187 @@ impl<H: PaperHost + ?Sized> Call<H> for ReverseInput {
     }
 }
 
+/// A ticket call's posture: the family's, with the two fields that are
+/// simply not true of it corrected.
+///
+/// Placing an order is transient, forbidden to retry and answers with the
+/// order it made. Choosing a ladder or moving the ruler is none of those: it
+/// rewrites the paper-state sidecar and fans out to every tab, so it is
+/// durable; setting the same value twice leaves the same value, so it is
+/// idempotent; and it places nothing.
+fn ticket_posture(spec: &CallSpec, stale_input_safety: &str) -> CapabilityDescriptor {
+    CapabilityDescriptor {
+        persistence: EffectPersistence::Durable,
+        idempotency: IdempotencyPolicy::Optional,
+        ..posture(spec, false, stale_input_safety)
+    }
+}
+
+/// Edit the active desk's ticket with `edit`, persist `change` when it
+/// names one, and answer what the desk now shows.
+fn ticket<H: PaperHost + ?Sized>(
+    host: &mut H,
+    change: Option<SharedChange>,
+    edit: impl FnOnce(&mut dyn TradeDesk) -> Result<(), ControlError>,
+) -> Result<TradeResult, ControlError> {
+    let mut owner = host.paper();
+    let paper = &mut *owner;
+    edit(paper.active_desk_mut().ok_or_else(no_chart_open)?)?;
+    if let Some(change) = change {
+        paper.persist(change);
+    }
+    answer(paper, &[])
+}
+
+impl<H: PaperHost + ?Sized> Call<H> for SelectStrategyInput {
+    type Answer = TradeResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: SELECT_STRATEGY_CAPABILITY_ID,
+        module: TRADE_MODULE_ID,
+        title: "Choose the ticket's exit ladder",
+        description: "Sets which named exit strategy the next order rests with, or none for a bare order. Changes no order that already exists and never touches an open position; the same call the ticket's own selector makes.",
+        permissions: &[TRADE_PERMISSION_ID],
+        event: Some(TICKET_EVENT_KIND),
+        replay: ReplayTrace::Recorded,
+        posture: |spec| {
+            ticket_posture(
+                spec,
+                "The call names the strategy it selected and answers with the one that is now set, so a caller working from a stale read can see that it chose something else. It changes nothing that is already working.",
+            )
+        },
+    };
+
+    fn run<A: JournalAccess>(
+        self,
+        host: &mut H,
+        _cx: &mut CallCx<'_, A>,
+    ) -> Result<TradeResult, ControlError> {
+        ticket(host, Some(SharedChange::OrderStrategies), |desk| {
+            let strategies = desk.account().order_strategies().to_vec();
+            if let Some(name) = self.name.as_deref()
+                && !strategies.iter().any(|strategy| strategy.name == name)
+            {
+                return Err(ControlError::invalid_request(format!(
+                    "no exit strategy is named `{name}`"
+                )));
+            }
+            desk.account_mut()
+                .set_order_strategies(strategies, self.name.as_deref());
+            Ok(())
+        })
+    }
+
+    fn entry(asked: Value, answer: &Value) -> Value {
+        entry(asked, answer)
+    }
+}
+
+impl<H: PaperHost + ?Sized> Call<H> for SetRulerInput {
+    type Answer = TradeResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: SET_RULER_CAPABILITY_ID,
+        module: TRADE_MODULE_ID,
+        title: "Set the aim's ruler distance",
+        description: "Walks the projected stop and target out from an aimed entry, the same distance on both sides, in ticks of the instrument. Zero puts the ruler away. Shapes what the next order would carry rather than changing one that exists - the read a trader takes before committing.",
+        permissions: &[TRADE_PERMISSION_ID],
+        event: Some(TICKET_EVENT_KIND),
+        replay: ReplayTrace::Recorded,
+        posture: |spec| {
+            ticket_posture(
+                spec,
+                "The call answers with where the ruler actually landed, clamped to what the wheel itself can reach, so a caller that asked for more can see what it got. It changes nothing that is already working.",
+            )
+        },
+    };
+
+    fn run<A: JournalAccess>(
+        self,
+        host: &mut H,
+        _cx: &mut CallCx<'_, A>,
+    ) -> Result<TradeResult, ControlError> {
+        ticket(host, None, |desk| {
+            desk.set_ruler_ticks(self.ticks);
+            Ok(())
+        })
+    }
+
+    fn entry(asked: Value, answer: &Value) -> Value {
+        entry(asked, answer)
+    }
+}
+
+impl<H: PaperHost + ?Sized> Call<H> for SetRiskInput {
+    type Answer = TradeResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: SET_RISK_CAPABILITY_ID,
+        module: TRADE_MODULE_ID,
+        title: "Set the risk per trade",
+        description: "Says what one trade may lose - a fixed amount, or a share of the capital declared for the instrument's currency - and whether an entry whose stop risks more than that is refused. Shapes the size the next order would carry; changes no order that exists and never touches an open position.",
+        permissions: &[TRADE_PERMISSION_ID],
+        event: Some(TICKET_EVENT_KIND),
+        replay: ReplayTrace::Recorded,
+        posture: |spec| {
+            ticket_posture(
+                spec,
+                "The call answers with the risk that is now set and with what it makes of the entry the ticket is holding, including the reason when it can name no size, so a caller sees the same sentence the trader is reading. It changes nothing that is already working.",
+            )
+        },
+    };
+
+    fn run<A: JournalAccess>(
+        self,
+        host: &mut H,
+        _cx: &mut CallCx<'_, A>,
+    ) -> Result<TradeResult, ControlError> {
+        let edit = crate::ticket_money::risk_edit(&self)?;
+        ticket(host, Some(SharedChange::RiskSettings), |desk| {
+            desk.account_mut().apply_risk_edit(edit);
+            Ok(())
+        })
+    }
+
+    fn entry(asked: Value, answer: &Value) -> Value {
+        entry(asked, answer)
+    }
+}
+
+impl<H: PaperHost + ?Sized> Call<H> for SetInstrumentMoneyInput {
+    type Answer = TradeResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: SET_INSTRUMENT_MONEY_CAPABILITY_ID,
+        module: TRADE_MODULE_ID,
+        title: "Declare what an instrument's point is worth",
+        description: "Records what one point of price is worth per unit held, the smallest tradable size, and the currency - the three facts no feed reports and nothing here derives, without which risk sizing has nothing to size against. Leaving any of them out clears the declaration rather than half-setting it.",
+        permissions: &[TRADE_PERMISSION_ID],
+        event: Some(TICKET_EVENT_KIND),
+        replay: ReplayTrace::Recorded,
+        posture: |spec| {
+            ticket_posture(
+                spec,
+                "The call answers with what the ticket now makes of the entry it is holding, so a caller can see the instrument turn from unknown into sized. It changes nothing that is already working, and it never converts between currencies.",
+            )
+        },
+    };
+
+    fn run<A: JournalAccess>(
+        self,
+        host: &mut H,
+        _cx: &mut CallCx<'_, A>,
+    ) -> Result<TradeResult, ControlError> {
+        ticket(host, Some(SharedChange::RiskSettings), |desk| {
+            crate::ticket_money::declare_money(desk.account_mut(), &self)
+        })
+    }
+
+    fn entry(asked: Value, answer: &Value) -> Value {
+        entry(asked, answer)
+    }
+}
+
 /// Dock the family. One call from the window's action registry, nothing
 /// else opens.
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
@@ -532,13 +789,10 @@ where
     H: PaperHost + ?Sized,
     A: JournalAccess,
 {
-    registry.register(select_strategy_descriptor(), select_strategy::<H, A>)?;
-    registry.register(set_ruler_descriptor(), set_ruler::<H, A>)?;
-    registry.register(set_risk_descriptor(), set_risk::<H, A>)?;
-    registry.register(
-        set_instrument_money_descriptor(),
-        set_instrument_money::<H, A>,
-    )?;
+    dock_call::<SelectStrategyInput, _, _, _>(registry)?;
+    dock_call::<SetRulerInput, _, _, _>(registry)?;
+    dock_call::<SetRiskInput, _, _, _>(registry)?;
+    dock_call::<SetInstrumentMoneyInput, _, _, _>(registry)?;
     dock_call::<PlaceInput, _, _, _>(registry)?;
     dock_call::<BracketInput, _, _, _>(registry)?;
     dock_call::<CancelInput, _, _, _>(registry)?;
@@ -546,6 +800,88 @@ where
     dock_call::<ReverseInput, _, _, _>(registry)?;
     crate::trade_account::register(registry)
 }
+
+pub const TRADE_SHAPING_TEST: &str =
+    "a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once";
+
+/// How a client reconciles an interrupted call on the paper ticket.
+///
+/// `retry_matrix` joins every family's rows into one table; a row belongs
+/// here, beside the capability it reconciles.
+pub const READBACKS: &[Readback] = &[
+    journal(
+        "trade.instrument.set_money",
+        Optional,
+        TICKET_EVENT_KIND,
+        "payload.asked",
+        "an event after the pre-call cursor carries the caller's input as `asked`",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.order.bracket",
+        Forbidden,
+        PAPER_SCOPE_ID,
+        "tabs[].working_orders[].stop_loss",
+        "the named order carries the stop and target asked for",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.order.cancel",
+        Forbidden,
+        PAPER_SCOPE_ID,
+        "tabs[].working_orders[].order_id",
+        "the named order is no longer working",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.order.place",
+        Forbidden,
+        PAPER_SCOPE_ID,
+        "tabs[].working_orders[].order_id",
+        "an order the pre-call reading lacked is working, or a position opened",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.position.flatten",
+        Forbidden,
+        PAPER_SCOPE_ID,
+        "tabs[].position",
+        "no position is open and `working_order_count` is zero",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.position.reverse",
+        Forbidden,
+        PAPER_SCOPE_ID,
+        "tabs[].position.side",
+        "the position's side is the opposite of the pre-call reading",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.risk.set",
+        Optional,
+        PAPER_SCOPE_ID,
+        "tabs[].risk_state",
+        "the ticket's risk state follows the basis asked for",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.ruler.set",
+        Optional,
+        PAPER_SCOPE_ID,
+        "tabs[].ruler_ticks",
+        "the ruler stands at the distance the call answered with",
+        &[TRADE_SHAPING_TEST, TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.strategy.select",
+        Optional,
+        PAPER_SCOPE_ID,
+        "tabs[].armed_strategy",
+        "the ticket is armed with the strategy asked for",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+];
 
 #[cfg(test)]
 #[path = "trade_tests.rs"]

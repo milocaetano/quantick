@@ -112,6 +112,13 @@ where
     }
 }
 
+/// The handler [`dock_call`] docks for `C`, for a test that drives one call.
+#[cfg(test)]
+pub(crate) fn handler<C: Call<H>, H: ?Sized, A: JournalAccess>()
+-> quantick_control_host::actions::ActionHandler<H, A> {
+    erased::<C, H, A>
+}
+
 fn erased<C: Call<H>, H: ?Sized, A: JournalAccess>(
     host: &mut H,
     access: &mut A,

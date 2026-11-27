@@ -11,10 +11,12 @@
 //! `annotate.label.create` landed was written in prose beside the capability,
 //! if anywhere, and nothing failed when a new capability arrived without one.
 //!
-//! This module is that home, and each family module is where a row is
+//! This module holds the row vocabulary and a grant's reach, and each family
+//! module — its wire module, or its handler module — is where a row is
 //! written: `analysis` declares the drawings' rows beside `DRAWINGS_SCOPE_ID`,
-//! `trade` the ticket's beside `TICKET_EVENT_KIND`, and [`FAMILIES`] is the
-//! declared list [`READBACKS`] joins at compile time. A row states the policy
+//! `trade` the ticket's beside `TICKET_EVENT_KIND`, and
+//! `crate::retry_matrix::FAMILIES` is the declared list its `READBACKS` joins
+//! at compile time. A row states the policy
 //! its capability is expected to declare, the read capability (and the
 //! snapshot scope or journal event kind) that shows its effect, the field in
 //! that read, what that field says when the call applied, and the transport
@@ -49,11 +51,9 @@
 //! only from `main`'s dump path, before a window exists, and from tests.
 
 mod reach;
-mod rows;
 
 pub use crate::wire::readback::*;
 pub use reach::{Holder, ceiling, holder, profiles_in_ceiling_order};
-pub use rows::{FAMILIES, READBACKS, readback};
 
 /// The banner the generated file opens with. Load-bearing, as the inventory's
 /// is: `crates/guards` greps for it to confirm it is reading generated output.

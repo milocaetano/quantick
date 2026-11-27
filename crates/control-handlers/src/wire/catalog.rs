@@ -11,6 +11,7 @@ macro_rules! family_documents {
     (@family $documents:ident $family:ident [catalog $(, readbacks)?]) => {
         $documents.extend(crate::wire::$family::documents());
     };
+    (@family $documents:ident $family:ident [handler_readbacks: $($path:ident)::+]) => {};
     (@family $documents:ident $family:ident none) => {};
     (@family $documents:ident $family:ident [$(readbacks)?]) => {};
 }

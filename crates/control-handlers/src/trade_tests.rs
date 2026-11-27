@@ -188,3 +188,58 @@ fn every_trade_call_docks_decodes_refuses_and_journals_through_one_adapter() {
     assert_eq!(refusal, Err(no_chart_open()));
     assert!(access.events.is_empty());
 }
+
+#[test]
+fn each_ticket_call_journals_the_raw_input_and_persists_only_what_it_shares() {
+    let mut registry = ActionRegistry::<DeskWindow, FakeAccess>::new();
+    register(&mut registry).unwrap();
+    let trader = FakeWindow::trader();
+    let calls = [
+        (
+            SELECT_STRATEGY_CAPABILITY_ID,
+            json!({ "name": null }),
+            Some(SharedChange::OrderStrategies),
+        ),
+        (SET_RULER_CAPABILITY_ID, json!({ "ticks": 4 }), None),
+        (
+            SET_RISK_CAPABILITY_ID,
+            json!({ "basis": "off" }),
+            Some(SharedChange::RiskSettings),
+        ),
+        (
+            SET_INSTRUMENT_MONEY_CAPABILITY_ID,
+            json!({ "point_value": "1", "size_step": "1", "currency": "USD" }),
+            Some(SharedChange::RiskSettings),
+        ),
+    ];
+    for (id, input, shared) in calls {
+        let mut window = desk_window();
+        let mut access = FakeAccess::with_budget(0);
+        let action = registry.lookup(id, CAPABILITY_VERSION).expect(id);
+        let answer = (action.handler)(&mut window, &mut access, &trader, &input)
+            .unwrap_or_else(|error| panic!("{id}: {error:?}"));
+        action
+            .output
+            .validate(&answer)
+            .expect("the published result");
+        let [event] = access.events.as_slice() else {
+            panic!("{id} journals once, not {}", access.events.len());
+        };
+        assert_eq!(event.kind.as_str(), TICKET_EVENT_KIND, "{id}");
+        assert_eq!(
+            event.payload["asked"], input,
+            "{id}: the caller's own input"
+        );
+        assert_eq!(window.persisted, Vec::from_iter(shared), "{id}");
+    }
+
+    let mut window = desk_window();
+    let mut access = FakeAccess::with_budget(0);
+    let select = registry
+        .lookup(SELECT_STRATEGY_CAPABILITY_ID, CAPABILITY_VERSION)
+        .unwrap();
+    let unknown = json!({ "name": "no-such-ladder" });
+    let refused = (select.handler)(&mut window, &mut access, &trader, &unknown).unwrap_err();
+    assert_eq!(refused.code.as_str(), codes::INVALID_REQUEST);
+    assert!(access.events.is_empty() && window.persisted.is_empty());
+}

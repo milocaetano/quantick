@@ -16,7 +16,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::wire::readback::{EVERY_FORBIDDEN_TEST, Readback, journal};
-use crate::wire::trade::ActionSide;
+use quantick_trading::ActionSide;
 
 pub const ARM_CAPABILITY_ID: &str = "strategy.script.arm";
 pub const LIST_CAPABILITY_ID: &str = "strategy.script.list";
