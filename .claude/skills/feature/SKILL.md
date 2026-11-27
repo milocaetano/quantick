@@ -4,9 +4,8 @@ description: Split a large feature into a few implement-sized child issues, run 
 disable-model-invocation: true
 ---
 
-`/feature <outcome>` plans and runs. When the first token is exactly `plan`,
-`run`, `resume` or `status`, it is a subcommand: `plan <outcome>` only files
-issues, `run|resume|status <parent-URL>` reuses them, and `status` is read-only.
+`/feature <outcome>` plans and runs.
+When the first token is exactly `plan`, `run`, `resume` or `status`, it is a subcommand: `plan <outcome>` only files issues, `run|resume|status <parent-URL>` reuses them, and `status` is read-only.
 The user's `/feature` or `run` command authorizes execution; `plan` never does.
 Merging into `feature/<slug>` also needs the user's grant comment (step 7).
 Ask once when the outcome or parent is ambiguous.
@@ -15,31 +14,22 @@ Parallel workers save wall-clock time, not tokens; the child count drives cost.
 
 ## Plan
 
-1. Search paths, symbols and existing issues/PRs; do not read code bodies here
-   (hand that to one `haiku` retrieval agent that returns paths). Reuse
-   matching work.
-2. Split into the fewest children (default 1-3), only at a crate or port
-   boundary or above implement's `high` floor. Fold a linear chain into one
-   child. One PR is the default when the feature fits one.
-3. Write a binding `Design:` block of no more than 150 tokens, chosen with
-   [new-extension](../new-extension/SKILL.md): the crate/module per child, the
-   port signature, the shared types, and the dock file plus registration line.
-   When the feature needs a new port, shared type or crate, child #0 is a
-   behaviour-free skeleton that owns every hub file (registries, `Surfaces`,
-   workspace `Cargo.toml`, ratchet baselines); later children add new files.
-4. Write each acceptance criterion as `C<n>: given/when/then -> test
-   <crate>::<name> | command <cmd>` and give it to one child. A criterion that
-   spans children goes to the last child as a committed integration test and
-   is marked `combined`.
-5. File one parent and the child issues. Each child body *is* its implement
-   plan: `Do`, `Touch` (owned paths), `Done` (its `C<n>` lines verbatim),
-   `Check`, `No`, `Review` (`low` unless a floor applies) and `Depends on #M`,
-   about 200 tokens. Link children as sub-issues:
-   `gh api -X POST repos/{o}/{r}/issues/{parent}/sub_issues -F sub_issue_id=<REST id>`
-   (the REST `id`, not the number; on failure keep the plain link).
-   Pass multiline bodies with `--body-file`. No Project board.
-6. Keep one coordinator section in the parent, preserving human text. Write it
-   after planning and once per worker return:
+1. Search paths, symbols and existing issues/PRs; do not read code bodies here (hand that to one `haiku` retrieval agent that returns paths).
+   Reuse matching work.
+2. Split into the fewest children (default 1-3), only at a crate or port boundary or above implement's `high` floor.
+   Fold a linear chain into one child.
+   One PR is the default when the feature fits one.
+3. Write a binding `Design:` block of no more than 150 tokens, chosen with [new-extension](../new-extension/SKILL.md): the crate/module per child, the port signature, the shared types, and the dock file plus registration line.
+   When the feature needs a new port, shared type or crate, child #0 is a behaviour-free skeleton that owns every hub file (registries, `Surfaces`, workspace `Cargo.toml`, ratchet baselines); later children add new files.
+4. Write each acceptance criterion as `C<n>: given/when/then -> test <crate>::<name> | command <cmd>` and give it to one child.
+   A criterion that spans children goes to the last child as a committed integration test and is marked `combined`.
+5. File one parent and the child issues.
+   Each child body *is* its implement plan: `Do`, `Touch` (owned paths), `Done` (its `C<n>` lines verbatim), `Check`, `No`, `Review` (`low` unless a floor applies) and `Depends on #M`, about 200 tokens.
+   Link children as sub-issues: `gh api -X POST repos/{o}/{r}/issues/{parent}/sub_issues -F sub_issue_id=<REST id>` (the REST `id`, not the number; on failure keep the plain link).
+   Pass multiline bodies with `--body-file`.
+   No Project board.
+6. Keep one coordinator section in the parent, preserving human text.
+   Write it after planning and once per worker return:
 
    ```text
    <!-- quantick-feature:v1 -->
@@ -51,83 +41,64 @@ Parallel workers save wall-clock time, not tokens; the child count drives cost.
    <!-- end quantick-feature:v1 -->
    ```
 
-   States: `todo`, `running`, `ready`, `merged`, `blocked`. `merged` means on
-   `feature/<slug>`; the coordinator closes the child issue after readback,
-   since `Closes #N` fires only on `main`.
+   States: `todo`, `running`, `ready`, `merged`, `blocked`.
+   `merged` means on `feature/<slug>`; the coordinator closes the child issue after readback, since `Closes #N` fires only on `main`.
 
 ## Run
 
-7. On `run`/`resume` only, reconcile in two reads: the parent body, then one
-   `gh pr list --state all --search "<child refs>" --json number,headRefOid,state,statusCheckRollup`.
-   A `coordinator` stamp under 24h old with recent PR activity means another
-   coordinator is live: stop. If it is older, ask the user before taking over.
-   With `grant: none`, ask the user for a grant comment on the parent and only
-   plan. Otherwise create `feature/<slug>` from `origin/main` if absent:
-   `git push origin origin/main:refs/heads/feature/<slug>`.
-8. Dispatch the next unblocked child; at most two run at once, as a host CPU
-   cap, never to save tokens. A dependency clears once it is `merged`.
-9. Before launch, write the claim: `running`, branch `<prefix>/<issue>-<slug>`,
-   worktree `../quantick-worktrees/<prefix>-<issue>-<slug>`. Spawn with
-   `model: opus` (Codex: its strongest configured model) and pass only the issue
-   URL, repository, `feature/<slug>`, the parent and grant URLs, the `Design:`
-   block and the absolute path of [worker.md](references/worker.md). No
-   conversation.
-10. Accept `READY` mechanically, with no review in this context. Run
-    `gh pr view <PR> --json state,headRefOid,statusCheckRollup` and
-    `gh pr diff <PR> --name-only`, and check that:
+7. On `run`/`resume` only, reconcile in two reads: the parent body, then one `gh pr list --state all --search "<child refs>" --json number,headRefOid,state,statusCheckRollup`.
+   A `coordinator` stamp under 24h old with recent PR activity means another coordinator is live: stop.
+   If it is older, ask the user before taking over.
+   With `grant: none`, ask the user for a grant comment on the parent and only plan.
+   Otherwise create `feature/<slug>` from `origin/main` if absent: `git push origin origin/main:refs/heads/feature/<slug>`.
+8. Dispatch the next unblocked child; at most two run at once, as a host CPU cap, never to save tokens.
+   A dependency clears once it is `merged`.
+9. Before launch, write the claim: `running`, branch `<prefix>/<issue>-<slug>`, worktree `../quantick-worktrees/<prefix>-<issue>-<slug>`.
+   Spawn with `model: opus` (Codex: its strongest configured model) and pass only the issue URL, repository, `feature/<slug>`, the parent and grant URLs, the `Design:` block and the absolute path of [worker.md](references/worker.md).
+   No conversation.
+10. Accept `READY` mechanically, with no review in this context.
+    Run `gh pr view <PR> --json state,headRefOid,statusCheckRollup` and `gh pr diff <PR> --name-only`, and check that:
     - the PR is open;
-    - `headRefOid` equals the receipt's HEAD, with every required check green
-      at that SHA;
+    - `headRefOid` equals the receipt's HEAD, with every required check green at that SHA;
     - every `C<n>` test named in the issue appears in the diff;
     - the changed files stay inside `Touch` (the skeleton's hubs belong to #0).
 
-    Anything missing counts as a failed check. Then merge it, one child at a
-    time, from its worktree:
-    `cd <worktree> && gh pr merge <PR> --merge --match-head-commit <SHA>`.
-    The hooks require the worker's base record, the grant, green CI and its
-    `code-review-ok` at that head.
+    Anything missing counts as a failed check.
+    Then merge it, one child at a time, from its worktree: `cd <worktree> && gh pr merge <PR> --merge --match-head-commit <SHA>`.
+    The hooks require the worker's base record, the grant, green CI and its `code-review-ok` at that head.
     Read back the merge, mark the row `merged` and close the child issue.
-11. A failed criterion or check earns one repair dispatch per child, across
-    resumes. Brief it with only the failed `C<n>`, the evidence and the HEAD;
-    the worker reruns that check and CI, with a `low` delta review only when
-    the fix goes beyond the criterion. A `BLOCKED` receipt that needs a
-    decision skips the repair. Either way, after that the row is `blocked`, and
-    one comment on the child issue gives the reason and next action. Continue
-    independent work. Never waive acceptance.
-12. Do not sync `feature/<slug>` with `main` while children run; the verdict
-    syncs once. A sibling merge moves the base: rebase the next child onto it
-    before its merge.
+11. A failed criterion or check earns one repair dispatch per child, across resumes.
+    Brief it with only the failed `C<n>`, the evidence and the HEAD; the worker reruns that check and CI, with a `low` delta review only when the fix goes beyond the criterion.
+    A `BLOCKED` receipt that needs a decision skips the repair.
+    Either way, after that the row is `blocked`, and one comment on the child issue gives the reason and next action.
+    Continue independent work.
+    Never waive acceptance.
+12. Do not sync `feature/<slug>` with `main` while children run; the verdict syncs once.
+    A sibling merge moves the base: rebase the next child onto it before its merge.
 
 ## Verdict
 
-Done means one non-draft PR `feature/<slug>` -> `main` with every required
-check green at its recorded head. A draft, pending or red PR is `blocked`,
-never done.
+Done means one non-draft PR `feature/<slug>` -> `main` with every required check green at its recorded head.
+A draft, pending or red PR is `blocked`, never done.
 
-1. **Sync.** When every child is `merged`, in a `feature/<slug>` worktree at
-   the fetched tip, merge `origin/main` unless it is an ancestor, and push. A
-   conflict aborts the merge and becomes one `sync` child (Do: merge
-   `origin/main`; Review: `low`) through steps 9-11. Declare tier `implement`
-   there ([execute.md](../implement/references/execute.md) step 1).
-2. **Judge.** Spawn one fresh judge (`model: opus`) with the synced SHA and
-   the `C<n>` list. It runs the `combined` tests (PASS or FAIL per criterion,
-   with the gap), then code-review `low` over `origin/main...<SHA>` (each
-   child had its own review; this pass covers seams and the sync) and records
-   `code-review-ok` as execute.md step 5 does. A FAIL earns one repair child;
-   then the parent is `blocked`.
-3. **PR.** On PASS, open the PR non-draft from that worktree (a draft skips
-   CI and `gh pr ready` re-runs it), body `Parent: <parent URL>` and
-   the verdict. Record PR and head in the coordinator section; a resume
-   reuses them.
-4. **Watch.** One background `gh pr checks <PR> --watch --interval 60`; stop
-   it early on `CONFLICTING` (no merge ref, no CI) or a step running past 25
-   min (`gh run cancel`, then `gh run rerun --failed`). Green means
-   `sh .claude/hooks/full_ci.sh verify <worktree>` exits 0. Rerun a red job
-   once only when its failing test lies outside the feature's diff. Any other
-   red, a second red, a conflict or a second stall earns one fix child
-   (steps 9-11, briefed with the job, its shortest error line and the head),
-   then a new watch. After that the parent is `blocked`.
-5. **Report** PR, head and the `main` SHA that CI tested; do not chase later
-   `main` moves. When nothing can advance, return the table, PR, failing job
-   and `/feature resume <URL>`. The user merges; close the parent after. Keep
-   only the table and receipts in context.
+1. **Sync.**
+   When every child is `merged`, in a `feature/<slug>` worktree at the fetched tip, merge `origin/main` unless it is an ancestor, and push.
+   A conflict aborts the merge and becomes one `sync` child (Do: merge `origin/main`; Review: `low`) through steps 9-11.
+   Declare tier `implement` there ([execute.md](../implement/references/execute.md) step 1).
+2. **Judge.**
+   Spawn one fresh judge (`model: opus`) with the synced SHA and the `C<n>` list.
+   It runs the `combined` tests (PASS or FAIL per criterion, with the gap), then code-review `low` over `origin/main...<SHA>` (each child had its own review; this pass covers seams and the sync) and records `code-review-ok` as execute.md step 5 does.
+   A FAIL earns one repair child; then the parent is `blocked`.
+3. **PR.**
+   On PASS, open the PR non-draft from that worktree (a draft skips CI and `gh pr ready` re-runs it), body `Parent: <parent URL>` and the verdict.
+   Record PR and head in the coordinator section; a resume reuses them.
+4. **Watch.**
+   One background `gh pr checks <PR> --watch --interval 60`; stop it early on `CONFLICTING` (no merge ref, no CI) or a step running past 25 min (`gh run cancel`, then `gh run rerun --failed`).
+   Green means `sh .claude/hooks/full_ci.sh verify <worktree>` exits 0.
+   Rerun a red job once only when its failing test lies outside the feature's diff.
+   Any other red, a second red, a conflict or a second stall earns one fix child (steps 9-11, briefed with the job, its shortest error line and the head), then a new watch.
+   After that the parent is `blocked`.
+5. **Report** PR, head and the `main` SHA that CI tested; do not chase later `main` moves.
+   When nothing can advance, return the table, PR, failing job and `/feature resume <URL>`.
+   The user merges; close the parent after.
+   Keep only the table and receipts in context.
