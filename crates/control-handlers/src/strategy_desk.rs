@@ -344,7 +344,6 @@ impl<H: StrategyDeskHost + ?Sized> Call<H> for ActionSetInput {
                 spec.id,
                 spec.title,
                 spec.description,
-                Value::Null,
                 false,
                 "The instance is named by an id never reused in the tab's session, and the call states the whole action, so a repeat leaves the instance as the first call did; an id that has since been removed is refused.",
             )

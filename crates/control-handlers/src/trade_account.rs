@@ -22,7 +22,7 @@ use quantick_paper::route::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::JournalAccess;
 use crate::call::{Call, CallCx, CallSpec, dock_call};
@@ -247,7 +247,6 @@ fn route_posture(
             spec.id,
             spec.title,
             spec.description,
-            Value::Null,
             risk_reducing,
             stale_input_safety,
         )

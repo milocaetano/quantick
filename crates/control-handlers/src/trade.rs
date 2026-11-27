@@ -50,7 +50,6 @@ use quantick_control::{
         Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
         RegistryError, RevisionPolicy,
     },
-    schema::generated_schema,
     wire::ActorContext,
 };
 use quantick_control_host::actions::ReplayTrace;
@@ -124,7 +123,6 @@ pub fn descriptor(
     id: &str,
     title: &str,
     description: &str,
-    input_schema: Value,
     risk_reducing: bool,
     stale_input_safety: &str,
 ) -> CapabilityDescriptor {
@@ -134,8 +132,9 @@ pub fn descriptor(
         title: title.to_owned(),
         description: description.to_owned(),
         module: ModuleId::new(TRADE_MODULE_ID).expect("static module ID is valid"),
-        input_schema,
-        output_schema: generated_schema::<TradeResult>(),
+        // `dock_call` sets both schemas from the call's own types.
+        input_schema: Value::Null,
+        output_schema: Value::Null,
         examples: Vec::new(),
         effect: quantick_control::id::EffectId::new(TRADE_EFFECT_ID)
             .expect("static effect ID is valid"),
@@ -431,7 +430,6 @@ fn posture(spec: &CallSpec, risk_reducing: bool, stale_input_safety: &str) -> Ca
         spec.id,
         spec.title,
         spec.description,
-        Value::Null,
         risk_reducing,
         stale_input_safety,
     )
