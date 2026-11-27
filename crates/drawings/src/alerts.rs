@@ -1,6 +1,32 @@
 //! Pure drawing projections for the reusable alert observer.
 use quantick_alerts::{Geometry, Line, Point, TargetKind, Unavailable};
 
+/// Every alert fact a pane's drawings supply, in drawing order, borrowed.
+/// Named, not `impl Iterator`, so an object-safe observer can take it.
+pub struct Facts<'a, T> {
+    drawings: std::slice::Iter<'a, crate::Drawing<T>>,
+    key: Option<&'a quantick_workspace::market_settings::DrawingKey>,
+}
+
+impl<'a, T: crate::ToolCatalog> Iterator for Facts<'a, T> {
+    type Item = quantick_alerts::observer::Drawing<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let key = self.key;
+        self.drawings.find_map(|drawing| fact(drawing, key))
+    }
+}
+
+/// The alert facts of `drawings` under the pane's market `key`.
+pub fn facts<'a, T: crate::ToolCatalog>(
+    drawings: &'a crate::Drawings<T>,
+    key: Option<&'a quantick_workspace::market_settings::DrawingKey>,
+) -> Facts<'a, T> {
+    Facts {
+        drawings: drawings.items().iter(),
+        key,
+    }
+}
+
 /// Supply mirror provenance from the existing durable drawing owner contract.
 pub fn fact<'a, T: crate::ToolCatalog>(
     drawing: &'a crate::Drawing<T>,
