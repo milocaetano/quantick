@@ -9,10 +9,11 @@ use std::{
 
 use serde_json::{Value, json};
 
-mod common;
+#[path = "../../stores/src/scratch.rs"]
+mod scratch;
 
-fn scratch_directory(name: &str) -> common::ScratchDir {
-    common::ScratchDir::new(name)
+fn scratch_directory(name: &str) -> scratch::ScratchDir {
+    scratch::ScratchDir::new(name)
 }
 
 fn frames(stdout: &[u8]) -> Vec<Value> {

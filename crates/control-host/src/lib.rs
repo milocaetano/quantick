@@ -29,6 +29,7 @@ pub mod projection;
 pub mod rate;
 pub mod refusal;
 #[cfg(test)]
+#[path = "../../stores/src/scratch.rs"]
 mod scratch;
 pub mod system;
 pub mod trace;

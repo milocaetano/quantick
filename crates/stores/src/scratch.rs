@@ -1,23 +1,56 @@
-//! Scratch directories these tests own, rather than leak.
+//! Scratch directories the tests own, rather than leak.
 //!
-//! Test-only. The same helper `crates/control-local/src/scratch.rs` carries,
-//! in this crate's own copy because a crate that may not depend on another
-//! cannot share one: a temporary path keyed on `std::process::id()` alone is
-//! a path a later run can inherit populated, because the operating system
-//! reuses process ids. The repository guard `crates/guards/src/scratch.rs`
-//! names each copy and refuses the call anywhere else.
+//! Test-side, and the shared copy: every crate whose tests touch a real disk
+//! mounts this file with `#[path = "../../stores/src/scratch.rs"]` instead of
+//! carrying its own, because a shared crate would be a dependency every crate
+//! with tests gains for a hundred lines of `std`. Two keep their own:
+//! `crates/app/src/scratch.rs`, since `extension_boundary` refuses `#[path]`
+//! modules under `crates/app/src`, and `crates/guards/src/scratch_dir.rs`,
+//! since `guards` depends on nothing. The repository guard
+//! `crates/guards/src/scratch.rs` names these files and refuses
+//! `std::env::temp_dir()` anywhere else.
+//!
+//! **Unique per run.** Every path carries [`run_token`] — the process id *and*
+//! the nanoseconds since the epoch at which this process first asked. Windows
+//! reuses a process id within minutes, so a folder named after the id alone is
+//! a folder a later run inherits populated, and the failure looks like the
+//! change under test. A reused pid cannot reproduce the nanosecond.
+//!
+//! **Removed by an owner.** A test that can hold a value holds a
+//! [`ScratchDir`] or [`ScratchFile`], which removes its tree on `Drop` —
+//! including on a panic, which unwinds. A path resolved inside production code
+//! under `cfg!(test)` has no such value: it is re-resolved on every call and
+//! must answer the same twice. Those take [`thread_dir`], which hands the
+//! directory to the test's own thread and removes it when that thread ends.
+//! `libtest` runs each test on a thread it spawned, whose thread-locals drop
+//! on the way out; under `--test-threads=1` the main thread runs them and the
+//! process exits without that, leaving one directory per label behind.
+//!
+//! Every path opens with the mounting crate's package name, so one `ls` finds
+//! a crate's leftovers and two crates never share a folder.
+
+// Each mounting crate uses its own subset of this module.
+#![allow(dead_code)]
 
 use std::cell::RefCell;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// The prefix every scratch path carries: the mounting crate's package name.
+const PREFIX: &str = env!("CARGO_PKG_NAME");
+
 /// A token no other run of this crate can produce: this process's id, and the
-/// nanoseconds since the epoch at which it first asked. Read once per
-/// process, so two resolutions inside one test agree.
-fn run_token() -> &'static str {
+/// nanoseconds since the epoch at which it first asked.
+///
+/// Read **once** per process, not once per call: a per-call read would make
+/// two resolutions of the same stable [`thread_dir`] path disagree.
+pub(crate) fn run_token() -> &'static str {
     static TOKEN: OnceLock<String> = OnceLock::new();
     TOKEN.get_or_init(|| {
+        // A clock that refuses to answer is not a reason to fail a test run;
+        // the pid alone still separates concurrent runs.
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |since| since.as_nanos());
@@ -26,50 +59,46 @@ fn run_token() -> &'static str {
 }
 
 /// A directory of this test's own, removed with everything under it when the
-/// value is dropped — including on a panic, which unwinds.
-pub struct ScratchDir(PathBuf);
+/// value is dropped.
+///
+/// Keep it alive for as long as the files matter: a `ScratchDir` dropped at
+/// the end of the statement that created it takes its files with it.
+pub(crate) struct ScratchDir(PathBuf);
 
 impl ScratchDir {
-    /// A fresh directory named `quantick-stores-<pid>-<nanos>-<counter>-<label>`.
-    /// Created, so a caller can write into it at once.
-    pub fn new(label: &str) -> Self {
+    /// A fresh directory named `<package>-<pid>-<nanos>-<counter>-<label>`,
+    /// created so a caller can write into it at once.
+    pub(crate) fn new(label: &str) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "quantick-stores-{}-{}-{label}",
+            "{PREFIX}-{}-{}-{label}",
             run_token(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(&dir).expect("a scratch directory is creatable");
+        fs::create_dir_all(&dir).expect("a scratch directory is creatable");
         Self(dir)
     }
 
     /// The directory itself.
-    pub fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.0
     }
-}
 
-thread_local! {
-    /// The per-thread directories this thread's tests share, removed with
-    /// the thread: `libtest` runs each test on its own thread, so a path
-    /// minted here outlives no test and leaks past no run.
-    static OWNED: RefCell<Vec<(String, ScratchDir)>> = const { RefCell::new(Vec::new()) };
-}
+    /// A path inside it. The file need not exist — a test asking what happens
+    /// to a missing file wants exactly this.
+    pub(crate) fn join(&self, relative: impl AsRef<Path>) -> PathBuf {
+        self.0.join(relative)
+    }
 
-/// A directory shared by every call on this thread with the same `label`,
-/// for the `cfg!(test)` store paths that have no value to hold a
-/// [`ScratchDir`] in. Gone when the thread ends.
-pub(crate) fn thread_dir(label: &str) -> PathBuf {
-    OWNED.with(|owned| {
-        let mut dirs = owned.borrow_mut();
-        if let Some((_, dir)) = dirs.iter().find(|(known, _)| known == label) {
-            return dir.path().to_path_buf();
+    /// Write `contents` at `relative`, creating parent folders as needed.
+    pub(crate) fn write(&self, relative: impl AsRef<Path>, contents: &str) -> PathBuf {
+        let path = self.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("a scratch parent is creatable");
         }
-        let dir = ScratchDir::new(label);
-        let path = dir.path().to_path_buf();
-        dirs.push((label.to_owned(), dir));
+        fs::write(&path, contents).expect("a scratch file is writable");
         path
-    })
+    }
 }
 
 impl std::ops::Deref for ScratchDir {
@@ -88,11 +117,74 @@ impl AsRef<Path> for ScratchDir {
 
 impl Drop for ScratchDir {
     fn drop(&mut self) {
-        // Best-effort, like every other copy of this: a file something the
-        // test spawned still holds open is not worth failing a green test
-        // over, and the run token means no later run can inherit it.
-        let _ = std::fs::remove_dir_all(&self.0);
+        // Best-effort: a file something the test spawned still holds open is
+        // not worth failing a green test over, and the run token means no
+        // later run can inherit it.
+        let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+/// One scratch *file*, in a directory of its own that removes itself. It
+/// stands where a `&Path` naming a file is wanted.
+pub(crate) struct ScratchFile {
+    /// Held only for its `Drop`: removing the directory removes the file.
+    _dir: ScratchDir,
+    path: PathBuf,
+}
+
+impl ScratchFile {
+    /// `name` inside a fresh directory labelled `label`.
+    pub(crate) fn new(label: &str, name: &str) -> Self {
+        let dir = ScratchDir::new(label);
+        let path = dir.join(name);
+        Self { _dir: dir, path }
+    }
+
+    /// The file's path. It does not exist until something writes it.
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl std::ops::Deref for ScratchFile {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl AsRef<Path> for ScratchFile {
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
+}
+
+thread_local! {
+    /// The per-thread directories this thread's tests share, removed with
+    /// the thread.
+    static OWNED: RefCell<Vec<(String, ScratchDir)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A directory shared by every call on this thread with the same `label`,
+/// created on first use and removed when the thread ends.
+///
+/// Stable per (run, thread, label), and only that: a *different* thread gets
+/// a different directory, which keeps two tests apart. So never hand a
+/// `thread_dir` path to anything that outlives the test's thread, and never
+/// expect a spawned thread to resolve the same path — a test that needs one
+/// directory across threads wants a [`ScratchDir`] it passes by path.
+pub(crate) fn thread_dir(label: &str) -> PathBuf {
+    OWNED.with(|owned| {
+        let mut dirs = owned.borrow_mut();
+        if let Some((_, dir)) = dirs.iter().find(|(known, _)| known == label) {
+            return dir.path().to_path_buf();
+        }
+        let dir = ScratchDir::new(label);
+        let path = dir.path().to_path_buf();
+        dirs.push((label.to_owned(), dir));
+        path
+    })
 }
 
 #[cfg(test)]
@@ -107,12 +199,76 @@ mod tests {
     }
 
     #[test]
-    fn the_tree_goes_when_the_value_does() {
+    fn a_scratch_directory_is_gone_once_it_is_dropped() {
         let path = {
-            let dir = ScratchDir::new("removed-on-drop");
-            std::fs::write(dir.join("file.txt"), "content").expect("the file is writable");
-            dir.path().to_path_buf()
+            let scratch = ScratchDir::new("removed-on-drop");
+            scratch.write("nested/file.toml", "content");
+            assert!(scratch.path().exists(), "the directory was created");
+            scratch.path().to_path_buf()
         };
         assert!(!path.exists(), "the tree went with the value: {path:?}");
+    }
+
+    #[test]
+    fn a_scratch_path_opens_with_the_mounting_package_name() {
+        let scratch = ScratchDir::new("prefix");
+        let name = scratch.path().file_name().expect("a directory name");
+        let name = name.to_string_lossy();
+        assert!(
+            name.starts_with(&format!("{}-{}-", env!("CARGO_PKG_NAME"), run_token())),
+            "the folder names its crate and run: {name}"
+        );
+    }
+
+    #[test]
+    fn the_run_token_carries_the_pid_and_is_stable_within_a_process() {
+        let token = run_token();
+        assert!(
+            token.starts_with(&format!("{}-", std::process::id())),
+            "the token opens with this process's id: {token}"
+        );
+        assert_eq!(token, run_token(), "the token is read once, not per call");
+    }
+
+    #[test]
+    fn a_scratch_file_goes_with_its_directory() {
+        let path = {
+            let file = ScratchFile::new("file-drop", "state.toml");
+            fs::write(&file, "x").expect("the scratch file is writable");
+            assert!(file.path().exists(), "the file was written");
+            file.path().to_path_buf()
+        };
+        assert!(!path.exists(), "the file went with its directory: {path:?}");
+    }
+
+    #[test]
+    fn a_thread_directory_answers_the_same_path_twice() {
+        let first = thread_dir("stable-label");
+        let second = thread_dir("stable-label");
+        assert_eq!(first, second);
+        assert!(first.exists(), "it was created");
+    }
+
+    #[test]
+    fn another_thread_gets_its_own_directory_for_the_same_label() {
+        let here = thread_dir("shared-label");
+        let there = std::thread::spawn(|| thread_dir("shared-label"))
+            .join()
+            .expect("the thread finished");
+        assert_ne!(
+            here, there,
+            "two threads must not resolve one directory for one label"
+        );
+    }
+
+    #[test]
+    fn a_thread_directory_goes_when_its_thread_ends() {
+        let path = std::thread::spawn(|| thread_dir("ends-with-the-thread"))
+            .join()
+            .expect("the thread finished");
+        assert!(
+            !path.exists(),
+            "the thread's own directory went with it: {path:?}"
+        );
     }
 }

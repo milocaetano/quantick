@@ -430,7 +430,7 @@ fn read_head(path: &Path) -> std::io::Result<String> {
 mod tests {
     use super::*;
 
-    use crate::scratch::Scratch;
+    use crate::scratch::ScratchDir;
 
     const GOOD: &str = "\
 # quantick-replay 1
@@ -442,7 +442,7 @@ Date,Time,Price,Bid,Ask,Volume,Side
 
     #[test]
     fn finds_sessions_in_instrument_sub_folders() {
-        let scratch = Scratch::new("subfolders");
+        let scratch = ScratchDir::new("subfolders");
         scratch.write("WINJ26/20260316.csv", GOOD);
         scratch.write("WINJ26/20260317.csv", GOOD);
 
@@ -457,7 +457,7 @@ Date,Time,Price,Bid,Ask,Volume,Side
 
     #[test]
     fn finds_flat_files_named_symbol_date() {
-        let scratch = Scratch::new("flat");
+        let scratch = ScratchDir::new("flat");
         scratch.write("WINJ26-20260316.csv", GOOD);
 
         let library = scan(scratch.path());
@@ -467,7 +467,7 @@ Date,Time,Price,Bid,Ask,Volume,Side
 
     #[test]
     fn sessions_are_listed_in_a_stable_order() {
-        let scratch = Scratch::new("order");
+        let scratch = ScratchDir::new("order");
         scratch.write("WDO/20260317.csv", GOOD);
         scratch.write("WDO/20260316.csv", GOOD);
         scratch.write("WINJ26/20260316.csv", GOOD);
@@ -496,7 +496,7 @@ Date,Time,Price,Bid,Ask,Volume,Side
 
     #[test]
     fn an_empty_folder_says_what_it_expected() {
-        let scratch = Scratch::new("empty");
+        let scratch = ScratchDir::new("empty");
         let library = scan(scratch.path());
         assert_eq!(library.problems[0].kind, ProblemKind::NoSessions);
         assert!(library.problems[0].advice().contains(".csv"));
@@ -504,7 +504,7 @@ Date,Time,Price,Bid,Ask,Volume,Side
 
     #[test]
     fn raw_recordings_point_at_the_importer() {
-        let scratch = Scratch::new("ndjson");
+        let scratch = ScratchDir::new("ndjson");
         scratch.write(
             "mt5_orderflow_20260316.ndjson",
             "{\"event_type\":\"tick\"}\n",
@@ -523,7 +523,7 @@ Date,Time,Price,Bid,Ask,Volume,Side
 
     #[test]
     fn a_context_file_is_neither_a_session_nor_a_complaint() {
-        let scratch = Scratch::new("context-passed-over");
+        let scratch = ScratchDir::new("context-passed-over");
         scratch.write("WINQ26/20260316.csv", GOOD);
         scratch.write(
             "WINQ26/20260316.context.csv",
@@ -547,9 +547,9 @@ Date,Time,Price,Bid,Ask,Volume,Side
     /// run-up was never written says so until the run-up is there.
     #[test]
     fn a_session_knows_whether_its_run_up_sits_beside_it() {
-        let scratch = Scratch::new("run-up-beside");
+        let scratch = ScratchDir::new("run-up-beside");
         scratch.write("WINQ26/20260316.csv", GOOD);
-        let has_context = |scratch: &Scratch| scan(scratch.path()).sessions[0].has_context;
+        let has_context = |scratch: &ScratchDir| scan(scratch.path()).sessions[0].has_context;
         assert!(!has_context(&scratch), "a tape alone");
         scratch.write(
             "WINQ26/20260316.context.csv",
@@ -560,7 +560,7 @@ Date,Time,Price,Bid,Ask,Volume,Side
 
     #[test]
     fn a_malformed_csv_is_reported_with_its_reason() {
-        let scratch = Scratch::new("malformed");
+        let scratch = ScratchDir::new("malformed");
         scratch.write("WINJ26/20260316.csv", "Date,Time,Price,Volume\n1,2,3,4\n");
 
         let library = scan(scratch.path());
@@ -579,7 +579,7 @@ Date,Time,Price,Bid,Ask,Volume,Side
 
     #[test]
     fn undeclared_timezone_and_unknown_day_come_back_as_notes() {
-        let scratch = Scratch::new("notes");
+        let scratch = ScratchDir::new("notes");
         scratch.write(
             "WINJ26/session-one.csv",
             "Date,Time,Price,Volume,Side,Note\n2026-03-16,10:00:00,1,1,B,x\n",
@@ -596,7 +596,7 @@ Date,Time,Price,Bid,Ask,Volume,Side
 
     #[test]
     fn the_scan_does_not_descend_past_instrument_folders() {
-        let scratch = Scratch::new("depth");
+        let scratch = ScratchDir::new("depth");
         scratch.write("WINJ26/nested/deeper/20260316.csv", GOOD);
 
         let library = scan(scratch.path());

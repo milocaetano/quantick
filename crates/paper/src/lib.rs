@@ -41,6 +41,7 @@ pub mod state;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_broker;
 #[cfg(test)]
+#[path = "../../stores/src/scratch.rs"]
 mod scratch;
 
 pub use account::PaperAccount;

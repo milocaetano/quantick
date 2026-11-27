@@ -33,30 +33,15 @@ use std::path::Path;
 
 use crate::Finding;
 
-/// What a test-side path has to go through. Every entry is a module whose
-/// whole job is minting scratch paths that remove themselves; each carries
-/// its own run token, because a crate that cannot depend on another (the
-/// `guards` crate depends on nothing at all) cannot share one.
+/// What a test-side path has to go through: modules whose whole job is
+/// minting scratch paths that remove themselves. `crates/stores/src/scratch.rs`
+/// is the shared copy, which every other crate's tests mount with `#[path]`.
+/// `app` keeps its own because `extension_boundary` refuses `#[path]` modules
+/// under `crates/app/src`, and `guards` because it depends on nothing at all.
 const SCRATCH_MODULES: &[&str] = &[
     "crates/app/src/scratch.rs",
-    // The paper account journals every close, so the harness test that
-    // drives one needs a folder of its own.
-    "crates/backtest/tests/common/mod.rs",
-    "crates/control-host/src/scratch.rs",
-    "crates/control-local/src/scratch.rs",
-    "crates/drawings/src/scratch.rs",
-    "crates/feed/src/scratch.rs",
     "crates/guards/src/scratch_dir.rs",
-    // `mcp` needs two: an integration test links the crate as a dependency
-    // and cannot see its `#[cfg(test)]` items, so the unit tests and the
-    // tests under `tests/` cannot share one module.
-    "crates/mcp/src/scratch.rs",
-    "crates/mcp/tests/common/mod.rs",
-    "crates/paper/src/scratch.rs",
-    "crates/replay/src/scratch.rs",
     "crates/stores/src/scratch.rs",
-    "crates/ui-model/src/scratch.rs",
-    "crates/strategy/src/scratch.rs",
 ];
 
 /// Files outside a scratch module that may still read the temporary

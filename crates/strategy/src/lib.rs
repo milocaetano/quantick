@@ -73,6 +73,7 @@ pub mod presets;
 mod region;
 pub mod runner;
 #[cfg(test)]
+#[path = "../../stores/src/scratch.rs"]
 mod scratch;
 pub mod script;
 mod signal_action;
