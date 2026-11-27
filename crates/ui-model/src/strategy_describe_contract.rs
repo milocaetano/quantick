@@ -121,10 +121,10 @@ impl From<Status> for wire::Status {
                     close_time: marker.close_time,
                     side: match marker.side {
                         quantick_engine::Side::Buy => {
-                            quantick_control_handlers::wire::trade::ActionSide::Buy
+                            quantick_control_handlers::trade::ActionSide::Buy
                         }
                         quantick_engine::Side::Sell => {
-                            quantick_control_handlers::wire::trade::ActionSide::Sell
+                            quantick_control_handlers::trade::ActionSide::Sell
                         }
                     },
                 })

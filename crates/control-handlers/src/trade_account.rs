@@ -1,28 +1,123 @@
-//! The `trade.account.*` handlers: read the route, choose it, disarm it.
+//! The `trade.account.*` family: which account orders go to, as named calls.
 //!
-//! Every decision is the route's (`quantick_paper::route`); this module reads
-//! the caller's input, names the actor the route judges, turns a refusal into
-//! a coded error and journals who asked for what.
+//! The Trading panel's `Account` selector, said without a hand: read the
+//! route and the accounts the terminal reports, go back to the simulator,
+//! or ask for a broker route. Every decision is the route's
+//! (`quantick_paper::route`), and the two that matter most are enforced
+//! there, not here: no caller but the trader's own hand arms a broker
+//! account, and REAL arms only by holding its row. This module reads the
+//! caller's input, names the actor the route judges, turns a refusal into a
+//! coded error — its route code in `details.route_code` — and journals who
+//! asked for what.
 
-use crate::wire::trade_account::{
-    AccountDisarmInput, AccountReadInput, AccountRouteResult, AccountRowView, AccountSelectInput,
-    LeaveChoice, ROUTE_EVENT_KIND, RouteChoice, disarm_descriptor, read_route_descriptor,
-    select_descriptor,
-};
 use quantick_control::error::{ControlError, codes};
-use quantick_control::registry::RegistryError;
+use quantick_control::registry::{CapabilityDescriptor, IdempotencyPolicy, RegistryError};
 use quantick_control::wire::{ActorContext, ActorKind};
+use quantick_control_host::actions::ReplayTrace;
 use quantick_control_host::admission::known_error;
-use quantick_control_host::authority::TRADE_MODULE_ID;
+use quantick_control_host::authority::{ReadSpec, TRADE_MODULE_ID, read_descriptor};
 use quantick_control_host::journal::NewEvent;
 use quantick_paper::route::{
     Actor, Leave, Refusal, Route, RouteRead, RouteRequest, RowGesture, RowState,
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::JournalAccess;
+use crate::call::{Call, CallCx, CallSpec, dock_call};
 use crate::dock::ActionDock;
-use crate::trade::{PaperHost, PaperOwner};
+use crate::trade::{PaperHost, PaperOwner, TRADE_PERMISSION_ID, descriptor};
+use crate::wire::readback::{Readback, TRADE_UNREACHABLE_TEST, journal};
+use IdempotencyPolicy::Optional;
+
+pub const READ_CAPABILITY_ID: &str = "trade.account.read";
+
+pub const SELECT_CAPABILITY_ID: &str = "trade.account.select";
+
+pub const DISARM_CAPABILITY_ID: &str = "trade.account.disarm";
+
+/// What a route change journals under, accepted or refused.
+pub const ROUTE_EVENT_KIND: &str = "trade.account.routed";
+
+/// Reads take nothing.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AccountReadInput {}
+
+/// How to leave a broker route that still holds a position or orders.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LeaveChoice {
+    /// Close the position and cancel the orders at the broker first.
+    FlattenFirst,
+    /// Leave them at the broker; their plates stay on the chart.
+    LeaveAtBroker,
+}
+
+/// Where orders go.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteChoice {
+    /// The paper simulator, filling from the tape.
+    Sim,
+    /// The broker account the terminal reports as demo.
+    Demo,
+    /// The broker account the terminal reports as real money; arms only by
+    /// holding its row in the Trading panel.
+    Real,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AccountSelectInput {
+    pub route: RouteChoice,
+    /// Required to leave a broker route with exposure open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leave: Option<LeaveChoice>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AccountDisarmInput {
+    /// Required to leave a broker route with exposure open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leave: Option<LeaveChoice>,
+}
+
+/// One row of the account list, as the panel shows it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AccountRowView {
+    pub title: String,
+    /// `in use`, `one click`, `hold`, or empty when the row is off.
+    pub hint: String,
+    /// `selected`, `enabled` or `off`.
+    pub state: String,
+    /// `click`, `hold` or `none`: what the panel's press does.
+    pub gesture: String,
+    pub details: Vec<String>,
+}
+
+/// The route and everything the panel says about it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AccountRouteResult {
+    /// `sim`, `demo` or `real`.
+    pub route: String,
+    /// Where orders go, in the toolbar notice's words.
+    pub orders_to: String,
+    /// The Trading panel's title.
+    pub title: String,
+    /// Whether broker routes are offered at all (`[broker.metatrader]`).
+    pub broker_enabled: bool,
+    /// The chart's source cannot route: the selector stays on the simulator.
+    pub locked: bool,
+    pub accounts: Vec<AccountRowView>,
+    /// Why the broker row is off, when it is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer: Option<String>,
+    /// A leave with exposure waits for `leave`.
+    pub leave_pending: bool,
+}
 
 /// The route's judge of a caller: the trader's own hand, or anything else.
 #[must_use]
@@ -111,38 +206,21 @@ fn current(paper: &mut dyn PaperOwner) -> Result<AccountRouteResult, ControlErro
     })
 }
 
-fn to_value(result: &AccountRouteResult) -> Result<Value, ControlError> {
-    serde_json::to_value(result)
-        .map_err(|error| ControlError::invalid_request(format!("account route: {error}")))
-}
-
-fn read<H: PaperHost + ?Sized, A: JournalAccess>(
+/// Ask the route for `request`, journal the answer, accepted or refused, and
+/// reply with the route now in force.
+fn route_to<H: PaperHost + ?Sized, A: JournalAccess>(
     host: &mut H,
-    _access: &mut A,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
+    cx: &mut CallCx<'_, A>,
+    request: RouteRequest,
+    asked: &impl Serialize,
+) -> Result<AccountRouteResult, ControlError> {
     let mut owner = host.paper();
     let paper = &mut *owner;
-    let _: AccountReadInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    to_value(&current(paper)?)
-}
-
-/// Ask the route for `request`, journal the answer, and reply with the
-/// route now in force.
-fn route_to<A: JournalAccess>(
-    paper: &mut dyn PaperOwner,
-    access: &mut A,
-    actor: &ActorContext,
-    request: RouteRequest,
-    asked: Value,
-) -> Result<Value, ControlError> {
     let answer = paper.request_route(request);
-    access.record_event(NewEvent::by(
+    cx.access.record_event(NewEvent::by(
         TRADE_MODULE_ID,
         ROUTE_EVENT_KIND,
-        actor,
+        cx.actor,
         json!({
             "asked": asked,
             "accepted": answer.is_ok(),
@@ -151,60 +229,162 @@ fn route_to<A: JournalAccess>(
         }),
     ));
     answer.map_err(refusal_error)?;
-    to_value(&current(paper)?)
+    current(paper)
 }
 
-fn select<H: PaperHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let mut owner = host.paper();
-    let paper = &mut *owner;
-    let asked = input.clone();
-    let input: AccountSelectInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let request = RouteRequest::new(
-        route_of(input.route),
-        actor_of(actor),
-        leave_of(input.leave),
-    );
-    route_to(paper, access, actor, request, asked)
+/// A route change's posture: the trade family's, retryable because asking
+/// for the route in force changes nothing.
+fn route_posture(
+    spec: &CallSpec,
+    risk_reducing: bool,
+    stale_input_safety: &str,
+) -> CapabilityDescriptor {
+    CapabilityDescriptor {
+        idempotency: IdempotencyPolicy::Optional,
+        ..descriptor(
+            spec.id,
+            spec.title,
+            spec.description,
+            Value::Null,
+            risk_reducing,
+            stale_input_safety,
+        )
+    }
 }
 
-fn disarm<H: PaperHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let mut owner = host.paper();
-    let paper = &mut *owner;
-    let asked = input.clone();
-    let input: AccountDisarmInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    route_to(
-        paper,
-        access,
-        actor,
-        RouteRequest::new(Route::Sim, actor_of(actor), leave_of(input.leave)),
-        asked,
-    )
+impl<H: PaperHost + ?Sized> Call<H> for AccountReadInput {
+    type Answer = AccountRouteResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: READ_CAPABILITY_ID,
+        module: TRADE_MODULE_ID,
+        title: "Read where orders go",
+        description: "Reads the account route - the simulator, or the broker account the MetaTrader terminal is logged into, demo or real - with the account list the Trading panel shows, each row's facts and why a row is off. Changes nothing.",
+        permissions: &["observe", "observe.paper"],
+        event: None,
+        replay: ReplayTrace::Recorded,
+        posture: |spec| {
+            read_descriptor::<AccountReadInput, AccountRouteResult>(&ReadSpec {
+                id: spec.id,
+                module: spec.module,
+                title: spec.title,
+                description: spec.description,
+                permissions: spec.permissions,
+                pagination: None,
+            })
+        },
+    };
+
+    fn run<A: JournalAccess>(
+        self,
+        host: &mut H,
+        _cx: &mut CallCx<'_, A>,
+    ) -> Result<AccountRouteResult, ControlError> {
+        current(&mut *host.paper())
+    }
+}
+
+impl<H: PaperHost + ?Sized> Call<H> for AccountSelectInput {
+    type Answer = AccountRouteResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: SELECT_CAPABILITY_ID,
+        module: TRADE_MODULE_ID,
+        title: "Choose where orders go",
+        description: "Routes orders to the simulator, or asks for the broker's DEMO account. Only the trader's own hand arms a broker account: any other caller is refused (`route.agent_cannot_arm`), and a REAL account arms only by holding its row in the Trading panel (`route.real_needs_hold`). Leaving a broker route with a position or orders open needs `leave`.",
+        permissions: &[TRADE_PERMISSION_ID],
+        // Journaled by `route_to`, refusals included.
+        event: None,
+        replay: ReplayTrace::Recorded,
+        posture: |spec| {
+            route_posture(
+                spec,
+                false,
+                "The call answers with the route now in force. Asking for the route already in force changes nothing, so a retried call is harmless.",
+            )
+        },
+    };
+
+    fn run<A: JournalAccess>(
+        self,
+        host: &mut H,
+        cx: &mut CallCx<'_, A>,
+    ) -> Result<AccountRouteResult, ControlError> {
+        let request = RouteRequest::new(
+            route_of(self.route),
+            actor_of(cx.actor),
+            leave_of(self.leave),
+        );
+        route_to(host, cx, request, &self)
+    }
+}
+
+impl<H: PaperHost + ?Sized> Call<H> for AccountDisarmInput {
+    type Answer = AccountRouteResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: DISARM_CAPABILITY_ID,
+        module: TRADE_MODULE_ID,
+        title: "Go back to the simulator",
+        description: "Disarms any broker route: orders go to the simulator from now on. Risk-reducing. With a position or orders open at the broker, `leave` says whether to flatten them first or leave them there, their plates staying on the chart.",
+        permissions: &[TRADE_PERMISSION_ID],
+        // Journaled by `route_to`, refusals included.
+        event: None,
+        replay: ReplayTrace::Recorded,
+        posture: |spec| {
+            route_posture(
+                spec,
+                true,
+                "Disarming an unarmed account changes nothing, so a retried call is harmless.",
+            )
+        },
+    };
+
+    fn run<A: JournalAccess>(
+        self,
+        host: &mut H,
+        cx: &mut CallCx<'_, A>,
+    ) -> Result<AccountRouteResult, ControlError> {
+        let request = RouteRequest::new(Route::Sim, actor_of(cx.actor), leave_of(self.leave));
+        route_to(host, cx, request, &self)
+    }
 }
 
 /// Dock the family beside the trade calls.
+///
+/// # Errors
+///
+/// A capability is already docked.
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
     H: PaperHost + ?Sized,
     A: JournalAccess,
 {
-    registry.register(read_route_descriptor(), read::<H, A>)?;
-    registry.register(select_descriptor(), select::<H, A>)?;
-    registry.register(disarm_descriptor(), disarm::<H, A>)?;
-    Ok(())
+    dock_call::<AccountReadInput, _, _, _>(registry)?;
+    dock_call::<AccountSelectInput, _, _, _>(registry)?;
+    dock_call::<AccountDisarmInput, _, _, _>(registry)
 }
+
+/// How a client reconciles an interrupted route change.
+pub const READBACKS: &[Readback] = &[
+    journal(
+        DISARM_CAPABILITY_ID,
+        Optional,
+        ROUTE_EVENT_KIND,
+        "payload.route",
+        "an event after the pre-call cursor names `sim` as the route",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    journal(
+        SELECT_CAPABILITY_ID,
+        Optional,
+        ROUTE_EVENT_KIND,
+        "payload.route",
+        "an event after the pre-call cursor names the route asked for",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+];
 
 #[cfg(test)]
 #[path = "trade_account_tests.rs"]

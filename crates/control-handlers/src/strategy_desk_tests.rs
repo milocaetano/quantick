@@ -267,7 +267,7 @@ fn script_action_set_reads_back_through_list() {
     let mut access = FakeAccess::default();
     arm_steady(&mut window, FLOW);
     let (window, access) = (&mut window, &mut access);
-    let set = action_set::<Window, FakeAccess>;
+    let set = crate::call::handler::<ActionSetInput, Window, FakeAccess>();
     let list = crate::script_strategy::list::<Window, FakeAccess>;
 
     let order =

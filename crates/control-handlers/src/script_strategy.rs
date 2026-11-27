@@ -14,7 +14,7 @@ use crate::wire::script_strategy::{
     DisarmInput, DisarmResult, FireAction, LibraryListing, ListInput, ListResult, Placement,
     ScriptStrategy, ScriptStrategyState, TICKET_QUANTITY,
 };
-use crate::wire::trade::ActionSide;
+use quantick_trading::ActionSide;
 use quantick_chart::pane_series::PaneSeriesRead;
 use quantick_control::error::ControlError;
 use quantick_control::registry::RegistryError;

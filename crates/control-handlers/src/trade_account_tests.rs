@@ -1,5 +1,4 @@
-use crate::wire::trade::PLACE_CAPABILITY_ID;
-use crate::wire::trade_account::{DISARM_CAPABILITY_ID, READ_CAPABILITY_ID, SELECT_CAPABILITY_ID};
+use crate::trade::PLACE_CAPABILITY_ID;
 use quantick_control::error::codes;
 use quantick_paper::route::{AccountRoute, RouteFacts};
 use serde_json::json;
@@ -11,6 +10,16 @@ use quantick_paper::report::session_edit::{
     JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
 };
 use quantick_session::paper::SharedChange;
+
+/// Run call `C` on `window` exactly as the docked capability runs it.
+fn call<C: crate::call::Call<H>, H>(
+    window: &mut H,
+    access: &mut FakeAccess,
+    actor: &quantick_control::wire::ActorContext,
+    input: &serde_json::Value,
+) -> Result<serde_json::Value, quantick_control::error::ControlError> {
+    crate::call::handler::<C, H, FakeAccess>()(window, access, actor, input)
+}
 
 /// A window whose route the calls drive, with a terminal logged into a demo
 /// account and no chart: every rule is the route's, so no desk is needed.
@@ -108,7 +117,7 @@ fn the_account_calls_register_read_and_write() {
 fn an_agent_is_refused_arming_with_a_code_and_the_refusal_is_journaled() {
     let mut window = RouteWindow::demo();
     let mut access = FakeAccess::with_budget(0);
-    let refused = select(
+    let refused = call::<AccountSelectInput, _>(
         &mut window,
         &mut access,
         &FakeWindow::assistant(),
@@ -125,7 +134,7 @@ fn an_agent_is_refused_arming_with_a_code_and_the_refusal_is_journaled() {
 fn real_is_refused_to_every_named_call_and_demo_reaches_the_trader() {
     let mut window = RouteWindow::demo();
     let mut access = FakeAccess::with_budget(0);
-    let refused = select(
+    let refused = call::<AccountSelectInput, _>(
         &mut window,
         &mut access,
         &FakeWindow::trader(),
@@ -133,7 +142,7 @@ fn real_is_refused_to_every_named_call_and_demo_reaches_the_trader() {
     )
     .expect_err("REAL needs the hold");
     assert_eq!(route_code(&refused), Some("route.real_needs_hold"));
-    let armed = select(
+    let armed = call::<AccountSelectInput, _>(
         &mut window,
         &mut access,
         &FakeWindow::trader(),
@@ -148,7 +157,7 @@ fn an_agent_may_disarm_and_its_broker_orders_are_refused_before_the_desk() {
     let mut window = RouteWindow::demo();
     let mut access = FakeAccess::with_budget(0);
     let trader = FakeWindow::trader();
-    select(
+    call::<AccountSelectInput, _>(
         &mut window,
         &mut access,
         &trader,
@@ -169,7 +178,7 @@ fn an_agent_may_disarm_and_its_broker_orders_are_refused_before_the_desk() {
     .expect_err("allow_agent_orders is off");
     assert_eq!(route_code(&refused), Some("route.agent_orders_off"));
 
-    let disarmed = disarm(
+    let disarmed = call::<AccountDisarmInput, _>(
         &mut window,
         &mut access,
         &FakeWindow::assistant(),
@@ -183,7 +192,7 @@ fn an_agent_may_disarm_and_its_broker_orders_are_refused_before_the_desk() {
 fn an_unknown_route_is_an_invalid_request() {
     let mut window = RouteWindow::demo();
     let mut access = FakeAccess::with_budget(0);
-    let refused = select(
+    let refused = call::<AccountSelectInput, _>(
         &mut window,
         &mut access,
         &FakeWindow::trader(),
@@ -254,10 +263,11 @@ fn the_calls_reach_the_route_session_through_its_call() {
     let mut window = SessionWindow(quantick_paper::route::BrokerSession::default());
     let mut access = FakeAccess::with_budget(0);
     let trader = FakeWindow::trader();
-    let now = read(&mut window, &mut access, &trader, &json!({})).expect("the read answers");
+    let now = call::<AccountReadInput, _>(&mut window, &mut access, &trader, &json!({}))
+        .expect("the read answers");
     assert_eq!(now["route"], "sim");
     assert_eq!(now["broker_enabled"], false);
-    let refused = select(
+    let refused = call::<AccountSelectInput, _>(
         &mut window,
         &mut access,
         &trader,
@@ -277,7 +287,7 @@ fn a_reconnecting_route_refuses_every_broker_order() {
     let mut window = RouteWindow::demo();
     window.allow_agent_orders = true;
     let mut access = FakeAccess::with_budget(0);
-    select(
+    call::<AccountSelectInput, _>(
         &mut window,
         &mut access,
         &FakeWindow::trader(),

@@ -2,13 +2,14 @@
 //! declared rows.
 //!
 //! Row order is the registry's, not the table's: the renderer walks the
-//! registered capabilities and asks [`crate::wire::retry_matrix::readback`] for each one's
+//! registered capabilities and asks [`super::readback`] for each one's
 //! row, so which family declared a row cannot move a line of the document.
 
 use super::drift::read_needs;
 
 use crate::wire::readback::Readback;
-use crate::wire::retry_matrix::{GENERATED_MARKER, Holder, holder, readback};
+use super::readback;
+use crate::wire::retry_matrix::{GENERATED_MARKER, Holder, holder};
 use quantick_control::registry::{CapabilityDescriptor, IdempotencyPolicy};
 use quantick_control_host::contract::CapabilityContract;
 

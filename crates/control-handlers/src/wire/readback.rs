@@ -1,7 +1,7 @@
 //! The shape of a readback row, and the two reads a row can name.
 //!
 //! A family module declares its own rows beside the capabilities they
-//! reconcile, and [`crate::wire::retry_matrix`] joins them. The row type lives here
+//! reconcile, and `crate::retry_matrix` joins them. The row type lives here
 //! rather than there so a family does not import the matrix that imports it:
 //! `crates/guards/src/cycle.rs` states why a module cycle is worth one small
 //! module.
@@ -9,6 +9,12 @@
 use quantick_control::registry::IdempotencyPolicy;
 use quantick_control_host::authority::SNAPSHOT_CAPABILITY_ID;
 use quantick_control_host::events::READ_CAPABILITY_ID as EVENTS_READ_CAPABILITY_ID;
+
+/// The transport test proving no production grant reaches a trade-tier
+/// capability: the proof every `trade.*` row and `strategy.script.action.set`
+/// cite, here because both a handler family and a wire family name it.
+pub const TRADE_UNREACHABLE_TEST: &str =
+    "no_production_grant_reaches_a_trade_capability_keyed_or_not";
 
 /// One mutable capability, and how a client reconciles a call to it whose
 /// answer it never saw.

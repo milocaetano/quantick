@@ -12,11 +12,13 @@ use crate::wire::strategy_desk::{
     self as wire, ActionSetInput, AssetInput, CHANGED_EVENT_KIND, CommandResult, DeclaredInput,
     DetailResult, FireAction, InstanceId, InstanceInput, Link, ListInput, ListResult, SaveAsInput,
 };
-use crate::wire::trade::ActionSide;
+use quantick_trading::ActionSide;
 use quantick_chart::pane_series::PaneSeriesRead;
 use quantick_chart::state::dec_from_f64;
 use quantick_control::error::ControlError;
-use quantick_control::registry::RegistryError;
+use quantick_control::registry::{CapabilityDescriptor, IdempotencyPolicy, RegistryError};
+use quantick_control_host::actions::ReplayTrace;
+use quantick_control_host::authority::TRADE_PERMISSION_ID;
 use quantick_control::wire::{ActorContext, WireU64};
 use quantick_control_host::authority::STRATEGY_MODULE_ID;
 use quantick_control_host::journal::NewEvent;
@@ -34,6 +36,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::JournalAccess;
+use crate::call::{Call, CallCx, CallSpec, dock_call};
 use crate::dock::ActionDock;
 use crate::invalid;
 use crate::market_tab::MarketTabHost;
@@ -92,7 +95,7 @@ where
     for (descriptor, handler) in wire::command_descriptors().into_iter().zip(handlers) {
         registry.register(descriptor, handler)?;
     }
-    registry.register(wire::action_set_descriptor(), action_set::<H, A>)
+    dock_call::<ActionSetInput, _, _, _>(registry)
 }
 
 /// Each chart of a lent tab with its bar type.
@@ -323,24 +326,49 @@ asset_command!(asset_resume, ResumeAsset);
 
 /// The trade tier's call, so it may turn a script into one that places
 /// paper orders.
-fn action_set<H: StrategyDeskHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: ActionSetInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    let action = signal_action(
-        input.action,
-        input.quantity.as_deref(),
-        input.stop.as_deref(),
-        input.gain.as_deref(),
-    )?;
-    let tab_id = host.tab_id_at(tab_index(host, input.tab_id)?);
-    let id = InstanceRef::Script(input.id.get());
-    let command = StrategyDeskCommand::SetAction { id, action };
-    let result = send(host, tab_id, command, TRADE_TIER_MAY_START_ORDERS)?;
-    journaled(access, actor, &result)
+/// `strategy.script.action.set`: the trade tier's, because it can make a
+/// script place paper orders — the desk's own calls never start orders.
+/// Setting the same action twice leaves the same action.
+impl<H: StrategyDeskHost + ?Sized> Call<H> for ActionSetInput {
+    type Answer = CommandResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: wire::ACTION_SET_CAPABILITY_ID,
+        module: STRATEGY_MODULE_ID,
+        title: "Set what a script strategy does when it fires",
+        description: "Sets what one armed script strategy does from its next close: `alarm` rings and places nothing; `order` places a paper market order of `quantity` (a size above zero in the instrument's units, or `ticket` for the ticket's quantity when the bar closes) with a stop `stop` and a target `gain` away from the entry, in price (absent or 0: no leg). A resting order or an open position keeps its course. A drawn strategy takes its action from its preset and is refused, as are an order with no quantity, a quantity of zero or less, a distance below zero, and quantity, stop or gain sent with `alarm`. strategy.script.list and strategy.desk.detail read it back. Journaled as strategy.desk.changed.",
+        permissions: &[TRADE_PERMISSION_ID],
+        event: Some(CHANGED_EVENT_KIND),
+        replay: ReplayTrace::Recorded,
+        posture: |spec| CapabilityDescriptor {
+            idempotency: IdempotencyPolicy::Optional,
+            ..crate::trade::descriptor(
+                spec.id,
+                spec.title,
+                spec.description,
+                Value::Null,
+                false,
+                "The instance is named by an id never reused in the tab's session, and the call states the whole action, so a repeat leaves the instance as the first call did; an id that has since been removed is refused.",
+            )
+        },
+    };
+
+    fn run<A: JournalAccess>(
+        self,
+        host: &mut H,
+        _cx: &mut CallCx<'_, A>,
+    ) -> Result<CommandResult, ControlError> {
+        let action = signal_action(
+            self.action,
+            self.quantity.as_deref(),
+            self.stop.as_deref(),
+            self.gain.as_deref(),
+        )?;
+        let tab_id = host.tab_id_at(tab_index(host, self.tab_id)?);
+        let id = InstanceRef::Script(self.id.get());
+        let command = StrategyDeskCommand::SetAction { id, action };
+        send(host, tab_id, command, TRADE_TIER_MAY_START_ORDERS)
+    }
 }
 
 /// `strategy.script.action.set` sits in the trade tier: the trader's own.

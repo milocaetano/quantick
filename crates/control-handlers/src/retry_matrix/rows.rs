@@ -4,11 +4,11 @@ use crate::wire::readback::{Readback, flatten, total};
 
 macro_rules! family_readbacks {
     ($args:tt $($family:ident {
-        schemas: $schemas:tt, catalog: $catalog:tt, readbacks: [$($readback:ident),*],
+        schemas: $schemas:tt, catalog: $catalog:tt, readbacks: [$($($readback:ident)::+),*],
         handlers: $handlers:tt, actions: $actions:tt
     })*) => {
         /// Order is irrelevant: the document is rendered in registry order.
-        pub const FAMILIES: &[&[Readback]] = &[$($(crate::wire::$readback::READBACKS,)*)*];
+        pub const FAMILIES: &[&[Readback]] = &[$($(crate::$($readback)::+::READBACKS,)*)*];
     };
 }
 
