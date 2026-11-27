@@ -30,14 +30,20 @@ fn marked() -> TabPaper {
     paper
 }
 
-fn command<C: TradeCall>(input: Value) -> Result<TradeCommand, String> {
-    serde_json::from_value::<C>(input)
-        .expect("the input decodes")
-        .command()
+fn command<C>(input: Value) -> Result<TradeCommand, String>
+where
+    C: serde::de::DeserializeOwned,
+    TradeCommand: TryFrom<C, Error = String>,
+{
+    TradeCommand::try_from(serde_json::from_value::<C>(input).expect("the input decodes"))
 }
 
 /// Run one call on `paper` and answer as the wire does.
-fn call<C: TradeCall>(paper: &mut TabPaper, input: Value) -> TradeResult {
+fn call<C>(paper: &mut TabPaper, input: Value) -> TradeResult
+where
+    C: serde::de::DeserializeOwned,
+    TradeCommand: TryFrom<C, Error = String>,
+{
     let outcome = paper.execute(command::<C>(input).expect("states an order"));
     assert_eq!(outcome.refusal, None, "the tab refused it");
     TradeResult::of(&paper.account, paper.ruler_ticks(), &outcome.events)

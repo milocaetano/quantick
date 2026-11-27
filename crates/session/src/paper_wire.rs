@@ -1,5 +1,5 @@
-//! The `trade.*` calls' own words: each call's input is a [`TradeCall`] that
-//! states one [`TradeCommand`], and every call answers with a
+//! The `trade.*` calls' own words: each call's input states one
+//! [`TradeCommand`] through `TryFrom`, and every call answers with a
 //! [`TradeResult`]. These are the wire: the control plane decodes the input,
 //! runs the command through [`super::TabPaper::execute`] like any other
 //! surface, and sends back the result as this module shapes it. Nothing
@@ -11,7 +11,6 @@ use quantick_sim::{Bracket, OrderId, OrderIntent, VenueEvent};
 use quantick_trading::{ActionEntryKind, ActionSide, EntryKind};
 use rust_decimal::Decimal;
 use schemars::JsonSchema;
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use super::TradeCommand;
@@ -30,19 +29,6 @@ pub const CANCEL_EVENT_KIND: &str = "trade.order.cancelled";
 pub const FLATTEN_EVENT_KIND: &str = "trade.position.flattened";
 
 pub const REVERSE_EVENT_KIND: &str = "trade.position.reversed";
-
-/// One named call's input: what it says, as the command a click would send.
-pub trait TradeCall: DeserializeOwned + JsonSchema {
-    /// What the call journals under.
-    const EVENT_KIND: &'static str;
-
-    /// The command the input states.
-    ///
-    /// # Errors
-    ///
-    /// Why the input states no order, in words a caller can correct.
-    fn command(self) -> Result<TradeCommand, String>;
-}
 
 /// Prices arrive as strings, not as JSON numbers.
 ///
@@ -89,16 +75,17 @@ pub struct PlaceInput {
     pub take_profit: Option<String>,
 }
 
-impl TradeCall for PlaceInput {
-    const EVENT_KIND: &'static str = PLACE_EVENT_KIND;
+/// The armed bracket, the risk per trade and the ruler stay the tab's
+/// decisions, made where a click makes them; this only states the order. An
+/// error names why the input states no order, in words a caller can correct.
+impl TryFrom<PlaceInput> for TradeCommand {
+    type Error = String;
 
-    /// The armed bracket, the risk per trade and the ruler stay the tab's
-    /// decisions, made where a click makes them; this only states the order.
-    fn command(self) -> Result<TradeCommand, String> {
-        let quantity = decimal("quantity", &self.quantity)?;
-        let side = self.side.into_engine();
-        let price = optional("price", self.price.as_deref())?;
-        let intent = match (self.kind.into_engine(), price) {
+    fn try_from(input: PlaceInput) -> Result<Self, String> {
+        let quantity = decimal("quantity", &input.quantity)?;
+        let side = input.side.into_engine();
+        let price = optional("price", input.price.as_deref())?;
+        let intent = match (input.kind.into_engine(), price) {
             (EntryKind::Market, None) => OrderIntent::market(side, quantity),
             (EntryKind::Limit, Some(price)) => OrderIntent::limit(side, quantity, price),
             (EntryKind::Stop, Some(trigger)) => OrderIntent::stop(side, quantity, trigger),
@@ -112,8 +99,8 @@ impl TradeCall for PlaceInput {
                 return Err("a limit or stop needs the price it rests at".to_owned());
             }
         };
-        let named = bracket(self.stop_loss.as_deref(), self.take_profit.as_deref())?;
-        Ok(TradeCommand::Place {
+        let named = bracket(input.stop_loss.as_deref(), input.take_profit.as_deref())?;
+        Ok(Self::Place {
             intent: Box::new(intent.with_bracket(named)),
         })
     }
@@ -134,15 +121,15 @@ pub struct BracketInput {
     pub take_profit: Option<String>,
 }
 
-impl TradeCall for BracketInput {
-    const EVENT_KIND: &'static str = BRACKET_EVENT_KIND;
+impl TryFrom<BracketInput> for TradeCommand {
+    type Error = String;
 
-    fn command(self) -> Result<TradeCommand, String> {
-        Ok(TradeCommand::Amend {
-            id: OrderId(self.order_id),
+    fn try_from(input: BracketInput) -> Result<Self, String> {
+        Ok(Self::Amend {
+            id: OrderId(input.order_id),
             bracket: Box::new(bracket(
-                self.stop_loss.as_deref(),
-                self.take_profit.as_deref(),
+                input.stop_loss.as_deref(),
+                input.take_profit.as_deref(),
             )?),
         })
     }
@@ -154,12 +141,12 @@ pub struct CancelInput {
     pub order_id: u64,
 }
 
-impl TradeCall for CancelInput {
-    const EVENT_KIND: &'static str = CANCEL_EVENT_KIND;
+impl TryFrom<CancelInput> for TradeCommand {
+    type Error = String;
 
-    fn command(self) -> Result<TradeCommand, String> {
-        Ok(TradeCommand::Cancel {
-            id: OrderId(self.order_id),
+    fn try_from(input: CancelInput) -> Result<Self, String> {
+        Ok(Self::Cancel {
+            id: OrderId(input.order_id),
         })
     }
 }
@@ -170,11 +157,11 @@ impl TradeCall for CancelInput {
 #[schemars(rename = "PositionInput")]
 pub struct FlattenInput {}
 
-impl TradeCall for FlattenInput {
-    const EVENT_KIND: &'static str = FLATTEN_EVENT_KIND;
+impl TryFrom<FlattenInput> for TradeCommand {
+    type Error = String;
 
-    fn command(self) -> Result<TradeCommand, String> {
-        Ok(TradeCommand::Flatten)
+    fn try_from(_: FlattenInput) -> Result<Self, String> {
+        Ok(Self::Flatten)
     }
 }
 
@@ -184,13 +171,13 @@ impl TradeCall for FlattenInput {
 #[schemars(rename = "PositionInput")]
 pub struct ReverseInput {}
 
-impl TradeCall for ReverseInput {
-    const EVENT_KIND: &'static str = REVERSE_EVENT_KIND;
+/// Refused while flat, by the tab, because a reversal of nothing is a caller
+/// working from a stale read.
+impl TryFrom<ReverseInput> for TradeCommand {
+    type Error = String;
 
-    /// Refused while flat, by the tab, because a reversal of nothing is a
-    /// caller working from a stale read.
-    fn command(self) -> Result<TradeCommand, String> {
-        Ok(TradeCommand::Reverse)
+    fn try_from(_: ReverseInput) -> Result<Self, String> {
+        Ok(Self::Reverse)
     }
 }
 

@@ -83,13 +83,7 @@ pub const REVERSE_CAPABILITY_ID: &str = "trade.position.reverse";
 /// The order vocabulary the trade calls state, from its owner.
 pub use quantick_trading::{ActionEntryKind, ActionSide};
 
-/// Each call's input and the one result are the paper desk's own types: the
-/// owner's words are the wire.
-pub use quantick_session::paper::{
-    BRACKET_EVENT_KIND, BracketInput, CANCEL_EVENT_KIND, CancelInput, FLATTEN_EVENT_KIND,
-    FlattenInput, PLACE_EVENT_KIND, PlaceInput, REVERSE_EVENT_KIND, ReverseInput, TradeCall,
-    TradeResult, WorkingOrderView,
-};
+use quantick_session::paper::TradeResult;
 
 /// The refusal every action gives when there is no chart to trade on.
 ///
@@ -168,61 +162,6 @@ pub fn descriptor(
         },
         pagination: None,
     }
-}
-
-pub fn place_descriptor() -> CapabilityDescriptor {
-    descriptor(
-        PLACE_CAPABILITY_ID,
-        "Place a simulated order",
-        "Places one market, limit or stop order on the charted symbol, optionally with the protective stop and target that arm when it fills. The kind is stated, never inferred from where the market happens to be - a kind that cannot rest at the given price is refused with the reason, in the venue's own words.",
-        generated_schema::<PlaceInput>(),
-        false,
-        "Every price is judged against the market at the moment the order lands, not at the moment it was written: a limit that would fill at once, or a stop that would trigger at once, is refused with the reason. A caller working from a stale chart can therefore place an order at a level that has gone stale, but never one the venue would not have accepted from a caller reading the live tape.",
-    )
-}
-
-pub fn bracket_descriptor() -> CapabilityDescriptor {
-    descriptor(
-        BRACKET_CAPABILITY_ID,
-        "Set a working order's protective prices",
-        "Replaces the stop and target riding a working order, which arm the moment it fills. Both legs are replaced wholesale: an absent leg is a cleared leg, exactly as dragging one off the chart clears it. The levels are judged against the order's own resting price, not the market.",
-        generated_schema::<BracketInput>(),
-        false,
-        "The order is named by id, and ids are never reused. A stale caller amends the order it meant or nothing at all - an id that has since filled or been cancelled is reported as unknown rather than resolved to whatever is working now.",
-    )
-}
-
-pub fn cancel_descriptor() -> CapabilityDescriptor {
-    descriptor(
-        CANCEL_CAPABILITY_ID,
-        "Cancel a working order",
-        "Removes one working order without trading. Risk-reducing: it can only ever take exposure off, never add any. Re-placing the same order afterwards is a new order at the back of the queue.",
-        generated_schema::<CancelInput>(),
-        true,
-        "The order is named by id, and ids are never reused, so a stale cancel removes the order it meant or reports that there is no such order. It can never cancel a different one that happens to be working now.",
-    )
-}
-
-pub fn flatten_descriptor() -> CapabilityDescriptor {
-    descriptor(
-        FLATTEN_CAPABILITY_ID,
-        "Go flat: close the position and cancel every working order",
-        "Exits the open position at the next print and removes every working order, in one call, so the account is never half-flat between two calls. Risk-reducing: it only ever takes exposure off. Flat with nothing working, it changes nothing.",
-        generated_schema::<FlattenInput>(),
-        true,
-        "Names no order and no size: it flattens whatever the account holds when it lands, so a caller working from a stale read still ends flat.",
-    )
-}
-
-pub fn reverse_descriptor() -> CapabilityDescriptor {
-    descriptor(
-        REVERSE_CAPABILITY_ID,
-        "Reverse the simulated position",
-        "Flips the open position in one market order for twice its size, protected by the ticket's offsets for the new side. The opening leg is measured by the risk per trade like any entry and refused with its sentence. Refused while flat: there is nothing to reverse.",
-        generated_schema::<ReverseInput>(),
-        false,
-        "The size is the account's at the moment the call lands, never a size the caller read earlier. Not safe to retry: a second reversal flips the position back.",
-    )
 }
 
 /// Which named exit ladder the ticket arms next.

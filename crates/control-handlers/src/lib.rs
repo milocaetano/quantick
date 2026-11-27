@@ -28,6 +28,8 @@ macro_rules! handler_modules {
 
 quantick_control::control_families!(handler_modules);
 
+pub mod call;
+
 pub(crate) use tabs::per_open_tab;
 pub use tabs::{JournalAccess, OpenTabs, TabDirectory, tab_index};
 
