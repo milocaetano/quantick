@@ -31,6 +31,31 @@ BOOK_UNAVAILABLE_RETRY_MS = 5_000
 BOOK_CONFIRM_INTERVAL_MS = 50
 
 
+def unsent(ticks, cursor_msc: int, sent_at_cursor: int) -> tuple[list, int, int]:
+    """The ticks in `ticks` not yet sent from a `(msc, count-at-msc)` cursor,
+    and the cursor after them.
+
+    `copy_ticks_from` answers from whole seconds, so every answer repeats what
+    went out at and before the cursor; the count is what tells the prints of
+    the cursor's own millisecond apart, since they share a timestamp.
+    """
+    fresh = []
+    seen_at_cursor = 0
+    for tick in ticks:
+        msc = int(tick["time_msc"])
+        if msc < cursor_msc:
+            continue
+        if msc == cursor_msc:
+            seen_at_cursor += 1
+            if seen_at_cursor <= sent_at_cursor:
+                continue
+            sent_at_cursor += 1
+        else:
+            cursor_msc, sent_at_cursor, seen_at_cursor = msc, 1, 1
+        fresh.append(tick)
+    return fresh, cursor_msc, sent_at_cursor
+
+
 class TicksMixin:
     """The live half of a session: ticks, the book, and the heartbeat.
 
@@ -195,25 +220,12 @@ class TicksMixin:
             # One reading per round, taken after the ticks it will stamp were
             # fetched: the counter is then at or past every print in hand.
             deals = self.session_deals() if self.deal_counter else None
-            at_cursor_seen = 0
-            forwarded = 0
-            for tick in ticks:
-                msc = int(tick["time_msc"])
-                if msc < self.cursor_msc:
-                    continue
-                if msc == self.cursor_msc:
-                    at_cursor_seen += 1
-                    if at_cursor_seen <= self.sent_at_cursor:
-                        continue
-                    self.send_tick(tick, sent_ms, deals)
-                    self.sent_at_cursor += 1
-                    forwarded += 1
-                else:
-                    self.send_tick(tick, sent_ms, deals)
-                    self.cursor_msc = msc
-                    self.sent_at_cursor = 1
-                    at_cursor_seen = 0
-                    forwarded += 1
+            fresh, self.cursor_msc, self.sent_at_cursor = unsent(
+                ticks, self.cursor_msc, self.sent_at_cursor
+            )
+            for tick in fresh:
+                self.send_tick(tick, sent_ms, deals)
+            forwarded = len(fresh)
             if len(ticks) < count:
                 return  # the terminal said it has nothing more
             if forwarded == 0:

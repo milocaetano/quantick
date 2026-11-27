@@ -8,6 +8,7 @@ fn desync(reading: SyncReading) -> Desync {
         link: LinkState::Up,
         latency_ms: Some(900),
         latency_hop: Some("MT5"),
+        latency_at_source: false,
         tape_age_ms: Some(7_250),
         limits: SyncLimits::default(),
         notice: None,
@@ -46,6 +47,26 @@ fn each_sentence_names_its_reading_value_and_limit() {
         "offline offers its own: {said}"
     );
     assert!(!offline.offers_reconnect(), "offline offers its own");
+}
+
+/// A new connection reads the same late source, so a pause for latency the
+/// source owns offers no Reconnect; a late wire, and every other reading on a
+/// link that is up, still does.
+#[test]
+fn latency_the_source_owns_offers_no_reconnect() {
+    for (reading, at_source, offered) in [
+        (SyncReading::Latency, true, false),
+        (SyncReading::Latency, false, true),
+        (SyncReading::TapeAge, true, true),
+    ] {
+        let gate = Desync {
+            latency_at_source: at_source,
+            ..desync(reading)
+        };
+        let row = format!("{reading:?}, at source {at_source}");
+        assert_eq!(gate.offers_reconnect(), offered, "{row}");
+        assert_eq!(gate.sentence().contains("Reconnect"), offered, "{row}");
+    }
 }
 
 #[test]
