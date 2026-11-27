@@ -1,13 +1,12 @@
 # Reading the running app through the control plane
 
-Detail for `ui-harness` *Ask the app, then look*. Read it when you drive
-`quantick-mcp` by hand.
+Detail for `ui-harness` *Ask the app, then look*.
+Read it when you drive `quantick-mcp` by hand.
 
 ## The fixture
 
-Launch with local access and the scopes the read needs. The scope IDs are the
-`QUANTICK_CONTROL_ACCESS` / `QUANTICK_CONTROL_SCOPES` /
-`QUANTICK_CONTROL_EVIDENCE` rows of `hook-registry.md`:
+Launch with local access and the scopes the read needs.
+The scope IDs are the `QUANTICK_CONTROL_ACCESS` / `QUANTICK_CONTROL_SCOPES` / `QUANTICK_CONTROL_EVIDENCE` rows of `hook-registry.md`:
 
 ```powershell
 $env:QUANTICK_CONTROL_ACCESS = "1"
@@ -16,10 +15,9 @@ $env:QUANTICK_CONTROL_SCOPES = "all-reads,analyst-tier"
 
 ## The client
 
-`quantick-mcp` is a STDIO MCP server; JSON-RPC lines on stdin are a complete
-client. It discovers the running instance and never starts one. Build it into
-the same target directory the launch used (the launch builds `quantick-app`
-only):
+`quantick-mcp` is a STDIO MCP server; JSON-RPC lines on stdin are a complete client.
+It discovers the running instance and never starts one.
+Build it into the same target directory the launch used (the launch builds `quantick-app` only):
 
 ```powershell
 $target = "D:\quantick-agent-target"
@@ -32,10 +30,9 @@ $lines = @(
 )
 ```
 
-**Send a blank line first.** Windows PowerShell 5.1 writes a UTF-8 preamble to
-a child's stdin the moment `Process.StandardInput` is touched; it lands on line
-1 and `initialize` answers `-32700 parse error: expected value at line 1 column
-1` while every later line parses. A leading newline absorbs it:
+**Send a blank line first.**
+Windows PowerShell 5.1 writes a UTF-8 preamble to a child's stdin the moment `Process.StandardInput` is touched; it lands on line 1 and `initialize` answers `-32700 parse error: expected value at line 1 column 1` while every later line parses.
+A leading newline absorbs it:
 
 ```powershell
 $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -50,12 +47,10 @@ $m.StandardInput.BaseStream.Flush(); $m.StandardInput.Close()
 $m.StandardOutput.ReadToEnd()
 ```
 
-**One instance at a time**, or discovery answers `control.instance_ambiguous`
-with the ids. Clear strays by **path**, never by process name — `Get-Process
-quantick-app | Stop-Process` also kills the trader's window.
+**One instance at a time**, or discovery answers `control.instance_ambiguous` with the ids.
+Clear strays by **path**, never by process name — `Get-Process quantick-app | Stop-Process` also kills the trader's window.
 
-Each answer is one JSON line: `result.structuredContent` is the capability's
-result; `result.isError` with a `control.*` code is a refusal to branch on.
+Each answer is one JSON line: `result.structuredContent` is the capability's result; `result.isError` with a `control.*` code is a refusal to branch on.
 
 | Ask | Call |
 | --- | --- |
@@ -67,22 +62,13 @@ result; `result.isError` with a `control.*` code is a refusal to branch on.
 
 ## Evidence bundles
 
-`quantick_capture_evidence` freezes the named scopes, surrounding events and
-effective configuration into one hashed bundle and answers with a manifest.
-Read it back with `quantick_invoke` on `evidence.read`, page by page,
-concatenating the base64 chunks: the bytes are the bundle's canonical JSON and
-their SHA-256 is the manifest's `content_digest`. Two fields decide whether an
-assertion is sound:
+`quantick_capture_evidence` freezes the named scopes, surrounding events and effective configuration into one hashed bundle and answers with a manifest.
+Read it back with `quantick_invoke` on `evidence.read`, page by page, concatenating the base64 chunks: the bytes are the bundle's canonical JSON and their SHA-256 is the manifest's `content_digest`.
+Two fields decide whether an assertion is sound:
 
-- `coverage` — what the capture left out, as codes: unnamed scopes in
-  `omitted_scopes`, unfillable fields in `unavailable_fields` with a JSON
-  Pointer. `complete` is never true.
-- `screenshot.capture_revision` equals the bundle's `capture_revision`, which
-  makes `screenshot.control_regions` trustworthy: each named control's
-  rectangle in the image, in physical pixels, with `within_image` saying
-  whether the window clipped it.
+- `coverage` — what the capture left out, as codes: unnamed scopes in `omitted_scopes`, unfillable fields in `unavailable_fields` with a JSON Pointer.
+  `complete` is never true.
+- `screenshot.capture_revision` equals the bundle's `capture_revision`, which makes `screenshot.control_regions` trustworthy: each named control's rectangle in the image, in physical pixels, with `within_image` saying whether the window clipped it.
 
-Without a client, `QUANTICK_CONTROL_EVIDENCE` takes the same capture at launch
-and logs the manifest as `CONTROL_EVIDENCE_CAPTURED`. Bundles live in memory
-for fifteen minutes, are cleared when access is turned off, and never touch
-disk — quote the evidence ID and numbers in a report instead.
+Without a client, `QUANTICK_CONTROL_EVIDENCE` takes the same capture at launch and logs the manifest as `CONTROL_EVIDENCE_CAPTURED`.
+Bundles live in memory for fifteen minutes, are cleared when access is turned off, and never touch disk — quote the evidence ID and numbers in a report instead.
