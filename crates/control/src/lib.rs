@@ -9,6 +9,7 @@ pub mod codec;
 pub mod cursor;
 pub mod descriptor;
 pub mod error;
+#[cfg(any(test, feature = "fake"))]
 pub mod fake;
 mod families;
 pub mod handshake;

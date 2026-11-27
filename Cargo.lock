@@ -3082,6 +3082,7 @@ dependencies = [
  "base64",
  "jsonschema",
  "proptest",
+ "quantick-control",
  "rust_decimal",
  "schemars",
  "serde",

@@ -258,6 +258,7 @@ impl CapabilityDescriptor {
     }
 }
 
+#[cfg(any(test, feature = "fake"))]
 pub trait ControlModule {
     /// Register module-owned permissions before profile ceilings are finalized.
     fn register_permissions(&self, _registry: &mut ControlRegistry) -> Result<(), RegistryError> {

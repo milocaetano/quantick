@@ -9,7 +9,7 @@
 //! `control.instance_ambiguous`, and `--instance` pins every call. Nothing
 //! here can start the application.
 //!
-//! [`crate::fake::FakeLink`] is the second implementation, for tests.
+//! `crate::fake::FakeLink` is the second implementation, for tests.
 
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -46,7 +46,7 @@ pub struct Instances {
 }
 
 /// What the tools need from a running instance. Implemented over the local
-/// transport by [`LocalLink`] and by [`crate::fake::FakeLink`] for tests.
+/// transport by [`LocalLink`] and by `crate::fake::FakeLink` for tests.
 pub trait ControlLink {
     /// Discover the live instances now. Creates and starts nothing.
     fn instances(&mut self) -> Result<Instances, ControlError>;
