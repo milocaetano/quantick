@@ -214,5 +214,5 @@
 !budget 21976
 .claude/skills/implement/ 10769
 .claude/skills/ui-harness/ 82883
-AGENTS.md 4618
+AGENTS.md 3065
 CLAUDE.md 6541

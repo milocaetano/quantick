@@ -56,9 +56,9 @@ use crate::Finding;
 /// answer before anything is built, and `platform` keeps domain types and the
 /// UI toolkit out of the OS-window calls.
 ///
-/// This table is the single source of the graph. `AGENTS.md`'s map draws the
-/// same shape for a reader; this is the copy a review cites, because it is the
-/// copy that can fail.
+/// This table is the single source of the graph. `AGENTS.md`'s map lists crates
+/// and what they own and points here for ranks; this is the copy a review
+/// cites, because it is the copy that can fail.
 pub const RANK: &[(&str, u8)] = &[
     ("app", 8),
     ("ui-model", 7),
