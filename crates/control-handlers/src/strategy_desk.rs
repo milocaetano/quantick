@@ -12,15 +12,14 @@ use crate::wire::strategy_desk::{
     self as wire, ActionSetInput, AssetInput, CHANGED_EVENT_KIND, CommandResult, DeclaredInput,
     DetailResult, FireAction, InstanceId, InstanceInput, Link, ListInput, ListResult, SaveAsInput,
 };
-use quantick_trading::ActionSide;
 use quantick_chart::pane_series::PaneSeriesRead;
 use quantick_chart::state::dec_from_f64;
 use quantick_control::error::ControlError;
 use quantick_control::registry::{CapabilityDescriptor, IdempotencyPolicy, RegistryError};
-use quantick_control_host::actions::ReplayTrace;
-use quantick_control_host::authority::TRADE_PERMISSION_ID;
 use quantick_control::wire::{ActorContext, WireU64};
+use quantick_control_host::actions::ReplayTrace;
 use quantick_control_host::authority::STRATEGY_MODULE_ID;
+use quantick_control_host::authority::TRADE_PERMISSION_ID;
 use quantick_control_host::journal::NewEvent;
 use quantick_drawings::{DrawingId, DrawingTool, Drawings};
 use quantick_engine::{Bar, Side};
@@ -30,6 +29,7 @@ use quantick_session::strategy_desk::{
     StrategyDeskCommand, StrategyDeskView, StrategyDetail,
 };
 use quantick_stores::script_library::ScriptLibrary;
+use quantick_trading::ActionSide;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -324,8 +324,6 @@ macro_rules! asset_command {
 asset_command!(asset_pause, PauseAsset);
 asset_command!(asset_resume, ResumeAsset);
 
-/// The trade tier's call, so it may turn a script into one that places
-/// paper orders.
 /// `strategy.script.action.set`: the trade tier's, because it can make a
 /// script place paper orders — the desk's own calls never start orders.
 /// Setting the same action twice leaves the same action.

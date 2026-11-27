@@ -207,7 +207,9 @@ fn current(paper: &mut dyn PaperOwner) -> Result<AccountRouteResult, ControlErro
 }
 
 /// Ask the route for `request`, journal the answer, accepted or refused, and
-/// reply with the route now in force.
+/// reply with the route now in force. `asked` is the decoded input encoded
+/// again: the adapter journals only successes, so a refusal is journaled
+/// here, where the caller's raw JSON is no longer at hand.
 fn route_to<H: PaperHost + ?Sized, A: JournalAccess>(
     host: &mut H,
     cx: &mut CallCx<'_, A>,

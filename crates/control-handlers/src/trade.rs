@@ -248,8 +248,6 @@ pub struct SetInstrumentMoneyInput {
     pub currency: Option<String>,
 }
 
-
-
 /// The active tab's paper desk as a trade action reaches it: the account the
 /// orders rest in, the ruler that shapes one order, and the bracket the
 /// ticket has armed.

@@ -344,7 +344,10 @@ pub const READBACKS: &[Readback] = &[
         CHANGED_EVENT_KIND,
         "payload.capability",
         "an event after the pre-call cursor names the call; strategy.script.list shows the action, quantity, stop and gain",
-        &[ACTION_SET_TEST, crate::wire::readback::TRADE_UNREACHABLE_TEST],
+        &[
+            ACTION_SET_TEST,
+            crate::wire::readback::TRADE_UNREACHABLE_TEST,
+        ],
     ),
 ];
 

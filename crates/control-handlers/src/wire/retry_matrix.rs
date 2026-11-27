@@ -11,7 +11,8 @@
 //! `annotate.label.create` landed was written in prose beside the capability,
 //! if anywhere, and nothing failed when a new capability arrived without one.
 //!
-//! This module is that home, and each family module is where a row is
+//! This module holds the row vocabulary and a grant's reach, and each family
+//! module — its wire module, or its handler module — is where a row is
 //! written: `analysis` declares the drawings' rows beside `DRAWINGS_SCOPE_ID`,
 //! `trade` the ticket's beside `TICKET_EVENT_KIND`, and
 //! `crate::retry_matrix::FAMILIES` is the declared list its `READBACKS` joins
