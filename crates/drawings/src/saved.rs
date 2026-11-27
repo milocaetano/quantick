@@ -38,6 +38,7 @@ impl SavedDrawingExt for SavedDrawing {
                 .iter()
                 .map(|point| SavedPoint {
                     time_ms: point.time_ms,
+                    time_projected: point.time_projected,
                     price: point.price,
                     bar: f64::from(point.bar),
                 })
@@ -100,6 +101,7 @@ impl SavedDrawingExt for SavedDrawing {
                     bar: point.bar as f32,
                     price: point.price,
                     time_ms: point.time_ms,
+                    time_projected: point.time_projected,
                 })
                 .collect(),
             band: match &self.band {

@@ -634,7 +634,7 @@ fn translate_body(
         for point in &mut from.free {
             point.bar += delta_bar;
             point.price += delta_value;
-            point.time_ms = projection.series.anchor_time(point.bar);
+            projection.series.stamp(point);
         }
         let mut moved = from.free.clone();
         match tool.anchor_snap() {
@@ -1041,7 +1041,7 @@ mod tests {
                 shared_drag: SharedDrag::Body { index: 3 },
                 shared_drag_owner: Some(7),
                 shared_drag_pending_from: Some(origin),
-                shared_pointer_mark: Some((1000, 50.0)),
+                shared_pointer_mark: Some(crate::ChartPoint::at_time(0.5, 50.0, Some(1000))),
                 ..Default::default()
             };
             let mut under = PointerOutcome::default();
@@ -1075,7 +1075,10 @@ mod tests {
             gestures.interact_shared(projection, bands, None, &mut missing, pointer);
             assert_eq!(missing.shared, SharedInteraction::default());
             assert_eq!(gestures.shared_drag_pending_from, None);
-            assert_eq!(gestures.shared_pointer_mark, Some((1000, 50.0)));
+            assert_eq!(
+                gestures.shared_pointer_mark,
+                Some(crate::ChartPoint::at_time(0.5, 50.0, Some(1000)))
+            );
             assert_eq!(gestures.shared_drag_owner, Some(7));
         });
     }

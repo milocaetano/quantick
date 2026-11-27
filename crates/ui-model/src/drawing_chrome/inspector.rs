@@ -111,22 +111,32 @@ pub fn placement(chart: Area, bbox: Area, size: [f32; 2]) -> PanelPlacement {
 }
 
 /// The object's standing, in words, as the inspector lists it: who placed it,
-/// and whether it is locked or hidden. Data honesty, where the trader decides
-/// what to do with the object: an assistant's mark never passes for their own.
+/// whether it is locked or hidden, and whether a market time it is placed by
+/// on other charts is projected. Data honesty, where the trader decides what
+/// to do with the object: an assistant's mark never passes for their own,
+/// and an estimated instant never passes for one read off a bar.
 #[must_use]
 pub fn object_notes<T>(drawing: &quantick_drawings::Drawing<T>) -> Vec<String> {
     let author = drawing.author.as_ref();
     let placed = author.map(|author| format!("Placed by {} - not by you.", author.label()));
     let locked = drawing.locked.then_some(LOCKED_NOTE);
     let hidden = drawing.hidden.then_some(HIDDEN_NOTE);
+    let projected = drawing.time_projected().then_some(PROJECTED_NOTE);
     placed
         .into_iter()
-        .chain([locked, hidden].into_iter().flatten().map(String::from))
+        .chain(
+            [locked, hidden, projected]
+                .into_iter()
+                .flatten()
+                .map(String::from),
+        )
         .collect()
 }
 
 const LOCKED_NOTE: &str = "Locked - protected from accidental moves. Style stays editable.";
 const HIDDEN_NOTE: &str = "Hidden - Show brings it back.";
+const PROJECTED_NOTE: &str =
+    "Time projected - an anchor past the newest bar is timed by the recent bars' mean duration.";
 
 #[cfg(test)]
 #[path = "inspector_tests.rs"]

@@ -168,7 +168,8 @@ fn a_copy_of_a_mark_on_all_timeframes_joins_them_once_dated() {
     assert_eq!(settings.shared_drawings(&flow()).len(), 1);
     assert_eq!(settings.drawings(&flow()).len(), 1, "it waits on its chart");
 
-    pane.drawings.set_times(index, &[Some(T0 + 5 * 60_000)]);
+    pane.drawings
+        .restamp(index, |point| point.time_ms = Some(T0 + 5 * 60_000));
     assert!(pane.drawings.items()[index].all_timeframes(), "dated");
     pane.persist(&mut settings);
     assert_eq!(settings.shared_drawings(&flow()).len(), 2);
@@ -183,7 +184,7 @@ fn a_copy_of_a_mark_kept_to_its_chart_stays_there_once_dated() {
     let source = drawings.items()[0].clone();
     let id = drawings.paste(&source, 3.0);
     let index = drawings.index_of(id).unwrap();
-    drawings.set_times(index, &[Some(T0 + 5 * 60_000)]);
+    drawings.restamp(index, |point| point.time_ms = Some(T0 + 5 * 60_000));
     assert!(!drawings.items()[index].all_timeframes());
 }
 

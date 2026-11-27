@@ -30,18 +30,7 @@ fn scene_in(
     color: PremultipliedRgba,
 ) -> MarkScene {
     let scale = PriceScale::from_range(0.0, 100.0, 0.0, 500.0);
-    let anchors = [
-        ChartPoint {
-            bar: 1.0,
-            price: 20.0,
-            time_ms: None,
-        },
-        ChartPoint {
-            bar: 5.0,
-            price: 80.0,
-            time_ms: None,
-        },
-    ];
+    let anchors = [ChartPoint::at(1.0, 20.0), ChartPoint::at(5.0, 80.0)];
     let style = DrawingStyle {
         color,
         ..DrawingStyle::default()
@@ -393,11 +382,7 @@ fn ruler_readout(
     prices: [f64; 2],
 ) -> (Vec<(String, PremultipliedRgba)>, Vec<Stroke>) {
     let scale = PriceScale::from_range(0.0, 100.0, 0.0, 500.0);
-    let point = |bar, price| ChartPoint {
-        bar,
-        price,
-        time_ms: None,
-    };
+    let point = ChartPoint::at;
     let anchors = [point(1.0, prices[0]), point(5.0, prices[1])];
     let style = DrawingStyle::default();
     let ctxt = DrawContext {

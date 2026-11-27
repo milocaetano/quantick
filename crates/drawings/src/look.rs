@@ -17,7 +17,7 @@ use crate::{Drawing, Drawings, PresetHost, ToolCatalog};
 
 /// The palette a pane's factory-look marks were last dressed from, and the
 /// theme revision it was read at; see [`Drawings::follow_ground`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct GroundInk {
     theme: u64,
     palette: Option<ResolvedTheme>,
@@ -105,6 +105,21 @@ impl<T: ToolCatalog> Drawings<T> {
         let palette = palette_on(host.theme(), canvas).0.cloned();
         self.canvas = canvas;
         self.ground_ink = Some(GroundInk { theme, palette });
+        self.wear_ground();
+        true
+    }
+
+    /// Dress the factory-look marks in `pane`'s ground, when it moved since
+    /// the last call: marks painted on that pane but held elsewhere (those a
+    /// tab is lent) wear its ink, as its own do. Answers whether it did.
+    pub fn follow_ground_of(&mut self, pane: &Self) -> bool {
+        let theme = |ink: Option<&GroundInk>| ink.map(|ink| ink.theme);
+        let same = theme(self.ground_ink.as_ref()) == theme(pane.ground_ink.as_ref());
+        if same && self.canvas == pane.canvas {
+            return false;
+        }
+        self.canvas = pane.canvas;
+        self.ground_ink.clone_from(&pane.ground_ink);
         self.wear_ground();
         true
     }

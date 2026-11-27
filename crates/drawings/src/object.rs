@@ -137,12 +137,19 @@ impl<T: ToolCatalog> Drawing<T> {
 
 impl<T> Drawing<T> {
     /// Whether this object *can* be shared: every anchor has to name a market
-    /// instant, because that is the only coordinate two panes agree on. An
-    /// anchor dropped past the newest bar has none, and no time is invented
-    /// to make the checkbox available.
+    /// instant, because that is the only coordinate two panes agree on. Past
+    /// the newest bar of a tick, volume or renko chart that instant is
+    /// projected, and [`Self::time_projected`] says so; nothing else counts.
     #[must_use]
     pub fn shareable(&self) -> bool {
         !self.points.is_empty() && self.points.iter().all(|point| point.time_ms.is_some())
+    }
+
+    /// Whether any anchor's market time is projected rather than read off a
+    /// bar ([`ChartPoint::time_projected`]): what the inspector labels.
+    #[must_use]
+    pub fn time_projected(&self) -> bool {
+        self.points.iter().any(|point| point.time_projected)
     }
 
     /// Whether it shows at any bars: asked for, and dated at every anchor.

@@ -576,6 +576,7 @@ fn an_edit_from_the_other_pane_lands_on_this_panes_own_bars() {
         anchor: 0,
         time_ms: moved_to,
         price: 101.5,
+        time_projected: false,
     });
 
     let point = pane.drawings.items()[0].points[0];

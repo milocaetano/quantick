@@ -165,7 +165,10 @@ pub fn width_bars(anchors: &[ChartPoint]) -> f32 {
 /// Make the position `bars` wide by moving its right-hand anchor in market
 /// time; the left one, and every price, stay. The width lives in the
 /// anchors, so it keeps its length in time on any timeframe and on a pane
-/// mirroring the drawing.
+/// mirroring the drawing. A moved edge's time is measured at the anchors'
+/// mean pace, an estimate, so it is flagged
+/// [`ChartPoint::time_projected`]; the pane holding it re-stamps it
+/// (`SharedMarksMut::restamp`), exact again on a bar.
 ///
 /// # Errors
 /// A width out of range, or anchors that share a bar or carry no market
@@ -186,6 +189,7 @@ pub fn set_width_bars(anchors: &mut [ChartPoint], bars: f32) -> Result<(), Posit
         return Err(PositionRefusal::WidthNeedsTime);
     }
     let ms_per_bar = (end - start) as f64 / f64::from(span);
+    right.time_projected |= bars != span;
     right.bar = left.bar + bars;
     right.time_ms = Some(start + (ms_per_bar * f64::from(bars)).round() as i64);
     Ok(())
