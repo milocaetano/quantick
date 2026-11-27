@@ -125,4 +125,20 @@ mod tests {
             assert!(error.contains(refusal), "{icons}: {error}");
         }
     }
+
+    /// A searched market the feed does not list, BTCBRL beside BTCUSDT,
+    /// wears its asset's icon from the shipped family key.
+    #[test]
+    fn a_searched_market_wears_its_assets_icon_from_the_shipped_config() {
+        let config: crate::config::AppConfig =
+            toml::from_str(crate::config::EMBEDDED_DEFAULT).expect("the shipped config parses");
+        for (feed, symbol) in [("binance", "BTCBRL"), ("binance-futures", "BTCUSDT.p")] {
+            let feed = config.feed(feed).expect("shipped feed");
+            assert_eq!(
+                feed.asset_icon(symbol),
+                Some(("B", [0xF7, 0x93, 0x1A])),
+                "{symbol}"
+            );
+        }
+    }
 }

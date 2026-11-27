@@ -25,9 +25,9 @@ pub struct Chip {
     /// The workspace, for the hover, and the venue's code (`BIN`) for its tag.
     pub workspace: String,
     pub venue_code: String,
-    /// The open tab's symbol in its workspace's colour, where that reads on
-    /// the tab (`quantick_stores::workspaces::symbol_ink`); `None` keeps the
-    /// tab's normal ink.
+    /// The open tab's symbol in its workspace's colour, shifted until it reads
+    /// on the tab (`quantick_stores::workspaces::symbol_ink`); `None`, before
+    /// the book has settled a colour, keeps the tab's normal ink.
     pub symbol_ink: Option<[u8; 3]>,
     /// The venue tag filled in the route's colour while this tab's orders go
     /// to (or are open at) a broker account; `None` keeps the outline.

@@ -38,15 +38,36 @@ pub fn capsule_fill(colour: WorkspaceColour, theme: &ResolvedTheme, lit: bool) -
     tab_strip::workspace_tint(base, colour.rgb(theme.dark), share)
 }
 
-/// The open tab's symbol ink on `theme`: the workspace's colour while it keeps
-/// [`tab_strip::WORKSPACE_SYMBOL_CONTRAST`] on the tab's sheet, else `None`,
-/// the tab's normal ink.
+/// How finely [`symbol_ink`] walks a colour toward black or white.
+const SYMBOL_SHIFT_STEPS: u8 = 32;
+
+/// The open tab's symbol ink on `theme`: the workspace's colour, walked toward
+/// black or white, whichever stands further from the tab's sheet, by the
+/// fewest of [`SYMBOL_SHIFT_STEPS`] that keep
+/// [`tab_strip::WORKSPACE_SYMBOL_CONTRAST`] on it. A colour that already reads
+/// is painted as it is; black or white keeps 4.58:1 on any sheet, so the walk
+/// always ends.
 #[must_use]
-pub fn symbol_ink(colour: WorkspaceColour, theme: &ResolvedTheme) -> Option<Rgb> {
-    let [r, g, b] = colour.rgb(theme.dark);
+pub fn symbol_ink(colour: WorkspaceColour, theme: &ResolvedTheme) -> Rgb {
+    let rgb = colour.rgb(theme.dark);
     let sheet = theme.color(tab_strip::tab_fill(true));
-    let ratio = contrast_ratio(PremultipliedRgba::from_rgb(r, g, b), sheet);
-    (ratio >= tab_strip::WORKSPACE_SYMBOL_CONTRAST).then_some([r, g, b])
+    let ratio = |[r, g, b]: Rgb| contrast_ratio(PremultipliedRgba::from_rgb(r, g, b), sheet);
+    let pole: u8 = if ratio([0; 3]) >= ratio([0xFF; 3]) {
+        0
+    } else {
+        0xFF
+    };
+    let toward = |step: u8| {
+        let share = f32::from(step) / f32::from(SYMBOL_SHIFT_STEPS);
+        rgb.map(|c| {
+            let (c, pole) = (f32::from(c), f32::from(pole));
+            (c + (pole - c) * share).round().clamp(0.0, 255.0) as u8
+        })
+    };
+    (0..=SYMBOL_SHIFT_STEPS)
+        .map(toward)
+        .find(|&ink| ratio(ink) >= tab_strip::WORKSPACE_SYMBOL_CONTRAST)
+        .unwrap_or([pole; 3])
 }
 
 /// The file beside a layouts file.
