@@ -392,7 +392,6 @@ pub fn components(edges: &BTreeMap<String, BTreeSet<(String, String)>>) -> Vec<C
     grouped
 }
 
-/// The cycles in one crate, given its directory.
 /// Modules that hold a crate folded into their host, as `(crate, module)`.
 ///
 /// One node per top-level module makes the whole folded tree a single node,
@@ -402,6 +401,7 @@ pub fn components(edges: &BTreeMap<String, BTreeSet<(String, String)>>) -> Vec<C
 /// the host crate.
 const FOLDED: &[(&str, &str)] = &[("crates/control-handlers", "wire")];
 
+/// The cycles in one crate, given its directory.
 fn measure_crate(crate_dir: &Path, crate_path: &str, unreadable: &mut Vec<String>) -> Vec<Cycle> {
     let src = crate_dir.join("src");
     let mut files: Vec<(String, String)> = Vec::new();
@@ -441,8 +441,9 @@ fn module_edges(
 }
 
 /// The same edges inside one folded module, named `<folded>::<submodule>`.
-/// Only `use crate::<folded>::` imports count: any other `use crate::` names
-/// a host module, which [`module_edges`] already sees.
+/// Only `use crate::<folded>::` imports count, and a direct child's
+/// `use super::`, which names a sibling: any other `use crate::` names a host
+/// module, which [`module_edges`] already sees.
 fn folded_edges(
     files: &[(String, String)],
     crate_path: &str,
@@ -456,8 +457,11 @@ fn folded_edges(
             let inner = relative.strip_prefix(&inner_prefix)?;
             // Host imports are hidden first so they cannot alias a
             // submodule of the same name (`wire::session` beside `session`).
-            let own = source
-                .replace(&inner_use, "\u{1}")
+            let mut own = source.replace(&inner_use, "\u{1}");
+            if !inner.contains('/') {
+                own = own.replace("use super::", "\u{1}");
+            }
+            let own = own
                 .replace("use crate::", "use host::")
                 .replace('\u{1}', "use crate::");
             Some((inner.to_owned(), own))
@@ -734,15 +738,15 @@ mod tests {
     }
 
     /// A folded crate keeps its own module graph: a cycle between two of
-    /// its submodules is found, and a host import of a same-named module is
-    /// not mistaken for one of them.
+    /// its submodules is found, whether a sibling is named through
+    /// `crate::wire::` or `super::`.
     #[test]
     fn a_cycle_inside_a_folded_module_is_found() {
         let file = |path: &str, source: &str| (path.to_owned(), source.to_owned());
         let files = [
             file("wire.rs", "pub mod a;\npub mod b;\n"),
             file("wire/a.rs", "use crate::wire::b::B;\npub struct A;\n"),
-            file("wire/b.rs", "use crate::wire::a::A;\npub struct B;\n"),
+            file("wire/b.rs", "use super::a::A;\npub struct B;\n"),
             file("wire/c.rs", "use crate::a::Host;\npub struct C;\n"),
             file("a.rs", "pub struct Host;\n"),
         ];
