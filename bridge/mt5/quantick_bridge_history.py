@@ -17,15 +17,18 @@ from quantick_bridge_core import (
     LOAD_OLDER_MAX_WINDOW_S,
     LOAD_OLDER_WINDOW_GROWTH,
     MAX_SLICE_TICKS_THE_FEED_ACCEPTS,
+    MAX_TICKS_PER_REQUEST,
     OPENING_REACH_MAX_CALLS,
     OPENING_REACH_WINDOW_S,
     SESSION_GAP_MS,
     SESSION_WALK_MAX_SPAN_MS,
     SESSION_WALK_MAX_WINDOWS,
+    TICKS_PER_PUMP_ROUND,
     BridgeExit,
     log,
     mt5,
 )
+from quantick_bridge_ticks import unsent
 
 
 class HistoryMixin:
@@ -80,6 +83,7 @@ class HistoryMixin:
             return
 
         ticks, windows, stopped_on = self.session_ticks(newest_ms)
+        ticks = self.read_on_to_live_edge(ticks)
         available = len(ticks)
         # Clamped like the slice knob beside it: `ticks[-0:]` is the whole
         # block, so an unclamped zero would send everything while telling the
@@ -142,6 +146,58 @@ class HistoryMixin:
                 slice_ticks=slice_ticks,
             )
         self.send_backfill(opening)
+
+    def read_on_to_live_edge(self, ticks):
+        """`ticks` carried on to the newest print the terminal holds.
+
+        `copy_ticks_range` can answer short and report success: on 2026-11-27,
+        deep into a heavy WIN session, a four-hour range ended 144 s before
+        what `copy_ticks_from` and `symbol_info_tick` already held. A block
+        that stops there leaves the live pump to send the rest as live prints
+        minutes old. So the block reads on with the live pump's own call and
+        cursor rule until an answer comes back short, bounded by the block cap.
+        """
+        if not len(ticks):
+            return ticks
+        range_last_ms = int(ticks[-1]["time_msc"])
+        at_last = 0
+        for tick in reversed(ticks):
+            if int(tick["time_msc"]) != range_last_ms:
+                break
+            at_last += 1
+        cursor_msc, sent_at_cursor = range_last_ms, at_last
+        read_on: list = []
+        count = TICKS_PER_PUMP_ROUND
+        cap = max(1, self.args.backfill_max_ticks)
+        while len(read_on) < cap:
+            found = mt5.copy_ticks_from(self.symbol, cursor_msc // 1000, count, self.tick_flags())
+            if found is None or not len(found):
+                break
+            fresh, cursor_msc, sent_at_cursor = unsent(found, cursor_msc, sent_at_cursor)
+            read_on.extend(fresh)
+            if len(found) < count:
+                break
+            if not fresh:
+                # One second holding more than a batch: only asking deeper
+                # gets past it, as in `pump_ticks`.
+                if count >= MAX_TICKS_PER_REQUEST:
+                    break
+                count = min(count * 2, MAX_TICKS_PER_REQUEST)
+        if not read_on:
+            return ticks
+        log(
+            "BRIDGE_BACKFILL_RANGE_SHORT",
+            symbol=self.symbol,
+            range_last_ms=range_last_ms,
+            read_on=len(read_on),
+            last_ms=int(read_on[-1]["time_msc"]),
+            action="read_on_to_live_edge",
+        )
+        if hasattr(ticks, "dtype"):
+            import numpy  # noqa: PLC0415  (only when an answer came back short)
+
+            return numpy.concatenate([ticks, numpy.array(read_on, dtype=ticks.dtype)])
+        return [*ticks, *read_on]
 
     def pump_opening(self) -> None:
         """Send one parked slice of the opening session, if any is left.

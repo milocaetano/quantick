@@ -566,6 +566,28 @@ def test_an_endless_tape_gives_the_thread_back():
     )
 
 
+def test_prints_sharing_a_millisecond_go_out_in_the_same_pass():
+    """The cursor counted the first print of a new millisecond as sent but not
+    as seen, so the print beside it was skipped; once a later millisecond in
+    the same batch moved the cursor on, it was never sent at all."""
+    term = FakeTerminal(0, NOW)
+    bridge = load_bridge(term)
+    session = session_for(bridge, term)
+    session.cursor_msc, session.sent_at_cursor = 1_000, 1
+    term.ticks = [tick_at(1_000), tick_at(2_000), tick_at(2_000), tick_at(2_500)]
+    session.pump_ticks()
+    check(
+        "every unsent print in one pass",
+        [msg["time_ms"] for msg in session.sent] == [2_000, 2_000, 2_500],
+        [msg["time_ms"] for msg in session.sent],
+    )
+    check(
+        "the cursor counts both prints at its millisecond",
+        (session.cursor_msc, session.sent_at_cursor) == (2_500, 1),
+        (session.cursor_msc, session.sent_at_cursor),
+    )
+
+
 def test_the_live_pump_asks_only_for_prints():
     """The tape's own latency, decided one line earlier than anyone looks.
 

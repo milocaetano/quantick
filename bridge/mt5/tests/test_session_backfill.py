@@ -359,7 +359,11 @@ def test_a_terminal_that_misreports_its_oldest_tick_is_not_believed():
     term.ticks = b3_day()
     bridge = load_bridge(term)
     bogus_ms = at(19, 30) * 1000
-    bridge.mt5.copy_ticks_from = lambda _symbol, _from, _count, _flags: [tick_at(bogus_ms)]
+    # Only the oldest-tick question is misreported; reading on from a cursor
+    # is answered from what the terminal holds.
+    bridge.mt5.copy_ticks_from = lambda symbol, from_s, count, flags: (
+        [tick_at(bogus_ms)] if from_s == 0 else term.copy_ticks_from(symbol, from_s, count, flags)
+    )
     session = session_at(bridge, term, now_s, backfill_minutes=720)
     session.backfill()
 
