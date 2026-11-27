@@ -46,17 +46,23 @@ use quantick_control::{
     registry::{CapabilityDescriptor, RegistryError},
     wire::ActorContext,
 };
+use quantick_control_host::actions::ReplayTrace;
 use quantick_control_host::journal::NewEvent;
 use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{
     JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
 };
 use quantick_paper::{PaperAccount, format::PositionSummary, risk_sizing::RiskState};
-use quantick_session::paper::{SharedChange, TradeCommand, TradeOutcome, TradeRefusal};
+use quantick_session::paper::{
+    BRACKET_EVENT_KIND, BracketInput, CANCEL_EVENT_KIND, CancelInput, FLATTEN_EVENT_KIND,
+    FlattenInput, PLACE_EVENT_KIND, PlaceInput, REVERSE_EVENT_KIND, ReverseInput, SharedChange,
+    TradeCommand, TradeOutcome, TradeRefusal, TradeResult,
+};
 use quantick_sim::{Order, VenueEvent};
 use serde_json::{Value, json};
 
 use crate::JournalAccess;
+use crate::call::{Call, CallCx, CallSpec, dock_call};
 use crate::dock::ActionDock;
 
 pub use quantick_control_host::authority::{TRADE_MODULE_ID, TRADE_PERMISSION_ID};
@@ -165,7 +171,8 @@ fn answer(paper: &dyn PaperOwner, events: &[VenueEvent]) -> Result<TradeResult, 
 
 /// Append one journal event naming who asked and what the venue answered.
 ///
-/// Every `trade.*` action records, accepted or refused, and the actor rides
+/// Every ticket call and, through [`Call::entry`], every order call records,
+/// accepted or refused by the venue, and the actor rides
 /// in the event rather than beside it. An order placed by an operator that
 /// looked exactly like one the trader placed would be the authorship half of
 /// the honesty contract quietly dropped — and a refusal is worth recording
@@ -178,50 +185,30 @@ fn journal<A: JournalAccess>(
     result: &TradeResult,
     asked: Value,
 ) {
-    let payload = json!({
-        "asked": asked,
-        "accepted": result.accepted,
-        "rejected_because": result.rejected_because,
-        "order_id": result.order_id,
-        "simulated": true,
-    });
+    let payload = entry(asked, &json!(result));
     access.record_event(NewEvent::by(TRADE_MODULE_ID, kind, actor, payload));
 }
 
-/// Every order and position call, one adapter: decode the owner's input,
-/// take the command it states, and run it where a click runs it.
-fn trade_call<C: TradeCall, H: PaperHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let mut owner = host.paper();
-    let call: C = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let command = call.command().map_err(ControlError::invalid_request)?;
-    run(
-        &mut *owner,
-        access,
-        actor,
-        command,
-        C::EVENT_KIND,
-        input.clone(),
-    )
+/// The journal payload: what was asked and what the venue answered, from the
+/// encoded [`TradeResult`].
+fn entry(asked: Value, answer: &Value) -> Value {
+    json!({
+        "asked": asked,
+        "accepted": answer["accepted"],
+        "rejected_because": answer["rejected_because"],
+        "order_id": answer["order_id"],
+        "simulated": true,
+    })
 }
 
-/// Run `command` on the active desk, refuse what the tab refused, and
-/// journal what the venue answered under `kind`.
-fn run<A: JournalAccess>(
+/// Run `command` on the active desk and refuse what the tab refused.
+fn run(
     paper: &mut dyn PaperOwner,
-    access: &mut A,
     actor: &ActorContext,
     command: TradeCommand,
-    kind: &str,
-    asked: Value,
-) -> Result<Value, ControlError> {
+) -> Result<TradeResult, ControlError> {
     // A broker order from anyone but the trader's hand is the config's to
-    // allow; refused before it reaches the desk, and journaled as asked.
+    // allow; refused before it reaches the desk.
     if let Some(refusal) = paper.broker_write_block(crate::trade_account::actor_of(actor)) {
         return Err(crate::trade_account::refusal_error(refusal));
     }
@@ -235,9 +222,7 @@ fn run<A: JournalAccess>(
             TradeRefusal::Ticket(sentence) => ControlError::invalid_request(sentence),
         });
     }
-    let result = answer(paper, &outcome.events)?;
-    journal(access, actor, kind, &result, asked);
-    to_value(result)
+    answer(paper, &outcome.events)
 }
 
 /// An entry refused while the chart is out of sync with its feed. Nothing
@@ -349,20 +334,196 @@ fn set_instrument_money<H: PaperHost + ?Sized, A: JournalAccess>(
     to_value(result)
 }
 
-/// Dock one order or position call: the schema it publishes is the one its
-/// adapter decodes, so the two cannot disagree.
-fn dock<C, D, H, A>(registry: &mut D, descriptor: CapabilityDescriptor) -> Result<(), RegistryError>
+/// Every order and position call runs the command its input states where a
+/// click runs it.
+fn order<C, H: PaperHost + ?Sized>(
+    call: C,
+    host: &mut H,
+    actor: &ActorContext,
+) -> Result<TradeResult, ControlError>
 where
-    C: TradeCall,
-    D: ActionDock<H, A>,
-    H: PaperHost + ?Sized,
-    A: JournalAccess,
+    TradeCommand: TryFrom<C, Error = String>,
 {
-    let descriptor = CapabilityDescriptor {
-        input_schema: quantick_control::schema::generated_schema::<C>(),
-        ..descriptor
+    let command = TradeCommand::try_from(call).map_err(ControlError::invalid_request)?;
+    run(&mut *host.paper(), actor, command)
+}
+
+/// The order and position calls' posture: the family's, with the two fields
+/// each call states.
+fn posture(spec: &CallSpec, risk_reducing: bool, stale_input_safety: &str) -> CapabilityDescriptor {
+    descriptor(
+        spec.id,
+        spec.title,
+        spec.description,
+        Value::Null,
+        risk_reducing,
+        stale_input_safety,
+    )
+}
+
+impl<H: PaperHost + ?Sized> Call<H> for PlaceInput {
+    type Answer = TradeResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: PLACE_CAPABILITY_ID,
+        module: TRADE_MODULE_ID,
+        title: "Place a simulated order",
+        description: "Places one market, limit or stop order on the charted symbol, optionally with the protective stop and target that arm when it fills. The kind is stated, never inferred from where the market happens to be - a kind that cannot rest at the given price is refused with the reason, in the venue's own words.",
+        permissions: &[TRADE_PERMISSION_ID],
+        event: Some(PLACE_EVENT_KIND),
+        replay: ReplayTrace::Recorded,
+        posture: |spec| {
+            posture(
+                spec,
+                false,
+                "Every price is judged against the market at the moment the order lands, not at the moment it was written: a limit that would fill at once, or a stop that would trigger at once, is refused with the reason. A caller working from a stale chart can therefore place an order at a level that has gone stale, but never one the venue would not have accepted from a caller reading the live tape.",
+            )
+        },
     };
-    registry.register(descriptor, trade_call::<C, H, A>)
+
+    fn run<A: JournalAccess>(
+        self,
+        host: &mut H,
+        cx: &mut CallCx<'_, A>,
+    ) -> Result<TradeResult, ControlError> {
+        order(self, host, cx.actor)
+    }
+
+    fn entry(asked: Value, answer: &Value) -> Value {
+        entry(asked, answer)
+    }
+}
+
+impl<H: PaperHost + ?Sized> Call<H> for BracketInput {
+    type Answer = TradeResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: BRACKET_CAPABILITY_ID,
+        module: TRADE_MODULE_ID,
+        title: "Set a working order's protective prices",
+        description: "Replaces the stop and target riding a working order, which arm the moment it fills. Both legs are replaced wholesale: an absent leg is a cleared leg, exactly as dragging one off the chart clears it. The levels are judged against the order's own resting price, not the market.",
+        permissions: &[TRADE_PERMISSION_ID],
+        event: Some(BRACKET_EVENT_KIND),
+        replay: ReplayTrace::Recorded,
+        posture: |spec| {
+            posture(
+                spec,
+                false,
+                "The order is named by id, and ids are never reused. A stale caller amends the order it meant or nothing at all - an id that has since filled or been cancelled is reported as unknown rather than resolved to whatever is working now.",
+            )
+        },
+    };
+
+    fn run<A: JournalAccess>(
+        self,
+        host: &mut H,
+        cx: &mut CallCx<'_, A>,
+    ) -> Result<TradeResult, ControlError> {
+        order(self, host, cx.actor)
+    }
+
+    fn entry(asked: Value, answer: &Value) -> Value {
+        entry(asked, answer)
+    }
+}
+
+impl<H: PaperHost + ?Sized> Call<H> for CancelInput {
+    type Answer = TradeResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: CANCEL_CAPABILITY_ID,
+        module: TRADE_MODULE_ID,
+        title: "Cancel a working order",
+        description: "Removes one working order without trading. Risk-reducing: it can only ever take exposure off, never add any. Re-placing the same order afterwards is a new order at the back of the queue.",
+        permissions: &[TRADE_PERMISSION_ID],
+        event: Some(CANCEL_EVENT_KIND),
+        replay: ReplayTrace::Recorded,
+        posture: |spec| {
+            posture(
+                spec,
+                true,
+                "The order is named by id, and ids are never reused, so a stale cancel removes the order it meant or reports that there is no such order. It can never cancel a different one that happens to be working now.",
+            )
+        },
+    };
+
+    fn run<A: JournalAccess>(
+        self,
+        host: &mut H,
+        cx: &mut CallCx<'_, A>,
+    ) -> Result<TradeResult, ControlError> {
+        order(self, host, cx.actor)
+    }
+
+    fn entry(asked: Value, answer: &Value) -> Value {
+        entry(asked, answer)
+    }
+}
+
+impl<H: PaperHost + ?Sized> Call<H> for FlattenInput {
+    type Answer = TradeResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: FLATTEN_CAPABILITY_ID,
+        module: TRADE_MODULE_ID,
+        title: "Go flat: close the position and cancel every working order",
+        description: "Exits the open position at the next print and removes every working order, in one call, so the account is never half-flat between two calls. Risk-reducing: it only ever takes exposure off. Flat with nothing working, it changes nothing.",
+        permissions: &[TRADE_PERMISSION_ID],
+        event: Some(FLATTEN_EVENT_KIND),
+        replay: ReplayTrace::Recorded,
+        posture: |spec| {
+            posture(
+                spec,
+                true,
+                "Names no order and no size: it flattens whatever the account holds when it lands, so a caller working from a stale read still ends flat.",
+            )
+        },
+    };
+
+    fn run<A: JournalAccess>(
+        self,
+        host: &mut H,
+        cx: &mut CallCx<'_, A>,
+    ) -> Result<TradeResult, ControlError> {
+        order(self, host, cx.actor)
+    }
+
+    fn entry(asked: Value, answer: &Value) -> Value {
+        entry(asked, answer)
+    }
+}
+
+impl<H: PaperHost + ?Sized> Call<H> for ReverseInput {
+    type Answer = TradeResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: REVERSE_CAPABILITY_ID,
+        module: TRADE_MODULE_ID,
+        title: "Reverse the simulated position",
+        description: "Flips the open position in one market order for twice its size, protected by the ticket's offsets for the new side. The opening leg is measured by the risk per trade like any entry and refused with its sentence. Refused while flat: there is nothing to reverse.",
+        permissions: &[TRADE_PERMISSION_ID],
+        event: Some(REVERSE_EVENT_KIND),
+        replay: ReplayTrace::Recorded,
+        posture: |spec| {
+            posture(
+                spec,
+                false,
+                "The size is the account's at the moment the call lands, never a size the caller read earlier. Not safe to retry: a second reversal flips the position back.",
+            )
+        },
+    };
+
+    fn run<A: JournalAccess>(
+        self,
+        host: &mut H,
+        cx: &mut CallCx<'_, A>,
+    ) -> Result<TradeResult, ControlError> {
+        order(self, host, cx.actor)
+    }
+
+    fn entry(asked: Value, answer: &Value) -> Value {
+        entry(asked, answer)
+    }
 }
 
 /// Dock the family. One call from the window's action registry, nothing
@@ -380,11 +541,11 @@ where
         set_instrument_money_descriptor(),
         set_instrument_money::<H, A>,
     )?;
-    dock::<PlaceInput, _, _, _>(registry, place_descriptor())?;
-    dock::<BracketInput, _, _, _>(registry, bracket_descriptor())?;
-    dock::<CancelInput, _, _, _>(registry, cancel_descriptor())?;
-    dock::<FlattenInput, _, _, _>(registry, flatten_descriptor())?;
-    dock::<ReverseInput, _, _, _>(registry, reverse_descriptor())?;
+    dock_call::<PlaceInput, _, _, _>(registry)?;
+    dock_call::<BracketInput, _, _, _>(registry)?;
+    dock_call::<CancelInput, _, _, _>(registry)?;
+    dock_call::<FlattenInput, _, _, _>(registry)?;
+    dock_call::<ReverseInput, _, _, _>(registry)?;
     crate::trade_account::register(registry)
 }
 

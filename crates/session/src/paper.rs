@@ -43,8 +43,8 @@ pub use command::{NOTHING_TO_REVERSE, TradeCommand, TradeOutcome, TradeRefusal};
 pub use settings::{SharedChange, SharedSettings};
 pub use wire::{
     BRACKET_EVENT_KIND, BracketInput, CANCEL_EVENT_KIND, CancelInput, FLATTEN_EVENT_KIND,
-    FlattenInput, PLACE_EVENT_KIND, PlaceInput, REVERSE_EVENT_KIND, ReverseInput, TradeCall,
-    TradeResult, WorkingOrderView,
+    FlattenInput, PLACE_EVENT_KIND, PlaceInput, REVERSE_EVENT_KIND, ReverseInput, TradeResult,
+    WorkingOrderView,
 };
 
 /// What a rebuilt timeline says when it flattened a position.
