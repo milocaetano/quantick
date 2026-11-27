@@ -1,4 +1,4 @@
-//! The published documents whose wire types this crate owns. The window's
+//! The published documents whose wire types this module owns. The window's
 //! catalogue adds the few it still owns itself and commits them all under
 //! `schemas/control`.
 
@@ -13,7 +13,7 @@ macro_rules! family_documents {
     }};
 }
 
-/// Every document this crate publishes, as `(file name, schema)`.
+/// Every document this module publishes, as `(file name, schema)`.
 #[must_use]
 pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
     quantick_control::control_families!(family_documents)

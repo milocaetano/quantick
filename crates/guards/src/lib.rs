@@ -80,6 +80,8 @@ mod strategy_describe_tests;
 pub mod struct_width;
 pub mod ui_free;
 pub mod window_reach;
+#[cfg(test)]
+mod wire_reach_tests;
 
 use std::path::{Path, PathBuf};
 

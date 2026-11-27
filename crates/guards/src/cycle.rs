@@ -393,12 +393,35 @@ pub fn components(edges: &BTreeMap<String, BTreeSet<(String, String)>>) -> Vec<C
 }
 
 /// The cycles in one crate, given its directory.
+/// Modules that hold a crate folded into their host, as `(crate, module)`.
+///
+/// One node per top-level module makes the whole folded tree a single node,
+/// and every `use crate::<module>::x` inside it a self-edge. So the tree is
+/// also measured as the crate it was: its submodules are the nodes, its
+/// `use crate::<module>::` imports the edges, and its cycles count against
+/// the host crate.
+const FOLDED: &[(&str, &str)] = &[("crates/control-handlers", "wire")];
+
 fn measure_crate(crate_dir: &Path, crate_path: &str, unreadable: &mut Vec<String>) -> Vec<Cycle> {
     let src = crate_dir.join("src");
-    let mut edges: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
     let mut files: Vec<(String, String)> = Vec::new();
     collect_sources(&src, &src, &mut files, crate_path, unreadable);
-    for (relative, source) in &files {
+    let mut cycles = components(&module_edges(&files, &format!("{crate_path}/src")));
+    for (_, folded) in FOLDED.iter().filter(|(host, _)| *host == crate_path) {
+        cycles.extend(components(&folded_edges(&files, crate_path, folded)));
+    }
+    cycles.sort_by(|a, b| a.modules.cmp(&b.modules));
+    cycles
+}
+
+/// `module -> (target, file)` over the top-level modules of the tree whose
+/// files sit, relative, under `dir`.
+fn module_edges(
+    files: &[(String, String)],
+    dir: &str,
+) -> BTreeMap<String, BTreeSet<(String, String)>> {
+    let mut edges: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
+    for (relative, source) in files {
         let Some(module) = module_of(relative) else {
             continue;
         };
@@ -411,10 +434,45 @@ fn measure_crate(crate_dir: &Path, crate_path: &str, unreadable: &mut Vec<String
             edges
                 .entry(module.clone())
                 .or_default()
-                .insert((target, format!("{crate_path}/src/{relative}")));
+                .insert((target, format!("{dir}/{relative}")));
         }
     }
-    components(&edges)
+    edges
+}
+
+/// The same edges inside one folded module, named `<folded>::<submodule>`.
+/// Only `use crate::<folded>::` imports count: any other `use crate::` names
+/// a host module, which [`module_edges`] already sees.
+fn folded_edges(
+    files: &[(String, String)],
+    crate_path: &str,
+    folded: &str,
+) -> BTreeMap<String, BTreeSet<(String, String)>> {
+    let inner_prefix = format!("{folded}/");
+    let inner_use = format!("use crate::{folded}::");
+    let inside: Vec<(String, String)> = files
+        .iter()
+        .filter_map(|(relative, source)| {
+            let inner = relative.strip_prefix(&inner_prefix)?;
+            // Host imports are hidden first so they cannot alias a
+            // submodule of the same name (`wire::session` beside `session`).
+            let own = source
+                .replace(&inner_use, "\u{1}")
+                .replace("use crate::", "use host::")
+                .replace('\u{1}', "use crate::");
+            Some((inner.to_owned(), own))
+        })
+        .collect();
+    module_edges(&inside, &format!("{crate_path}/src/{folded}"))
+        .into_iter()
+        .map(|(module, targets)| {
+            let targets = targets
+                .into_iter()
+                .map(|(target, file)| (format!("{folded}::{target}"), file))
+                .collect();
+            (format!("{folded}::{module}"), targets)
+        })
+        .collect()
 }
 
 /// Every `.rs` file under `src`, as `(path relative to src, contents)`.
@@ -673,6 +731,25 @@ mod tests {
                 .insert(((*to).to_owned(), format!("{from}.rs")));
         }
         map
+    }
+
+    /// A folded crate keeps its own module graph: a cycle between two of
+    /// its submodules is found, and a host import of a same-named module is
+    /// not mistaken for one of them.
+    #[test]
+    fn a_cycle_inside_a_folded_module_is_found() {
+        let file = |path: &str, source: &str| (path.to_owned(), source.to_owned());
+        let files = [
+            file("wire.rs", "pub mod a;\npub mod b;\n"),
+            file("wire/a.rs", "use crate::wire::b::B;\npub struct A;\n"),
+            file("wire/b.rs", "use crate::wire::a::A;\npub struct B;\n"),
+            file("wire/c.rs", "use crate::a::Host;\npub struct C;\n"),
+            file("a.rs", "pub struct Host;\n"),
+        ];
+        let found = components(&folded_edges(&files, "crates/host", "wire"));
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].modules, vec!["wire::a", "wire::b"]);
+        assert!(components(&module_edges(&files, "crates/host/src")).is_empty());
     }
 
     /// The defect PR #282 landed, in miniature: two modules importing each
