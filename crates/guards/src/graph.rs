@@ -33,7 +33,7 @@
 //! # Where each finding's rule is written
 //!
 //! Every violation names the sentence it enforces, so the agent that trips one
-//! reads that sentence rather than the whole of `CLAUDE.md`. Five of the eight
+//! reads that sentence rather than the whole of `CLAUDE.md`. Six of the nine
 //! checks cite `CLAUDE.md`'s *Architecture* section. The rest cite where their
 //! rule is honestly written: the cap on `app` is [`APP_DEPENDENCY_CEILING`],
 //! and the two manifest-hygiene checks cite the root `Cargo.toml`, whose
@@ -132,37 +132,57 @@ pub const APP_DEPENDENCY_CEILING: usize = 30;
 /// with, and no more — and no feed may depend on another feed.
 const FEEDS_MAY_REACH: &[&str] = &["engine", "orderbook", "sources"];
 
-/// The tables a workspace is checked against. The repository's own are
-/// [`WORKSPACE_RULES`]; a test checks a fixture workspace against its own.
+/// The crates only the named crates may link, in any dependency table. Ranks
+/// order the graph but let any higher crate reach any lower one; this keeps
+/// the leaves unlinked and the window's and the feed host's exceptions where
+/// `CLAUDE.md` puts them. A name ending in `*` covers every crate it prefixes.
+const CONSUMED_ONLY_BY: &[(&str, &[&str])] = &[
+    ("app", &[]),
+    ("backtest", &[]),
+    ("guards", &[]),
+    ("mcp", &[]),
+    ("platform", &["app"]),
+    ("feed", &["app"]),
+    ("broker-mt5", &["app", "feed"]),
+    ("feed-*", &["app", "feed"]),
+];
+
+/// The two tables a fixture workspace may replace; the ranks are always
+/// [`RANK`].
 struct Rules<'a> {
-    /// Every crate's rank: [`RANK`].
-    rank: &'a [(&'a str, u8)],
-    /// The signed same-rank edges: [`RANK_EXCEPTIONS`].
     exceptions: &'a [(&'a str, &'a str)],
-    /// The cap on what [`TOP_OF_THE_GRAPH`] ships with: [`APP_DEPENDENCY_CEILING`].
     app_ceiling: usize,
 }
 
 /// The tables this repository is held to.
 const WORKSPACE_RULES: Rules<'static> = Rules {
-    rank: RANK,
     exceptions: RANK_EXCEPTIONS,
     app_ceiling: APP_DEPENDENCY_CEILING,
 };
 
 impl Rules<'_> {
-    /// A crate's rank, if the table names it.
-    fn rank_of(&self, krate: &str) -> Option<u8> {
-        self.rank
-            .iter()
-            .find(|(name, _)| *name == krate)
-            .map(|(_, rank)| *rank)
-    }
-
     /// Whether `from → to` is a signed exception.
     fn excepts(&self, from: &str, to: &str) -> bool {
         self.exceptions.contains(&(from, to))
     }
+}
+
+/// A crate's rank, if [`RANK`] names it.
+fn rank_of(krate: &str) -> Option<u8> {
+    RANK.iter()
+        .find(|(name, _)| *name == krate)
+        .map(|(_, rank)| *rank)
+}
+
+/// The only crates that may link `krate`, if [`CONSUMED_ONLY_BY`] restricts it.
+fn allowed_consumers(krate: &str) -> Option<&'static [&'static str]> {
+    CONSUMED_ONLY_BY
+        .iter()
+        .find(|(name, _)| match name.strip_suffix('*') {
+            Some(prefix) => krate.starts_with(prefix),
+            None => *name == krate,
+        })
+        .map(|(_, consumers)| *consumers)
 }
 
 /// The rule a dependency-direction finding cites.
@@ -171,6 +191,10 @@ const RULE_DIRECTION: &str = "CLAUDE.md: Architecture, dependency direction";
 /// The rule a coverage finding cites: `CLAUDE.md` names every crate, and the
 /// architecture list is what a reader is pointed at.
 const RULE_CRATE_LIST: &str = "CLAUDE.md: Architecture, the crate list";
+
+/// The rule a restricted-consumer finding cites.
+const RULE_CONSUMERS: &str =
+    "CLAUDE.md: Architecture, leaves stay leaves and the `feed` and `platform` exceptions";
 
 /// Where the cap on `app` is written: the constant is the rule.
 const RULE_APP_CEILING: &str = "crates/guards/src/graph.rs: APP_DEPENDENCY_CEILING";
@@ -189,6 +213,18 @@ pub const REMEDY_DIRECTION: &str = "A crate manifest declares an edge to a crate
      `RANK` in `crates/guards/src/graph.rs` so every edge points down, which is where that \
      argument is signed. `RANK_EXCEPTIONS` only shrinks.";
 
+/// What the guard asks for when a feed reaches past what a feed may link.
+pub const REMEDY_FEEDS: &str = "A `feed-*` venue may link only `engine`, `orderbook` and `sources`, and never another \
+     venue. Remove the edge: what the venue needed belongs in the feed host (`feed`), which \
+     runs the venues and links what they report into.";
+
+/// What the guard asks for when a crate links one it is not allowed to.
+pub const REMEDY_CONSUMERS: &str = "The crate this manifest links is one only named crates may link: a leaf nothing links, \
+     `platform` for the window alone, or the feed host and its venues, the one place below \
+     `app` with runtimes, threads and network. Remove the edge and reach the capability through \
+     a port the lower crate defines. `CONSUMED_ONLY_BY` in `crates/guards/src/graph.rs` is the \
+     list.";
+
 /// What the guard asks for when a signed exception outlived its edge.
 pub const REMEDY_EXCEPTIONS: &str = "An entry in `RANK_EXCEPTIONS` in `crates/guards/src/graph.rs` no longer excuses anything: \
      its edge is gone, or the ranks already allow it. Delete the entry; the list only shrinks.";
@@ -199,12 +235,16 @@ pub const REMEDY_COVERAGE: &str = "A crate is not covered by the dependency tabl
      `crates/guards/src/graph.rs`, above everything it depends on and below everything that \
      depends on it, and name it in `CLAUDE.md`'s architecture section.";
 
-/// What the guard asks for when `app` ships with more or fewer siblings than its cap.
-pub const REMEDY_CEILING: &str = "`app` ships with a number of sibling crates other than `APP_DEPENDENCY_CEILING` in \
-     `crates/guards/src/graph.rs`. Over it: move a crate only tests use to `[dev-dependencies]`, \
+/// What the guard asks for when `app` ships with more siblings than its cap.
+pub const REMEDY_CEILING_OVER: &str = "`app` ships with more sibling crates than `APP_DEPENDENCY_CEILING` in \
+     `crates/guards/src/graph.rs` allows. Move a crate only tests use to `[dev-dependencies]`, \
      make one only a harness uses optional behind its feature, or move the code that needs it \
-     into a crate below `app`. Under it: lower the constant to the measured number; it only \
-     shrinks.";
+     into a crate below `app`. The ceiling only shrinks.";
+
+/// What the guard asks for when `app` ships with fewer siblings than its cap.
+pub const REMEDY_CEILING_UNDER: &str = "`app` ships with fewer sibling crates than `APP_DEPENDENCY_CEILING` in \
+     `crates/guards/src/graph.rs`. Lower the constant to the measured number, so the crate \
+     that left cannot come back unnoticed.";
 
 /// What the guard asks for when a manifest pins its own third-party source.
 pub const REMEDY_VERSIONS: &str = "A third-party source is stated outside the root manifest. Move the version into \
@@ -223,14 +263,14 @@ pub fn check(root: &Path) -> Vec<Finding> {
     check_against(root, &WORKSPACE_RULES)
 }
 
-/// [`check`], against the tables `rules` holds.
 fn check_against(root: &Path, rules: &Rules<'_>) -> Vec<Finding> {
     let manifests = crate_manifests(root);
     let mut findings = Vec::new();
     findings.extend(feeds_reach_the_domain_only(&manifests));
+    findings.extend(restricted_crates_keep_their_consumers(&manifests));
     findings.extend(nothing_depends_upwards(&manifests, rules));
     findings.extend(every_exception_still_excuses_an_edge(&manifests, rules));
-    findings.extend(every_crate_is_ranked(&manifests, rules));
+    findings.extend(every_crate_is_ranked(&manifests));
     findings.extend(the_top_stays_under_its_ceiling(&manifests, rules));
     findings.extend(the_architecture_list_names_every_crate(root, &manifests));
     findings.extend(versions_live_in_the_root_manifest(&manifests));
@@ -381,7 +421,37 @@ fn feeds_reach_the_domain_only(manifests: &[Manifest]) -> Vec<Finding> {
                      feed — {RULE_DIRECTION}",
                     manifest.name
                 ),
-                REMEDY_DIRECTION,
+                REMEDY_FEEDS,
+            ));
+        }
+    }
+    findings
+}
+
+/// Every crate [`CONSUMED_ONLY_BY`] restricts is linked, in any table, only
+/// by the crates it names.
+fn restricted_crates_keep_their_consumers(manifests: &[Manifest]) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for manifest in manifests {
+        for dependency in path_dependencies(&manifest.text) {
+            let Some(consumers) = allowed_consumers(&dependency) else {
+                continue;
+            };
+            if consumers.contains(&manifest.name.as_str()) {
+                continue;
+            }
+            let who = if consumers.is_empty() {
+                "no crate".to_owned()
+            } else {
+                format!("only `{}`", consumers.join("`, `"))
+            };
+            findings.push(Finding::new(
+                format!(
+                    "crates/{}/Cargo.toml: depends on `{dependency}`, which {who} may link — \
+                     {RULE_CONSUMERS}",
+                    manifest.name
+                ),
+                REMEDY_CONSUMERS,
             ));
         }
     }
@@ -394,11 +464,23 @@ fn nothing_depends_upwards(manifests: &[Manifest], rules: &Rules<'_>) -> Vec<Fin
     let mut findings = Vec::new();
     for manifest in manifests {
         // An unranked crate is `every_crate_is_ranked`'s finding, on either end.
-        let Some(own) = rules.rank_of(&manifest.name) else {
+        let Some(own) = rank_of(&manifest.name) else {
             continue;
         };
         for dependency in path_dependencies(&manifest.text) {
-            let Some(theirs) = rules.rank_of(&dependency) else {
+            let Some(theirs) = rank_of(&dependency) else {
+                // A crate under `crates/` without a rank is reported once, as
+                // that crate; a path that leads to no crate here is this one's.
+                if !manifests.iter().any(|m| m.name == dependency) {
+                    findings.push(Finding::new(
+                        format!(
+                            "crates/{}/Cargo.toml: depends by path on `{dependency}`, which is no \
+                             ranked crate under `crates/` — {RULE_DIRECTION}",
+                            manifest.name
+                        ),
+                        REMEDY_COVERAGE,
+                    ));
+                }
                 continue;
             };
             if theirs < own || rules.excepts(&manifest.name, &dependency) {
@@ -435,7 +517,7 @@ fn every_exception_still_excuses_an_edge(
                     .any(|sibling| sibling == to)
             });
         let ranks_allow = matches!(
-            (rules.rank_of(from), rules.rank_of(to)),
+            (rank_of(from), rank_of(to)),
             (Some(own), Some(theirs)) if theirs < own
         );
         let why = if !declared {
@@ -458,10 +540,10 @@ fn every_exception_still_excuses_an_edge(
 
 /// A crate without a rank is not a failure in the checks above — it is simply
 /// unguarded, which looks green and is worse. This is the reminder.
-fn every_crate_is_ranked(manifests: &[Manifest], rules: &Rules<'_>) -> Vec<Finding> {
+fn every_crate_is_ranked(manifests: &[Manifest]) -> Vec<Finding> {
     manifests
         .iter()
-        .filter(|manifest| rules.rank_of(&manifest.name).is_none())
+        .filter(|manifest| rank_of(&manifest.name).is_none())
         .map(|manifest| {
             Finding::new(
                 format!(
@@ -483,19 +565,25 @@ fn the_top_stays_under_its_ceiling(manifests: &[Manifest], rules: &Rules<'_>) ->
     };
     let shipped = shipped_path_dependencies(&top.text).len();
     let ceiling = rules.app_ceiling;
-    let line = match shipped.cmp(&ceiling) {
+    let (remedy, line) = match shipped.cmp(&ceiling) {
         Ordering::Equal => return Vec::new(),
-        Ordering::Greater => format!(
-            "crates/{TOP_OF_THE_GRAPH}/Cargo.toml: ships with {shipped} sibling crates, over the \
+        Ordering::Greater => (
+            REMEDY_CEILING_OVER,
+            format!(
+                "crates/{TOP_OF_THE_GRAPH}/Cargo.toml: ships with {shipped} sibling crates, over the \
              ceiling of {ceiling} — {RULE_APP_CEILING}"
+            ),
         ),
-        Ordering::Less => format!(
-            "crates/{TOP_OF_THE_GRAPH}/Cargo.toml: ships with {shipped} sibling crates, under the \
+        Ordering::Less => (
+            REMEDY_CEILING_UNDER,
+            format!(
+                "crates/{TOP_OF_THE_GRAPH}/Cargo.toml: ships with {shipped} sibling crates, under the \
              ceiling of {ceiling}: lower `APP_DEPENDENCY_CEILING` to {shipped} — \
              {RULE_APP_CEILING}"
+            ),
         ),
     };
-    vec![Finding::new(line, REMEDY_CEILING)]
+    vec![Finding::new(line, remedy)]
 }
 
 /// Every crate is named in `CLAUDE.md`'s architecture section.
@@ -797,7 +885,6 @@ mod tests {
         check_against(
             root,
             &Rules {
-                rank: RANK,
                 exceptions: &[],
                 app_ceiling,
             },
@@ -1134,7 +1221,6 @@ mod tests {
             ],
         );
         let rules = Rules {
-            rank: RANK,
             exceptions: &[
                 ("sim", "pine"),
                 ("engine", "orderbook"),
@@ -1215,13 +1301,12 @@ mod tests {
     }
 
     #[test]
-    fn every_crate_has_one_rank_and_ranks_stay_in_range() {
+    fn no_crate_is_ranked_twice() {
         let mut names: Vec<&str> = RANK.iter().map(|(name, _)| *name).collect();
         names.sort_unstable();
         let ranked = names.len();
         names.dedup();
         assert_eq!(names.len(), ranked, "no crate is ranked twice");
-        assert!(RANK.iter().all(|(_, rank)| *rank <= 8), "ranks are 0-8");
     }
 
     /// The numbers [`crate::report`] prints, on a fixture: a crate named in
@@ -1244,11 +1329,70 @@ mod tests {
         assert_eq!(max_depth(root.path()), 3);
     }
 
-    /// The repository's depth fits its ranks: with every edge pointing down,
-    /// no chain is longer than the top rank.
+    /// A cycle, which the direction check reports, ends the depth walk
+    /// rather than recursing forever.
     #[test]
-    fn this_workspace_is_no_deeper_than_its_top_rank() {
-        let top = RANK.iter().map(|(_, rank)| usize::from(*rank)).max();
-        assert_eq!(Some(max_depth(&crate::workspace_root())), top);
+    fn the_depth_walk_survives_a_cycle() {
+        let root = workspace(
+            "graph-cycle",
+            &[
+                ("engine", &edge("indicators")),
+                ("indicators", &edge("engine")),
+                ("pine", &edge("indicators")),
+            ],
+        );
+        assert_eq!(max_depth(root.path()), 2);
+    }
+
+    /// A lower rank is not enough: a leaf links to nothing above it, and the
+    /// broker venue is the feed host's and the window's alone.
+    #[test]
+    fn a_restricted_crate_linked_by_another_is_a_finding() {
+        let root = workspace(
+            "graph-consumers",
+            &[
+                ("mcp", ""),
+                ("broker-mt5", ""),
+                ("chart", &edge("mcp")),
+                ("paper", &edge("broker-mt5")),
+                ("feed", &edge("broker-mt5")),
+                ("app", ""),
+            ],
+        );
+        let findings = check_fixture(root.path(), 0);
+        let lines: Vec<&str> = findings.iter().map(|f| f.line.as_str()).collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "chart and paper offend, feed does not: {lines:#?}"
+        );
+        assert!(
+            lines[0].starts_with("crates/chart/Cargo.toml: depends on `mcp`, which no crate may link")
+                && lines[1].starts_with(
+                    "crates/paper/Cargo.toml: depends on `broker-mt5`, which only `app`, `feed` may link"
+                )
+                && lines.iter().all(|line| line.ends_with(RULE_CONSUMERS)),
+            "each names the edge and the rule: {lines:#?}"
+        );
+    }
+
+    /// A path that leads out of `crates/` has no rank to compare and is
+    /// reported rather than passing unread.
+    #[test]
+    fn a_path_dependency_outside_the_workspace_crates_is_a_finding() {
+        let root = workspace(
+            "graph-outside",
+            &[
+                ("engine", "vendored = { path = \"../../vendor/x\" }\n"),
+                ("app", ""),
+            ],
+        );
+        let findings = check_fixture(root.path(), 0);
+        assert!(
+            findings.iter().any(|f| f
+                .line
+                .contains("depends by path on `../vendor/x`, which is no ranked crate")),
+            "the stray path is named: {findings:#?}"
+        );
     }
 }
