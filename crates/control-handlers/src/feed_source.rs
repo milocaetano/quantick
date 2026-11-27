@@ -5,6 +5,11 @@
 //! A changed source throws the tab's timeline away, closes its paper position
 //! and disarms its strategies, so the switch is journaled with who made it and
 //! the pair it left: an assistant's switch never reads as the trader's own.
+use crate::wire::feed::MODULE_ID;
+use crate::wire::feed_source::{
+    FEED_SOURCE_EVENT_KIND, FeedSourceInput, FeedSourceResult, TabMarketSetInput,
+    TabMarketSetResult, tab_market_descriptor,
+};
 use crate::{
     dock::ActionDock,
     market_tab::{FeedSelection, MarketTabHost, feed_offers, market, switch_market},
@@ -14,11 +19,6 @@ use crate::{
 use quantick_control::wire::WireU64;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::feed::MODULE_ID;
-use quantick_control_schema::feed_source::{
-    FEED_SOURCE_EVENT_KIND, FeedSourceInput, FeedSourceResult, TabMarketSetInput,
-    TabMarketSetResult, tab_market_descriptor,
-};
 use serde_json::{Value, json};
 
 /// Dock `feed.source.set` and `tab.market.set`, one switch under two names.
@@ -30,7 +30,7 @@ where
     H: MarketTabHost + ?Sized,
     A: NotifyAccess,
 {
-    registry.register(quantick_control_schema::feed_source::descriptor(), select)?;
+    registry.register(crate::wire::feed_source::descriptor(), select)?;
     registry.register(tab_market_descriptor(), set_market)
 }
 

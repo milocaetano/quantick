@@ -489,7 +489,8 @@ impl QuantickApp {
         let lead = statusbar::StatusLead::of(tab, stall, now_ms, open);
         scratch.status = statusbar::draw(ctx, &self.status_model(), self.runtime.tz, &lead);
         if scratch.status.open_display_settings {
-            let display = quantick_control_schema::settings_sections::SettingsSection::Display;
+            let display =
+                quantick_control_handlers::wire::settings_sections::SettingsSection::Display;
             super::menu_bar::apply_menu_command_on(self, ctx, MenuCommand::OpenSettings(display));
             ctx.request_repaint();
         }

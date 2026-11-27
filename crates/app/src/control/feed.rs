@@ -1,6 +1,6 @@
 //! Feed, market-data capability, status, and provenance snapshot.
 
-pub(crate) use quantick_control_schema::feed::*;
+pub(crate) use quantick_control_handlers::wire::feed::*;
 
 use crate::app::TabsPort;
 use quantick_control::{
@@ -48,7 +48,7 @@ pub(crate) fn market_data_provenance(
     tab: &crate::tab::Tab,
     config: &crate::config::AppConfig,
 ) -> MarketDataProvenance {
-    quantick_control_schema::feed::market_data_provenance(
+    quantick_control_handlers::wire::feed::market_data_provenance(
         tab.link.replay.is_some(),
         tab.capabilities(config).traded_volume,
         tab.side_note(config).is_some(),
@@ -58,7 +58,7 @@ pub(crate) fn market_data_provenance(
 fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot {
     let config = app.tab_reads().config();
     FeedSnapshot {
-        sources: quantick_control_schema::feed_source::choices(config),
+        sources: quantick_control_handlers::wire::feed_source::choices(config),
         tabs: app
             .tab_reads()
             .tabs()

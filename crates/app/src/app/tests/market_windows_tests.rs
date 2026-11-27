@@ -577,7 +577,7 @@ fn market_windows_physical_placement_uses_child_scale_after_a_higher_dpi_source(
 fn market_window_control_placement_reports_acceptance_separately_from_native_observation() {
     use quantick_control::wire::WireU64;
     use quantick_control_handlers::native_window::NativeWindowHost;
-    use quantick_control_schema::{
+    use quantick_control_handlers::wire::{
         market_windows::{PhysicalPlacement, PlacementInput},
         native_window::{WindowInput, WindowState},
     };

@@ -3,12 +3,12 @@
 //! window redraws the tab. The capsule's buttons land here too, so a hand
 //! journals what a script would.
 
-use quantick_control::error::ControlError;
-use quantick_control::wire::{ActorContext, WireU64};
-use quantick_control_schema::workspace_book::{
+use crate::wire::workspace_book::{
     WORKSPACE_REVERT_UNDONE_EVENT_KIND, WORKSPACE_REVERTED_EVENT_KIND, WorkspaceRevertResult,
     WorkspaceTabInput,
 };
+use quantick_control::error::ControlError;
+use quantick_control::wire::{ActorContext, WireU64};
 use quantick_workspace::workspace_book::RevertOutcome;
 use serde_json::{Value, json};
 

@@ -2,7 +2,7 @@
 use crate::metrics::wall_clock_ms;
 use quantick_alerts::sound::Cue;
 use quantick_alerts::{AlertError, DurableDrawingRef};
-use quantick_control_schema::alerts::{DrawingSelector, TargetResolveError};
+use quantick_control_handlers::wire::alerts::{DrawingSelector, TargetResolveError};
 use quantick_ui_model::alerts::requests;
 
 /// Only native clock state lives here. The workspace book/store stay headless.

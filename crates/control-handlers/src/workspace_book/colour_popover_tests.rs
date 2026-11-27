@@ -2,8 +2,8 @@
 //! workspaces with tab 1 on Flow: what a pick does, the question, Custom and
 //! the palette read, all through the one path `workspace.colour.set` takes.
 
+use crate::wire::workspace_colour::WorkspaceColourPaletteResult;
 use quantick_control::wire::ActorContext;
-use quantick_control_schema::workspace_colour::WorkspaceColourPaletteResult;
 use quantick_session::colour_popover::ColourIntent;
 use quantick_session::workspace_menu::{WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::workspaces::palette::palette;

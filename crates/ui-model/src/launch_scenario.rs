@@ -2,7 +2,7 @@
 //! Commands are transient. In particular, scripted indicators are excluded from
 //! the persisted layout and layer changes precede the saved-layer snapshot.
 use crate::remove_chart::Intent as ChartMenu;
-use quantick_control_schema::{
+use quantick_control_handlers::wire::{
     desk,
     launch_calls::{self, LaunchCall},
     launch_values as values, layout,

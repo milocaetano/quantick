@@ -57,7 +57,7 @@ fn migration_preserves_state_and_effects() {
 }
 #[test]
 fn control_search_uses_the_same_picker_and_filename_identity() {
-    use quantick_control_schema::indicator_picker::PickerAction;
+    use quantick_control_handlers::wire::indicator_picker::PickerAction;
     let mut state = fixture();
     let scripts = state.scripts.clone();
     Model::update(

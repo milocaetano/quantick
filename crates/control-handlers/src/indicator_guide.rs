@@ -1,11 +1,11 @@
 //! Durable per-indicator price-hover guide, shared by UI and automation.
 use crate::indicator_host::IndicatorControlHost;
+use crate::wire::indicator_guide::{
+    INDICATOR_GUIDE_EVENT_KIND, IndicatorGuideInput, IndicatorGuideResult, descriptor,
+};
 use crate::{dock::ActionDock, tabs::JournalAccess};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::{authority::SCRIPT_MODULE_ID, journal::NewEvent};
-use quantick_control_schema::indicator_guide::{
-    INDICATOR_GUIDE_EVENT_KIND, IndicatorGuideInput, IndicatorGuideResult, descriptor,
-};
 use serde_json::Value;
 
 /// Dock the guide call.

@@ -25,7 +25,7 @@ PREFIX = b"QUANTICK_"
 # The character class the old per-name pattern used on both sides.
 NAME_BYTES = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
 
-# Prose, not a read: a published control-schema description names the hook a
+# Prose, not a read: a published control wire description names the hook a
 # capture drives the button with, so the string is in the default binary
 # without the hook being readable there.
 PROSE_ONLY = frozenset({"QUANTICK_LOAD_OLDER"})

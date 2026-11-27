@@ -267,8 +267,8 @@ fn targeted_scene_and_snapshot_readback_observe_native_state_and_leave_home_on_s
         .unwrap();
     quantick_control_handlers::home_tab::show_home(&mut app).unwrap();
     app.operate_market_tabs(
-        quantick_control_schema::market_windows::TabOperation::Select(
-            quantick_control_schema::market_windows::SelectInput {
+        quantick_control_handlers::wire::market_windows::TabOperation::Select(
+            quantick_control_handlers::wire::market_windows::SelectInput {
                 tab_id: quantick_control::wire::WireU64::new(tab),
                 window_id: quantick_control::wire::WireU64::new(child.0),
             },

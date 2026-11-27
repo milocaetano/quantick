@@ -16,12 +16,12 @@ fn settings_call(
 }
 
 fn addressed_style(app: &mut QuantickApp) -> ChartStyle {
-    use quantick_control_schema::chart_settings::ChartSettingsInput;
+    use quantick_control_handlers::wire::chart_settings::ChartSettingsInput;
     let inspected = app
         .layer_wiring()
         .chart_settings(ChartSettingsInput::Inspect { target: None })
         .unwrap();
-    quantick_control_schema::chart_settings::style_wire::decode(
+    quantick_control_handlers::wire::chart_settings::style_wire::decode(
         inspected.effective_style.expect("live pane style"),
     )
     .unwrap()
@@ -74,7 +74,9 @@ fn a_double_click_on_the_candles_opens_the_candles_tab() {
     let inspected = app
         .layer_wiring()
         .chart_settings(
-            quantick_control_schema::chart_settings::ChartSettingsInput::Inspect { target: None },
+            quantick_control_handlers::wire::chart_settings::ChartSettingsInput::Inspect {
+                target: None,
+            },
         )
         .unwrap();
     assert_eq!(
@@ -146,7 +148,7 @@ fn the_footprint_entry_points_open_the_footprint_tab() {
 #[test]
 fn a_named_style_change_leaves_the_appearance_log_line() {
     use super::control_launch_baselines::RecordedEvents;
-    use quantick_control_schema::chart_settings::ChartSettingsInput;
+    use quantick_control_handlers::wire::chart_settings::ChartSettingsInput;
     use tracing_subscriber::prelude::*;
     // Keep the general callsite-interest path while subscriber-less test threads
     // register this same log site. This dispatcher is never installed.
@@ -258,9 +260,10 @@ fn the_settings_call_reaches_the_window_and_the_addressed_panes_look_only() {
     );
     let save = json!({"action":"save_candle_preset", "name":"night", "target":target});
     success_result(&settings_call(&mut app, &mut cockpit, save));
-    let night: ChartStyle = quantick_control_schema::chart_settings::style_wire::decode(style)
-        .unwrap()
-        .into();
+    let night: ChartStyle =
+        quantick_control_handlers::wire::chart_settings::style_wire::decode(style)
+            .unwrap()
+            .into();
     assert_eq!(
         crate::candle_presets::CandlePresetStore::load(&crate::candle_presets::default_path())
             .get("night"),

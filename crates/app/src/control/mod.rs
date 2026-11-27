@@ -53,11 +53,11 @@ pub(crate) use quantick_control::annotation::{
     HORIZONTAL_LEVELS_CAPABILITY_ID, PARALLEL_CHANNEL_CAPABILITY_ID, PROFILE_CAPABILITY_ID,
     PROFILE_CAPABILITY_VERSION, RECTANGLE_CAPABILITY_ID, TREND_LINE_CAPABILITY_ID,
 };
+pub(crate) use quantick_control_handlers::wire::indicator_guide::INDICATOR_GUIDE_CAPABILITY_ID;
 #[cfg(test)]
 pub(crate) use quantick_control_host::authority::{
     DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID,
 };
-pub(crate) use quantick_control_schema::indicator_guide::INDICATOR_GUIDE_CAPABILITY_ID;
 #[cfg(test)]
 pub(crate) use scene::scene_snapshot;
 

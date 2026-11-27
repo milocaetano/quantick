@@ -1,7 +1,7 @@
 //! The Help pages the `⋮` menu opens, and which window Settings and Help are on.
 
 use eframe::egui;
-use quantick_control_schema::window_menu::{ABOUT_WORKSPACES, HelpPage};
+use quantick_control_handlers::wire::window_menu::{ABOUT_WORKSPACES, HelpPage};
 
 use super::super::QuantickApp;
 use super::{

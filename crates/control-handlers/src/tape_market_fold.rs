@@ -2,8 +2,8 @@
 use crate::addressed_pane::AddressedPanePort;
 use crate::dock::ActionDock;
 use crate::tape_fold::TapeFoldPort;
+use crate::wire::tape_market_fold::{TapeMarketFoldInput, descriptor};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::tape_market_fold::{TapeMarketFoldInput, descriptor};
 use serde_json::Value;
 
 pub fn register<D: ActionDock<H, A>, H: AddressedPanePort<Pane: TapeFoldPort> + ?Sized, A>(
@@ -44,7 +44,7 @@ mod tests {
     impl TapeFoldPort for Pane {
         fn set_tape_fold(
             &mut self,
-            _: quantick_control_schema::tape_fold::TapeFold,
+            _: crate::wire::tape_fold::TapeFold,
         ) -> Result<bool, ControlError> {
             Ok(false)
         }

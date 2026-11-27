@@ -6,7 +6,7 @@ use crate::style::ChartStyle;
 use crate::surfaces::ChartSettingsTab;
 use quantick_chart::pane_style::StyleTarget;
 use quantick_control_handlers::chart_settings as settings;
-use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
+use quantick_control_handlers::wire::chart_settings::{ChartSettingsInput, ChartSettingsResult};
 use quantick_ui_model::Model as _;
 
 impl LayerWiring<'_> {

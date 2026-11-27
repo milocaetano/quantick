@@ -4,16 +4,16 @@
 //! doors cannot decide differently. The host lends primitives only.
 use crate::dock::ActionDock;
 use crate::notify::NotifyAccess;
-use quantick_control::wire::WireU64;
-use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_host::authority::MARKET_MODULE_ID;
-use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::market_palette::PALETTE_OPENED_EVENT_KIND;
-use quantick_control_schema::market_palette::{
+use crate::wire::market_palette::PALETTE_OPENED_EVENT_KIND;
+use crate::wire::market_palette::{
     CatalogRemoveInput, CatalogRemoveResult, MarketOpenInput, MarketOpenResult,
     MarketPaletteOpenInput, MarketPaletteOpenResult, catalog_remove_descriptor,
     market_open_descriptor, market_palette_open_descriptor,
 };
+use quantick_control::wire::WireU64;
+use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
+use quantick_control_host::authority::MARKET_MODULE_ID;
+use quantick_control_host::journal::NewEvent;
 use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
 use quantick_stores::market_list::{
     MarketSnapshot, OpenChoice, PaletteIntent, SwitchTarget, focus_target, focus_toast, open_toast,

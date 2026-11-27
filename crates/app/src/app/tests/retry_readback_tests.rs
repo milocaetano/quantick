@@ -225,7 +225,10 @@ fn error_code(response: &ResponseEnvelope) -> Option<&str> {
 /// properties, `[]` stepping into an array. The same grammar
 /// `retry_matrix::schema_has_path` checks against the published schema, walked
 /// here over a real answer.
-fn values_at(value: &Value, row: &quantick_control_schema::readback::Readback) -> Vec<Value> {
+fn values_at(
+    value: &Value,
+    row: &quantick_control_handlers::wire::readback::Readback,
+) -> Vec<Value> {
     row.paths()
         .flat_map(|path| values_at_path(value, path))
         .collect()
@@ -2213,7 +2216,7 @@ fn no_production_grant_reaches_a_trade_capability_keyed_or_not() {
     let tickets_before = readback(&mut app, &ctx, &mut client, "trade.instrument.set_money").len();
 
     // The trade tier: `trade.*`, and the script call that can start orders.
-    let action_set = quantick_control_schema::strategy_desk::ACTION_SET_CAPABILITY_ID;
+    let action_set = quantick_control_handlers::wire::strategy_desk::ACTION_SET_CAPABILITY_ID;
     let trade_rows = (retry_matrix::READBACKS.iter())
         .filter(|row| row.capability.starts_with("trade.") || row.capability == action_set);
     for (index, row) in trade_rows.enumerate() {

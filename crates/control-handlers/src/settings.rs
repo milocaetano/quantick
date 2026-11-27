@@ -5,9 +5,9 @@
 //! [`SettingsOwner::settle`], so a named call and a click cannot disagree.
 //! Rate class: a human or an agent changing a setting. Never per trade.
 
+use crate::wire::desk::SettingsResult;
 use quantick_civil::TzOffset;
 use quantick_control::error::ControlError;
-use quantick_control_schema::desk::SettingsResult;
 use quantick_stores::appearance::Builtin;
 
 /// What a Settings row asks the window to do, for the rows a connection may

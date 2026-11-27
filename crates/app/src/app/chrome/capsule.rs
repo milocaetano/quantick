@@ -3,7 +3,7 @@
 //! to the observer scene, and what their presses do.
 
 use eframe::egui;
-use quantick_control_schema::canvas::{
+use quantick_control_handlers::wire::canvas::{
     LAYOUT_PICKER_CAPABILITY_ID, OPEN_WINDOW_MENU_CAPABILITY_ID, PICK_LAYOUT_CAPABILITY_ID,
 };
 use quantick_ui_model::canvas_popovers::picked;
@@ -157,7 +157,8 @@ fn publish(
     workspace.description = state.colour.map(|colour| colour.describe(dark));
     controls.push(workspace);
     if let Some(floppy) = rects.floppy {
-        let save = Some(quantick_control_schema::workspace_book::WORKSPACE_SAVE_TO_CAPABILITY_ID);
+        let save =
+            Some(quantick_control_handlers::wire::workspace_book::WORKSPACE_SAVE_TO_CAPABILITY_ID);
         controls.push(control(
             "capsule.save",
             "Save workspace",
@@ -192,7 +193,7 @@ fn publish(
     }
     let add = &app.chrome.add_menu;
     if let Some(door) = add.door {
-        let capability = Some(quantick_control_schema::canvas::ADD_WIDGET_CAPABILITY_ID);
+        let capability = Some(quantick_control_handlers::wire::canvas::ADD_WIDGET_CAPABILITY_ID);
         controls.push(control(
             "add_widget",
             "Add to canvas",

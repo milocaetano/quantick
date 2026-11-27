@@ -6,6 +6,15 @@
 //!
 //! Rate class: a human or an agent acting on the window. Never per trade.
 
+use crate::wire::desk::{
+    AGENT_ACCESS_REFUSED_CODE, DESK_EXPORT_CAPABILITY_ID, DESK_FORGOTTEN_EVENT_KIND,
+    DESK_IMPORT_CAPABILITY_ID, DESK_PICKER_EVENT_KIND, DESK_REOPEN_EVENT_KIND,
+    DESK_SAVED_EVENT_KIND, DeskInput, DeskPickResult, DeskReopenInput, DeskReopenResult,
+    DeskWriteResult, SettingsOpenInput, SettingsOpenResult, SettingsResult, SettingsSetInput,
+    desk_export_descriptor, desk_forget_descriptor, desk_import_descriptor, desk_reopen_descriptor,
+    desk_save_descriptor, settings_open_descriptor, settings_set_descriptor,
+};
+use crate::wire::settings_sections::SettingsSection;
 use quantick_control::{
     error::{ControlError, codes},
     id::ErrorCode,
@@ -14,15 +23,6 @@ use quantick_control::{
 };
 use quantick_control_host::authority::DESK_MODULE_ID;
 use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::desk::{
-    AGENT_ACCESS_REFUSED_CODE, DESK_EXPORT_CAPABILITY_ID, DESK_FORGOTTEN_EVENT_KIND,
-    DESK_IMPORT_CAPABILITY_ID, DESK_PICKER_EVENT_KIND, DESK_REOPEN_EVENT_KIND,
-    DESK_SAVED_EVENT_KIND, DeskInput, DeskPickResult, DeskReopenInput, DeskReopenResult,
-    DeskWriteResult, SettingsOpenInput, SettingsOpenResult, SettingsResult, SettingsSetInput,
-    desk_export_descriptor, desk_forget_descriptor, desk_import_descriptor, desk_reopen_descriptor,
-    desk_save_descriptor, settings_open_descriptor, settings_set_descriptor,
-};
-use quantick_control_schema::settings_sections::SettingsSection;
 use serde::Serialize;
 use serde_json::{Value, json};
 

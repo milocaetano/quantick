@@ -238,7 +238,7 @@ fn viewport_tick_mesh_and_readback_follow_the_current_camera_before_worker_publi
         (painted_radius - first_radius).abs() < 0.00002,
         "the mesh uses the reported radius"
     );
-    let snapshot = quantick_control_schema::orderflow::FlowExecutionSnapshot::from((
+    let snapshot = quantick_control_handlers::wire::orderflow::FlowExecutionSnapshot::from((
         first_frame.as_ref(),
         quantick_orderflow::projection::flow_tape::FlowProgress::default(),
     ));

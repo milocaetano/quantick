@@ -8,6 +8,12 @@
 //! it changes nothing the window holds. A view call sets the active tab's
 //! ledger through the same state its filter row and fold carets change.
 
+use crate::wire::journal_sessions::{
+    JOURNAL_SESSIONS_EVENT_KIND, JournalDeleteInput, JournalLedgerView, JournalSessionSnapshot,
+    JournalSessionsInput, JournalSessionsResult, JournalSourceFilter, JournalTaggedTrade,
+    MAX_LISTED_SESSIONS, MAX_LISTED_TAGGED_TRADES, delete_descriptor, descriptor,
+};
+use crate::wire::session::MODULE_ID;
 use quantick_civil::{DateRange, parse_iso_date};
 use quantick_control::{
     error::{ControlError, codes},
@@ -15,12 +21,6 @@ use quantick_control::{
     wire::{ActorContext, WireU64},
 };
 use quantick_control_host::{admission::known_error, journal::NewEvent, wire::canonical_decimal};
-use quantick_control_schema::journal_sessions::{
-    JOURNAL_SESSIONS_EVENT_KIND, JournalDeleteInput, JournalLedgerView, JournalSessionSnapshot,
-    JournalSessionsInput, JournalSessionsResult, JournalSourceFilter, JournalTaggedTrade,
-    MAX_LISTED_SESSIONS, MAX_LISTED_TAGGED_TRADES, delete_descriptor, descriptor,
-};
-use quantick_control_schema::session::MODULE_ID;
 use quantick_paper::report::SourceFilter;
 use quantick_paper::report::journals::load as load_history;
 use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};

@@ -9,18 +9,18 @@
 //! footprint warmup, and the journal. The tab lends itself through
 //! [`MarketTab::script_tab`](crate::market_tab::MarketTab::script_tab).
 
+use crate::wire::script_strategy::{
+    self as wire, ARMED_EVENT_KIND, ArmInput, ArmResult, CrossDirection, DISARMED_EVENT_KIND,
+    DisarmInput, DisarmResult, FireAction, LibraryListing, ListInput, ListResult, Placement,
+    ScriptStrategy, ScriptStrategyState, TICKET_QUANTITY,
+};
+use crate::wire::trade::ActionSide;
 use quantick_chart::pane_series::PaneSeriesRead;
 use quantick_control::error::ControlError;
 use quantick_control::registry::RegistryError;
 use quantick_control::wire::{ActorContext, WireU64};
 use quantick_control_host::authority::STRATEGY_MODULE_ID;
 use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::script_strategy::{
-    self as wire, ARMED_EVENT_KIND, ArmInput, ArmResult, CrossDirection, DISARMED_EVENT_KIND,
-    DisarmInput, DisarmResult, FireAction, LibraryListing, ListInput, ListResult, Placement,
-    ScriptStrategy, ScriptStrategyState, TICKET_QUANTITY,
-};
-use quantick_control_schema::trade::ActionSide;
 use quantick_drawings::{DrawingId, DrawingTool, Drawings};
 use quantick_engine::{Bar, Side};
 use quantick_session::script_strategies::{

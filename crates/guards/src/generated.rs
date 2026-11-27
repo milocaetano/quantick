@@ -27,9 +27,9 @@
 //!
 //! One naming rule, enforced here: every capability identifier reaches the
 //! registry through a `const <NAME>_CAPABILITY_ID: &str = "…";`, or a declared
-//! call's `id: <NAME>_CAPABILITY_ID = "…",` (`control-schema/src/calls.rs`), in
+//! call's `id: <NAME>_CAPABILITY_ID = "…",` (`control-handlers/src/wire/calls.rs`), in
 //! `crates/app/src/control/`, `crates/control-host/src/`,
-//! `crates/control-schema/src/` or the shared annotation contract. Twelve `layout.*`
+//! `crates/control-handlers/src/` or the shared annotation contract. Twelve `layout.*`
 //! and `feed.*` capabilities used a bare `_ID` suffix — and making it exactly
 //! true was cheaper than teaching this guard a denylist of the six other
 //! suffixes (`_SCOPE_ID`, `_PERMISSION_ID`, `_EVENT_KIND`, `_CONTROL_ID`,
@@ -59,12 +59,13 @@ pub const INVENTORY_PATH: &str = "docs/control-plane/capability-inventory.md";
 
 /// Where the capability identifiers are declared.
 const CONTROL_DIR: &str = "crates/app/src/control";
-/// The host, schema and handler halves of the control plane declare
-/// capabilities too; they are scanned like the application, and moving one
-/// there creates no exemption.
+/// The host and handler halves of the control plane declare capabilities
+/// too, the handlers' wire shapes under `wire/`; they are scanned like the
+/// application, and moving one there creates no exemption.
 const CONTROL_HOST_DIR: &str = "crates/control-host/src";
-const CONTROL_SCHEMA_DIR: &str = "crates/control-schema/src";
 const CONTROL_HANDLERS_DIR: &str = "crates/control-handlers/src";
+#[cfg(test)]
+const CONTROL_WIRE_DIR: &str = "crates/control-handlers/src/wire";
 /// The extracted contract remains scanned; moving ownership creates no exemption.
 const ANNOTATION_CONTRACT: &str = "crates/control/src/annotation.rs";
 
@@ -132,7 +133,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
 
 /// The cheap half of the retry matrix's guard.
 ///
-/// `crates/control-schema/src/retry_matrix.rs` holds the authoritative one: it
+/// `crates/control-handlers/src/wire/retry_matrix.rs` holds the authoritative one: it
 /// builds the registry and refuses to render a row whose policy, read, scope
 /// or field disagrees with it. What this can do in a second, from the two
 /// generated documents alone, is the comparison that goes stale when a
@@ -181,7 +182,7 @@ fn check_retry_matrix(root: &Path, findings: &mut Vec<Finding>) {
                 ),
                 "A read was renamed or withdrawn while the row kept the old identifier, or the \
                  inventory is stale. Regenerate both, then fix the row in the \
-                 family module that declares it, under crates/control-schema/src/.",
+                 family module that declares it, under crates/control-handlers/src/wire/.",
             ));
         }
         if !mutable.contains(&id) {
@@ -202,7 +203,7 @@ fn check_retry_matrix(root: &Path, findings: &mut Vec<Finding>) {
                  reconciles a call to it"
             ),
             "Add its readback to the READBACKS table in the family module that declares \
-             the capability, under crates/control-schema/src/, then regenerate: `cargo \
+             the capability, under crates/control-handlers/src/wire/, then regenerate: `cargo \
              run -p quantick-app -- --dump-retry-matrix > docs/control-plane/retry-matrix.md`.",
         ));
     }
@@ -311,7 +312,6 @@ pub fn check_file(path: &Path, _contents: &str) -> Vec<Finding> {
         || relative.ends_with(RETRY_MATRIX_PATH)
         || relative.contains(CONTROL_DIR)
         || relative.contains(CONTROL_HOST_DIR)
-        || relative.contains(CONTROL_SCHEMA_DIR)
         || relative.contains(CONTROL_HANDLERS_DIR)
         || relative.ends_with(ANNOTATION_CONTRACT)
         || relative.ends_with(PROSE_PATH)
@@ -349,7 +349,7 @@ fn check_inventory(root: &Path, findings: &mut Vec<Finding>) {
                 format!(
                     "{INVENTORY_PATH}:{line}: `{id}` is documented but no \
                      `*_CAPABILITY_ID` constant under {CONTROL_DIR}, {CONTROL_HOST_DIR}, \
-                     {CONTROL_SCHEMA_DIR}, {CONTROL_HANDLERS_DIR} or {ANNOTATION_CONTRACT} \
+                     {CONTROL_HANDLERS_DIR} or {ANNOTATION_CONTRACT} \
                      declares it"
                 ),
                 REMEDY_REGENERATE,
@@ -695,7 +695,6 @@ fn declared_capabilities(root: &Path) -> BTreeMap<String, String> {
     let mut files = Vec::new();
     collect_rust_files(&root.join(CONTROL_DIR), &mut files);
     collect_rust_files(&root.join(CONTROL_HOST_DIR), &mut files);
-    collect_rust_files(&root.join(CONTROL_SCHEMA_DIR), &mut files);
     collect_rust_files(&root.join(CONTROL_HANDLERS_DIR), &mut files);
     files.push(root.join(ANNOTATION_CONTRACT));
     files.sort();
@@ -864,8 +863,8 @@ mod tests {
     fn every_tree_that_declares_capabilities_is_scanned() {
         let declared = declared_capabilities(&workspace_root());
         assert!(declared["annotate.fixed_range_profile.create"].starts_with(ANNOTATION_CONTRACT));
-        assert!(declared["attention.mark.create"].starts_with(CONTROL_SCHEMA_DIR));
-        assert!(declared["feed.reconnect"].starts_with(CONTROL_SCHEMA_DIR));
+        assert!(declared["attention.mark.create"].starts_with(CONTROL_WIRE_DIR));
+        assert!(declared["feed.reconnect"].starts_with(CONTROL_WIRE_DIR));
         assert!(declared["events.read"].starts_with(CONTROL_HOST_DIR));
         assert!(!declared.contains_key("annotate.created"));
     }

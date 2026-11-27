@@ -620,7 +620,7 @@ fn a_workspace_pick_that_would_drop_edits_is_refused_before_the_switch() {
         ..switch_to("PEPEUSDT")
     };
     let reason = settle(&mut host, PaletteIntent::Switch(picked)).unwrap_err();
-    let expected = quantick_control_schema::window_menu::switch_keeps_edits("Default", "Swing");
+    let expected = crate::wire::window_menu::switch_keeps_edits("Default", "Swing");
     assert_eq!(reason, expected);
     assert!(host.tab.switches.is_empty(), "the tab stays where it was");
     assert_eq!(host.book.tab_state(5).unwrap().workspace, "Default");

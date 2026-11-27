@@ -11,7 +11,7 @@ use quantick_orderflow::engine::PENDING_LANE_REFERENCE_MS;
 use std::sync::Arc;
 
 use eframe::egui;
-use quantick_control_schema::tape_view::TapeViewSnapshot;
+use quantick_control_handlers::wire::tape_view::TapeViewSnapshot;
 use quantick_engine::BarFootprint;
 use quantick_orderbook::BookLevel;
 use quantick_orderflow::engine::{ProjectionRequest, VisibleOrderflow};

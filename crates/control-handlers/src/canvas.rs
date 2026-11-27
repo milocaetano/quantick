@@ -5,10 +5,8 @@
 //! `quantick_workspace::canvas`) and answers the canvas as it stands after.
 pub mod owner;
 use crate::dock::ActionDock;
-use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_host::wire::canonical_f32;
-use quantick_control_schema::canvas::CanvasDimension;
-use quantick_control_schema::canvas::{
+use crate::wire::canvas::CanvasDimension;
+use crate::wire::canvas::{
     ADD_WIDGET_CAPABILITY_ID, AddWidgetInput, CanvasCorner, CanvasEdge, CanvasRectDto,
     CanvasResult, DOCK_CAPABILITY_ID, DockPaneInput, FLOAT_CAPABILITY_ID, FloatPaneInput,
     LAYOUT_PICKER_CAPABILITY_ID, LayoutPickerInput, LayoutPickerResult, MAX_SEAM_TRAVEL_PT,
@@ -19,9 +17,11 @@ use quantick_control_schema::canvas::{
     SEAM_DRAG_CAPABILITY_ID, SHARE_DECIMAL_PLACES, SeamDragInput, WindowMenuInput,
     WindowMenuResult, descriptor,
 };
-use quantick_control_schema::canvas::{
+use crate::wire::canvas::{
     CanvasPaneDto, CanvasPaneKind, CanvasPaneMode, CanvasPlaceDto, CanvasSeamDto, CanvasView,
 };
+use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
+use quantick_control_host::wire::canonical_f32;
 use quantick_workspace::canvas::{
     self, CanvasRect, CanvasRefusal, CanvasState, Corner, DockTarget, DropOutcome, DropTarget,
     Edge, FloatGesture, FloatHost, LayoutPreset, PaneKind, PaneMenuItem, PaneMode, RemoveAnswer,

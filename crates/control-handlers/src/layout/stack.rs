@@ -1,9 +1,9 @@
 //! Wire-to-canvas adapter for the addressed vertical splitter operation.
 
+use crate::wire::layout::{ResizePairInput, ResizePairResult};
+use crate::wire::workspace::SPLIT_FRACTION_DECIMAL_PLACES;
 use quantick_control::{error::ControlError, wire::ActorContext, wire::WireU64};
 use quantick_control_host::wire::canonical_f32;
-use quantick_control_schema::layout::{ResizePairInput, ResizePairResult};
-use quantick_control_schema::workspace::SPLIT_FRACTION_DECIMAL_PLACES;
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 use serde_json::Value;
 

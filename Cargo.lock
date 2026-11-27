@@ -2959,7 +2959,6 @@ dependencies = [
  "quantick-control-handlers",
  "quantick-control-host",
  "quantick-control-local",
- "quantick-control-schema",
  "quantick-drawings",
  "quantick-engine",
  "quantick-feed",
@@ -3097,22 +3096,28 @@ dependencies = [
 name = "quantick-control-handlers"
 version = "0.1.0"
 dependencies = [
+ "png",
  "quantick-alerts",
  "quantick-chart",
  "quantick-chart-interaction",
  "quantick-civil",
  "quantick-control",
  "quantick-control-host",
- "quantick-control-schema",
  "quantick-drawings",
  "quantick-engine",
+ "quantick-indicators",
+ "quantick-layers",
+ "quantick-operability",
+ "quantick-orderbook",
  "quantick-orderflow",
  "quantick-paper",
+ "quantick-pine",
  "quantick-replay",
  "quantick-session",
  "quantick-sim",
  "quantick-sources",
  "quantick-stores",
+ "quantick-trading",
  "quantick-workspace",
  "rust_decimal",
  "schemars",
@@ -3143,29 +3148,6 @@ dependencies = [
  "quantick-control",
  "serde_json",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "quantick-control-schema"
-version = "0.1.0"
-dependencies = [
- "png",
- "quantick-control",
- "quantick-control-host",
- "quantick-engine",
- "quantick-indicators",
- "quantick-layers",
- "quantick-operability",
- "quantick-orderbook",
- "quantick-orderflow",
- "quantick-pine",
- "quantick-session",
- "quantick-stores",
- "quantick-trading",
- "rust_decimal",
- "schemars",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -3490,7 +3472,6 @@ dependencies = [
  "quantick-civil",
  "quantick-control",
  "quantick-control-handlers",
- "quantick-control-schema",
  "quantick-drawings",
  "quantick-engine",
  "quantick-indicators",

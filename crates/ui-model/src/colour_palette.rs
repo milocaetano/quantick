@@ -11,10 +11,10 @@
 
 use quantick_appearance::workspace_menu::{FilledButton, chrome};
 use quantick_appearance::{PremultipliedRgba, ResolvedTheme, Token, contrast::contrast_ratio};
+use quantick_control_handlers::wire::workspace_book::WORKSPACE_COLOUR_SET_CAPABILITY_ID as SET;
+use quantick_control_handlers::wire::workspace_colour::WORKSPACE_COLOUR_POPOVER_CAPABILITY_ID as POPOVER;
 use quantick_control_handlers::workspace_book::cell_menu::{CellRow, RowColour, RowKind};
 use quantick_control_handlers::workspace_book::colour_popover::{question, settle, shown_hsv};
-use quantick_control_schema::workspace_book::WORKSPACE_COLOUR_SET_CAPABILITY_ID as SET;
-use quantick_control_schema::workspace_colour::WORKSPACE_COLOUR_POPOVER_CAPABILITY_ID as POPOVER;
 use quantick_session::colour_popover::{ColourIntent, ColourPopover, KeyAct, Keys};
 use quantick_session::workspace_menu::WorkspaceCommand;
 use quantick_stores::workspaces::palette::{

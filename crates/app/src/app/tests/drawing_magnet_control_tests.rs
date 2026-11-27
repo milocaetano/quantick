@@ -4,7 +4,9 @@ use super::*;
 
 const CAPABILITY: &str = "annotate.magnet.set";
 
-fn magnet_control(app: &QuantickApp) -> quantick_control_schema::scene::SceneControlSnapshot {
+fn magnet_control(
+    app: &QuantickApp,
+) -> quantick_control_handlers::wire::scene::SceneControlSnapshot {
     crate::control::scene_snapshot(app)
         .controls
         .into_iter()

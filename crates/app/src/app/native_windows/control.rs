@@ -3,7 +3,7 @@ use super::{ArrangementHost, NativeWindows, QuantickApp, WindowId, present};
 use eframe::egui;
 use quantick_control::{error::ControlError, wire::WireU64};
 use quantick_control_handlers::native_window::NativeWindowHost;
-use quantick_control_schema::{
+use quantick_control_handlers::wire::{
     market_windows::*,
     native_window::{WindowInput, WindowState},
 };
@@ -77,10 +77,13 @@ impl NativeWindowHost for QuantickApp {
         present(self, window);
         Ok(WireU64::new(previous.0))
     }
-    fn capture_scene(&self) -> Option<&quantick_control_schema::scene::SceneSnapshot> {
+    fn capture_scene(&self) -> Option<&quantick_control_handlers::wire::scene::SceneSnapshot> {
         self.presentation.native.capture_scene.as_ref()
     }
-    fn set_capture_scene(&mut self, scene: Option<quantick_control_schema::scene::SceneSnapshot>) {
+    fn set_capture_scene(
+        &mut self,
+        scene: Option<quantick_control_handlers::wire::scene::SceneSnapshot>,
+    ) {
         self.presentation.native.capture_scene = scene;
     }
 

@@ -6,7 +6,7 @@
 //! Adding a behaviour is a row in the family it belongs to — `drawings`,
 //! `layers`, `workspace`, `replay`, `indicators`, `trading`, `chart`,
 //! `control` — or, for a door a declared control call performs, its `ui`
-//! entry in that declaration. `quantick_control_schema::ui_behaviours` joins
+//! entry in that declaration. `quantick_control_handlers::wire::ui_behaviours` joins
 //! both at compile time with [`flatten`], in the order the matrix renders:
 //! this crate depends on nothing, so the join sits where the declarations are.
 //!

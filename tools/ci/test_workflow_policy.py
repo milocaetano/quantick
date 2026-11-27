@@ -140,7 +140,8 @@ class WorkflowPolicy(unittest.TestCase):
                      "HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}",
                      'python3 tools/ci/ratchet_delta.py --base "$RATCHET_BASE" --export-env "$GITHUB_ENV"',
                      "cargo test -p quantick-guards",
-                     "cargo test -p quantick-control -p quantick-operability -p quantick-control-schema",
+                     "cargo test -p quantick-control -p quantick-operability\n",
+                     "cargo test -p quantick-control-handlers --lib -- wire::",
                      "sh .claude/hooks/guardrails_test.sh",
                      "python3 tools/ci/test_workflow_policy.py",
                      "python3 tools/ci/test_prose_only.py"):

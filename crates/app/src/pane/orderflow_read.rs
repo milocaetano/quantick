@@ -4,10 +4,10 @@ use super::ChartPane;
 use crate::footprint_config::FootprintConfig;
 use crate::{control::pane_side_dto, orderflow_view::OrderflowView, tab::Tab};
 use quantick_control_handlers::orderflow::{OrderflowEngine, OrderflowPane, OrderflowPaneEntry};
-use quantick_control_host::wire::PaneSideDto;
-use quantick_control_schema::orderflow::{
+use quantick_control_handlers::wire::orderflow::{
     BubblesStateSnapshot, FlowExecutionSnapshot, OpeningScaleSnapshot,
 };
+use quantick_control_host::wire::PaneSideDto;
 use quantick_orderflow::engine::{BookLadder, CaptureStatus, OrderflowHealth};
 
 impl OrderflowEngine for OrderflowView {

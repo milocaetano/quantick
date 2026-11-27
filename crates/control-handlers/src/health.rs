@@ -8,6 +8,11 @@
 //! wrong, the loading work actually in flight, no tape at all while nothing
 //! was measured, and a revision key that ignores the per-frame averages.
 
+use crate::wire::health::{
+    FeedIntegritySnapshot, FrameHealthSnapshot, HealthSnapshot, IndicatorHealthRead,
+    IntakeLagSnapshot, LoadingTaskSnapshot, MODULE_ID, PaneHealthSnapshot, SCHEMA_VERSION,
+    SCOPE_ID, TabHealthRevisionKey, TabHealthSnapshot, TapeHealthSnapshot, TradeGateSnapshot,
+};
 use quantick_chart::{
     indicator_views::IndicatorViews,
     loading::{LoadingTask, LoadingTracker},
@@ -20,11 +25,6 @@ use quantick_control::{
 use quantick_control_host::{
     projection::{CaptureContext, ProjectionRegistryError},
     wire::{PaneSideDto, wire_usize},
-};
-use quantick_control_schema::health::{
-    FeedIntegritySnapshot, FrameHealthSnapshot, HealthSnapshot, IndicatorHealthRead,
-    IntakeLagSnapshot, LoadingTaskSnapshot, MODULE_ID, PaneHealthSnapshot, SCHEMA_VERSION,
-    SCOPE_ID, TabHealthRevisionKey, TabHealthSnapshot, TapeHealthSnapshot, TradeGateSnapshot,
 };
 use quantick_orderflow::engine::OrderflowHealth;
 use quantick_sources::sync::Desync;

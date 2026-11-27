@@ -4,8 +4,8 @@
 //! preference.
 use crate::addressed_pane::AddressedPanePort;
 use crate::dock::ActionDock;
+use crate::wire::opening_scale::{OpeningScaleInput, OpeningScaleTarget, descriptor};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::opening_scale::{OpeningScaleInput, OpeningScaleTarget, descriptor};
 use serde_json::Value;
 
 /// The opening-scale capability's narrow port on the pane.

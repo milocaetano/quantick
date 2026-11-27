@@ -8,6 +8,11 @@
 //! bar types, the chart facts the session asks for — closed bars, drawing
 //! regions and names — the library write a save asks for, and the journal.
 
+use crate::wire::strategy_desk::{
+    self as wire, ActionSetInput, AssetInput, CHANGED_EVENT_KIND, CommandResult, DeclaredInput,
+    DetailResult, FireAction, InstanceId, InstanceInput, Link, ListInput, ListResult, SaveAsInput,
+};
+use crate::wire::trade::ActionSide;
 use quantick_chart::pane_series::PaneSeriesRead;
 use quantick_chart::state::dec_from_f64;
 use quantick_control::error::ControlError;
@@ -15,11 +20,6 @@ use quantick_control::registry::RegistryError;
 use quantick_control::wire::{ActorContext, WireU64};
 use quantick_control_host::authority::STRATEGY_MODULE_ID;
 use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::strategy_desk::{
-    self as wire, ActionSetInput, AssetInput, CHANGED_EVENT_KIND, CommandResult, DeclaredInput,
-    DetailResult, FireAction, InstanceId, InstanceInput, Link, ListInput, ListResult, SaveAsInput,
-};
-use quantick_control_schema::trade::ActionSide;
 use quantick_drawings::{DrawingId, DrawingTool, Drawings};
 use quantick_engine::{Bar, Side};
 use quantick_session::script_strategies::SignalAction;

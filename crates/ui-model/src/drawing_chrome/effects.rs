@@ -187,7 +187,7 @@ pub struct Readbacks {
     pub quick_range:
         Option<quantick_chart_interaction::quick_range::conversion_plan::ConversionReadback>,
     /// Open the alert editor on this drawing, once the host resolves it.
-    pub alert_target: Option<quantick_control_schema::alerts::DrawingSelector>,
+    pub alert_target: Option<quantick_control_handlers::wire::alerts::DrawingSelector>,
 }
 impl DrawingChromeAsk {
     pub fn scenario(effect: Option<super::scenario::Effect>) -> Self {

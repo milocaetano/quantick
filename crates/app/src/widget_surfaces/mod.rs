@@ -13,7 +13,7 @@ use eframe::egui::{self, RichText};
 use quantick_appearance::Token;
 use quantick_civil::TzOffset;
 use quantick_control_handlers::widgets::{self as handlers, WidgetDeck, WidgetFeed, WidgetSpec};
-use quantick_control_schema::widget::WidgetRead;
+use quantick_control_handlers::wire::widget::WidgetRead;
 
 use crate::app::arrangement_host::ArrangementHost;
 use crate::config::AppConfig;

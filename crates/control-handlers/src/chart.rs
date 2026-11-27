@@ -12,6 +12,13 @@
 //! Rate class: a capture or a read. The summary's revision key is the
 //! summary itself, so it runs once per capture, never per frame.
 
+use crate::wire::chart::{
+    BarProgressSnapshot, BarProvenanceContext, BarSnapshot, BarStateDto, ChartCoverage,
+    ChartPaneSnapshot, ChartSnapshot, ChartWindowPage, ChartWindowQuery, ChartWindowSelection,
+    MODULE_ID, OMITTED_WINDOW_MODULE_IDS, SCHEMA_VERSION, SCOPE_ID, VenueCandleState,
+    VenueCandleStatus, ViewportSnapshot,
+};
+use crate::wire::layers::LayerSnapshot;
 use quantick_chart::state::ChartState;
 use quantick_chart::style::ChartStyle;
 use quantick_control::{
@@ -25,13 +32,6 @@ use quantick_control_host::{
     projection::{CaptureContext, ProjectionRegistryError},
     wire::{PaneSideDto, canonical_decimal, wire_usize},
 };
-use quantick_control_schema::chart::{
-    BarProgressSnapshot, BarProvenanceContext, BarSnapshot, BarStateDto, ChartCoverage,
-    ChartPaneSnapshot, ChartSnapshot, ChartWindowPage, ChartWindowQuery, ChartWindowSelection,
-    MODULE_ID, OMITTED_WINDOW_MODULE_IDS, SCHEMA_VERSION, SCOPE_ID, VenueCandleState,
-    VenueCandleStatus, ViewportSnapshot,
-};
-use quantick_control_schema::layers::LayerSnapshot;
 use quantick_engine::Bar;
 use quantick_sources::candle_series::{SeriesState, SeriesStatus};
 

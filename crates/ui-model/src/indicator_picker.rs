@@ -1,5 +1,5 @@
 //! Indicator library interaction policy over the authoritative stores picker.
-use quantick_control_schema::indicator_picker::{PickerInput, PickerResult};
+use quantick_control_handlers::wire::indicator_picker::{PickerInput, PickerResult};
 use quantick_stores::{
     indicator_picker::{Category, Choice, Entry, Picker},
     script_library::ScriptEntry,
@@ -157,7 +157,7 @@ impl crate::Model for Model {
                     state.scripts = scripts;
                     changed = true;
                 }
-                state.control_result = Some(quantick_control_schema::indicator_picker::apply(
+                state.control_result = Some(quantick_control_handlers::wire::indicator_picker::apply(
                     &mut state.picker,
                     &state.scripts,
                     target,

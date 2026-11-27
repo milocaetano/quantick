@@ -18,20 +18,20 @@ use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
 
+use crate::wire::evidence::{EvidenceChunkPage, EvidenceReadInput};
 use quantick_control_host::{
     actions::ActionRegistry, projection::ProjectionRegistry, system::BuildIdentity,
 };
-use quantick_control_schema::evidence::{EvidenceChunkPage, EvidenceReadInput};
 
+use crate::wire::{
+    chart::ChartWindowPage,
+    evidence::{EvidenceCapture, EvidenceCaptureInput},
+};
 use quantick_control_host::admission::known_error;
 use quantick_control_host::{
     events::{EventsReadInput, EventsWaitInput},
     evidence::EvidenceStore,
     projection::SnapshotCapture,
-};
-use quantick_control_schema::{
-    chart::ChartWindowPage,
-    evidence::{EvidenceCapture, EvidenceCaptureInput},
 };
 
 mod reads;
@@ -48,7 +48,7 @@ pub use quantick_control_host::authority::{
 #[cfg(test)]
 pub use quantick_control_host::authority::{SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID};
 
-pub use quantick_control_schema::chart::ChartWindowInput;
+pub use crate::wire::chart::ChartWindowInput;
 
 pub enum PreparedDispatch {
     Worker(Box<dyn PreparedWorkerRead>),

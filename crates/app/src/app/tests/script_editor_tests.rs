@@ -387,7 +387,7 @@ fn script_library_end_to_end() {
 
 #[test]
 fn script_editor_defaults_and_explicit_numeric_settings_match_restart() {
-    use quantick_control_schema::script_editor::NumericValue;
+    use quantick_control_handlers::wire::script_editor::NumericValue;
     for explicit in [false, true] {
         let (mut app, directory, _commands) = copy_fixture();
         compile_edit(
@@ -449,7 +449,7 @@ fn script_editor_defaults_and_explicit_numeric_settings_match_restart() {
 
 #[test]
 fn script_editor_numeric_edits_wait_for_saved_validation_and_published_specs() {
-    use quantick_control_schema::script_editor::NumericValue;
+    use quantick_control_handlers::wire::script_editor::NumericValue;
     let base = "length = input.int(9, \"Length\", minval=1, maxval=30)\nfactor = input.int(2, \"Factor\", minval=1, maxval=30)\nplot(bar_index * length * factor)\n";
     for declaration in [
         "length = input.int(17, \"Period\", minval=1, maxval=30)",
@@ -523,7 +523,7 @@ fn script_editor_numeric_edits_wait_for_saved_validation_and_published_specs() {
 
 #[test]
 fn script_editor_initial_and_reopened_source_require_current_validation() {
-    use quantick_control_schema::script_editor::NumericValue;
+    use quantick_control_handlers::wire::script_editor::NumericValue;
     let (mut app, _directory, _commands) = copy_fixture();
     assert!(
         app.indicator_wiring()
@@ -590,7 +590,7 @@ fn script_editor_initial_and_reopened_source_require_current_validation() {
 
 #[test]
 fn script_editor_external_default_changes_match_live_and_restart() {
-    use quantick_control_schema::script_editor::NumericValue;
+    use quantick_control_handlers::wire::script_editor::NumericValue;
     for explicit in [false, true] {
         let (mut app, directory, _commands) = copy_fixture();
         compile_edit(
@@ -628,7 +628,7 @@ fn script_editor_external_default_changes_match_live_and_restart() {
 
 #[test]
 fn script_editor_read_validation_never_republishes_an_old_open_snapshot() {
-    use quantick_control_schema::script_editor::NumericValue;
+    use quantick_control_handlers::wire::script_editor::NumericValue;
     let (mut app, _directory, _commands) = copy_fixture();
     compile_edit(
         &mut app,

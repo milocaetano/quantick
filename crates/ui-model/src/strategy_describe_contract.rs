@@ -9,7 +9,7 @@ pub const MAX_CONTEXT_ITEMS: usize = 32;
 pub const MAX_TRANSCRIPT_BYTES: usize = 8192;
 pub const MAX_MARKERS: usize = 128;
 pub const MAX_TURNS: usize = 16;
-pub use quantick_control_schema::strategy_describe::MAX_TEXT_BYTES;
+pub use quantick_control_handlers::wire::strategy_describe::MAX_TEXT_BYTES;
 pub const MAX_SOURCE_BYTES: usize = 32768;
 pub const MAX_REPAIRS: u8 = 3;
 
@@ -67,7 +67,7 @@ pub struct Status {
     pub saved_id: Option<String>,
 }
 
-pub use quantick_control_schema::strategy_describe::Command;
+pub use quantick_control_handlers::wire::strategy_describe::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Intent {
@@ -108,7 +108,7 @@ pub enum Effects {
     },
 }
 
-use quantick_control_schema::strategy_describe as wire;
+use quantick_control_handlers::wire::strategy_describe as wire;
 
 impl From<Status> for wire::Status {
     fn from(state: Status) -> Self {
@@ -121,10 +121,10 @@ impl From<Status> for wire::Status {
                     close_time: marker.close_time,
                     side: match marker.side {
                         quantick_engine::Side::Buy => {
-                            quantick_control_schema::trade::ActionSide::Buy
+                            quantick_control_handlers::wire::trade::ActionSide::Buy
                         }
                         quantick_engine::Side::Sell => {
-                            quantick_control_schema::trade::ActionSide::Sell
+                            quantick_control_handlers::wire::trade::ActionSide::Sell
                         }
                     },
                 })

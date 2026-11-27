@@ -2,15 +2,15 @@
 //! declared rows.
 //!
 //! Row order is the registry's, not the table's: the renderer walks the
-//! registered capabilities and asks [`quantick_control_schema::retry_matrix::readback`] for each one's
+//! registered capabilities and asks [`crate::wire::retry_matrix::readback`] for each one's
 //! row, so which family declared a row cannot move a line of the document.
 
 use super::drift::read_needs;
 
+use crate::wire::readback::Readback;
+use crate::wire::retry_matrix::{GENERATED_MARKER, Holder, holder, readback};
 use quantick_control::registry::{CapabilityDescriptor, IdempotencyPolicy};
 use quantick_control_host::contract::CapabilityContract;
-use quantick_control_schema::readback::Readback;
-use quantick_control_schema::retry_matrix::{GENERATED_MARKER, Holder, holder, readback};
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -89,7 +89,7 @@ pub const PREAMBLE: &str = concat!(
     "\n",
     "This file is generated; a hand edit is a guard failure, not a correction.\n",
     "Each row lives beside the capability it reconciles, in that family's own\n",
-    "module under `crates/control-schema/src/` — the drawings in `analysis.rs`,\n",
+    "module under `crates/control-handlers/src/wire/` — the drawings in `analysis.rs`,\n",
     "the ticket in `trade.rs` — and `retry_matrix::rows::FAMILIES` is the list\n",
     "that joins them. The generator refuses to render while any row disagrees\n",
     "with the registry. To change a row, change it in its family module, or\n",

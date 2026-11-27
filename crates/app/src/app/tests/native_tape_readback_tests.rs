@@ -153,7 +153,7 @@ fn assert_complete_flow_fixture(app: &mut QuantickApp, observer: &mut LocalClien
     assert_eq!(snapshot["off_axis_executions"], "0");
     assert_eq!(snapshot["offscreen_executions"], "0");
     let owner = app.active_tab().tape();
-    let painted = quantick_control_schema::orderflow::FlowExecutionSnapshot::from((
+    let painted = quantick_control_handlers::wire::orderflow::FlowExecutionSnapshot::from((
         owner.flow_execution_frame().unwrap(),
         owner.flow_execution_progress(),
     ));

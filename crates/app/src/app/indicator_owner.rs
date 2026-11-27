@@ -11,9 +11,9 @@ use quantick_control_handlers::indicator_host::{
     AttachedScript, IndicatorGuidePort, IndicatorPickerPort, IndicatorRefusal, NativePort,
     ScriptEditorPort, ScriptsPort,
 };
-use quantick_control_schema::indicator_picker::{PickerInput, PickerResult};
-use quantick_control_schema::native_indicator as wire;
-use quantick_control_schema::script_editor::{EditorResult, NumericValue};
+use quantick_control_handlers::wire::indicator_picker::{PickerInput, PickerResult};
+use quantick_control_handlers::wire::native_indicator as wire;
+use quantick_control_handlers::wire::script_editor::{EditorResult, NumericValue};
 use quantick_stores::indicator_state::SavedIndicator;
 use quantick_stores::script_library::{ScriptDocument, ScriptEditorAction};
 

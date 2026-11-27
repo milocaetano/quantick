@@ -4,8 +4,8 @@ use crate::app::{
     menu_bar::{MenuCall, MenuCommand, MenuDoor},
 };
 use eframe::egui;
+use quantick_control_handlers::wire::window_menu::{self as menu, RowId};
 use quantick_control_handlers::{desk::DeskAct, notify::AttentionHost};
-use quantick_control_schema::window_menu::{self as menu, RowId};
 use quantick_ui_model::chrome_menu_bar::{Action, Snapshot, Workspace};
 use quantick_ui_model::strategy_describe::conversation::Provider as _;
 
@@ -177,7 +177,9 @@ fn settle(
     commands.push(command);
 }
 fn settle_row(id: RowId, commands: &mut Vec<MenuCommand>) {
-    use quantick_control_schema::{settings_sections::SettingsSection, window_menu::HelpPage};
+    use quantick_control_handlers::wire::{
+        settings_sections::SettingsSection, window_menu::HelpPage,
+    };
     if let Some(section) = menu::panel_section_of(id) {
         commands.push(MenuCommand::Call(MenuCall::OpenOrderFlowPanel(section)));
         return;

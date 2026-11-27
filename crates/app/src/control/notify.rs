@@ -6,7 +6,7 @@
 //! Rate class: a human or an agent asking for attention. Never per trade,
 //! never per frame.
 
-pub(crate) use quantick_control_schema::notify::*;
+pub(crate) use quantick_control_handlers::wire::notify::*;
 
 use std::time::Duration;
 

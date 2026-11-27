@@ -1,17 +1,17 @@
 //! Chart settings decisions shared by the desktop and other adapters, and
 //! `chart.settings.set`, which reaches the same owner the double click, the
 //! toolbar and the menus reach ([`crate::chart::ChartPort::apply_chart_settings`]).
+use crate::wire::chart::MODULE_ID;
+use crate::wire::chart_settings::{
+    CHART_SETTINGS_EVENT_KIND, ChartSettingsInput, ChartSettingsResult, ChartSettingsTab,
+    ChartSettingsTarget, descriptor, style_wire,
+};
 use quantick_chart::pane_style::{StyleEditor, StyleSurface, StyleTarget};
 use quantick_chart::style::{CandlePreset, ChartStyle};
 use quantick_control::error::{ControlError, codes};
 use quantick_control::wire::{ActorContext, WireU64};
 use quantick_control::{id::ErrorCode, registry::RegistryError};
 use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::chart::MODULE_ID;
-use quantick_control_schema::chart_settings::{
-    CHART_SETTINGS_EVENT_KIND, ChartSettingsInput, ChartSettingsResult, ChartSettingsTab,
-    ChartSettingsTarget, descriptor, style_wire,
-};
 use serde_json::{Value, json};
 
 use crate::JournalAccess;

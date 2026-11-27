@@ -1,7 +1,7 @@
 //! Lend the canvas family its tab, saved workspace and presentation owners.
 use quantick_control::error::ControlError;
 use quantick_control_handlers::canvas::{self, CanvasAct, CanvasHost, Drawn, owner::CanvasOwner};
-use quantick_control_schema::canvas::LayoutPickerResult;
+use quantick_control_handlers::wire::canvas::LayoutPickerResult;
 use quantick_workspace::canvas::{CanvasRect, CanvasState, LayoutPreset};
 use quantick_workspace::canvas_layout::recipe_canvas;
 

@@ -2,9 +2,9 @@
 //! the window resolves the pane, the pane and its order-flow view serve it.
 use crate::bubble_pane::{BubbleLook, PaneBubblesPort, SphereRefusal};
 use crate::dock::ActionDock;
+use crate::wire::bubble_preset::{ApplyInput, ListInput, ResetInput, applied};
 use quantick_control::wire::{ActorContext, WireU64};
 use quantick_control::{error::ControlError, registry::RegistryError};
-use quantick_control_schema::bubble_preset::{ApplyInput, ListInput, ResetInput, applied};
 use quantick_orderflow::TickTuning;
 use serde_json::Value;
 
@@ -13,18 +13,9 @@ const NO_VIEW: &str = "The pane has no order-flow view";
 pub fn register<D: ActionDock<H, A>, H: PaneBubblesPort + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
-    registry.register(
-        quantick_control_schema::bubble_preset::apply_descriptor(),
-        apply,
-    )?;
-    registry.register(
-        quantick_control_schema::bubble_preset::list_descriptor(),
-        list,
-    )?;
-    registry.register(
-        quantick_control_schema::bubble_preset::reset_descriptor(),
-        reset,
-    )
+    registry.register(crate::wire::bubble_preset::apply_descriptor(), apply)?;
+    registry.register(crate::wire::bubble_preset::list_descriptor(), list)?;
+    registry.register(crate::wire::bubble_preset::reset_descriptor(), reset)
 }
 
 fn apply<H: PaneBubblesPort + ?Sized, A>(
@@ -96,7 +87,7 @@ fn invalid(error: impl std::fmt::Display) -> ControlError {
 pub fn register_tick<D: ActionDock<H, A>, H: PaneBubblesPort + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
-    registry.register(quantick_control_schema::tick_bubbles::descriptor(), tick)
+    registry.register(crate::wire::tick_bubbles::descriptor(), tick)
 }
 fn tick<H: PaneBubblesPort + ?Sized, A>(
     host: &mut H,
@@ -104,7 +95,7 @@ fn tick<H: PaneBubblesPort + ?Sized, A>(
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    let input: quantick_control_schema::tick_bubbles::TickBubblesInput =
+    let input: crate::wire::tick_bubbles::TickBubblesInput =
         serde_json::from_value(input.clone()).map_err(invalid)?;
     let preset = input.preset.as_deref();
     let tuning = tick_tuning(&input)?;
@@ -113,7 +104,7 @@ fn tick<H: PaneBubblesPort + ?Sized, A>(
     let owner = pane.bubble_look().ok_or_else(|| invalid(NO_VIEW))?;
     let changed = owner.wear_tick(preset, tuning).map_err(invalid)?;
     let worn = owner.look_config().volume_dots.tick_bubbles;
-    serde_json::to_value(quantick_control_schema::tick_bubbles::TickBubblesResult {
+    serde_json::to_value(crate::wire::tick_bubbles::TickBubblesResult {
         tab_id: input.tab_id,
         pane_id: input.pane_id,
         changed,
@@ -125,7 +116,7 @@ fn tick<H: PaneBubblesPort + ?Sized, A>(
 /// The tuning `input` asks of its preset, validated before any edit: an
 /// opacity the panel's slider could set, and none without a preset.
 fn tick_tuning(
-    input: &quantick_control_schema::tick_bubbles::TickBubblesInput,
+    input: &crate::wire::tick_bubbles::TickBubblesInput,
 ) -> Result<TickTuning, ControlError> {
     use quantick_orderflow::config::controls::OPACITY_RANGE;
     let opacity = input

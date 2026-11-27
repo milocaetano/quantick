@@ -4,7 +4,7 @@ use quantick_alerts::{
     AlertBook, AlertCommand, AlertError, AlertId, AlertStatus, DurableDrawingRef, MarketRef,
     Operator, SourceContext, TargetKind, TargetRef,
 };
-use quantick_control_schema::alerts::DrawingSelector;
+use quantick_control_handlers::wire::alerts::DrawingSelector;
 
 /// An open surface; with `context`, its new draft too.
 fn surface(context: Option<&Context>) -> AlertSurface {

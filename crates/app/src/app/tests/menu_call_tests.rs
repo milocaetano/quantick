@@ -5,7 +5,7 @@ use super::*;
 use super::super::menu_bar::{MenuCall, MenuCommand, apply_menu_command_on};
 use crate::control::ActionOrigin;
 use quantick_control_handlers::desk::DeskAct;
-use quantick_control_schema::settings_sections::SettingsSection;
+use quantick_control_handlers::wire::settings_sections::SettingsSection;
 use quantick_session::paper::TradeCommand;
 use serde_json::{Value, json};
 

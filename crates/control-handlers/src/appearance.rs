@@ -1,5 +1,8 @@
 //! Appearance decisions and errors over a headless store port.
 use crate::dock::{ActionDock, ProjectionDock};
+use crate::wire::appearance::{
+    AppearanceSnapshot, ApplyInput, ApplyResult, MODULE_ID, SCOPE_ID, descriptor,
+};
 use quantick_control::{
     error::ControlError,
     id::{ModuleId, SnapshotScopeId},
@@ -7,9 +10,6 @@ use quantick_control::{
     wire::{ActorContext, WireU64},
 };
 use quantick_control_host::projection::{CaptureContext, ProjectionRegistryError};
-use quantick_control_schema::appearance::{
-    AppearanceSnapshot, ApplyInput, ApplyResult, MODULE_ID, SCOPE_ID, descriptor,
-};
 use quantick_stores::appearance::{AppearanceError, AppearanceStore};
 use serde_json::{Value, json};
 

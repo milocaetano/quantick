@@ -185,7 +185,7 @@ jobs:
         name: Format control families
         shell: bash
         # Macro-generated module declarations require explicit rustfmt inputs.
-        run: find crates/control-schema/src crates/control-handlers/src -name '*.rs' -type f -exec rustfmt --edition 2024 --check {} +
+        run: find crates/control-handlers/src -name '*.rs' -type f -exec rustfmt --edition 2024 --check {} +
       - name: Drop ratchet checkouts a cache restored
         shell: bash
         run: rm -rf target/ratchet-delta && git worktree prune
@@ -213,8 +213,11 @@ jobs:
         # their committed files with what the generator emits today. The app's
         # own generated files (capability inventory, retry matrix, hook
         # registry) are compared byte for byte by its tests in the full jobs;
-        # the guard tests above see their drift first.
-        run: cargo test -p quantick-control -p quantick-operability -p quantick-control-schema
+        # the guard tests above see their drift first. The matrix test lives in
+        # the handlers' `wire` module, so only that module's tests run there.
+        run: |
+          cargo test -p quantick-control -p quantick-operability
+          cargo test -p quantick-control-handlers --lib -- wire::
       - name: Workflow policy
         # Who runs when, evaluated from this file's own expressions.
         run: python3 tools/ci/test_workflow_policy.py

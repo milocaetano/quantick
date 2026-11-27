@@ -11,14 +11,14 @@
 //! Rate class: a human or an agent asking about, or flipping, the recorder.
 //! Never per trade.
 
+use crate::wire::deal_recording::{
+    DealRecordingInput, DealRecordingResult, DealRecordingSnapshot, RecordedDaySnapshot, descriptor,
+};
 use quantick_control::{
     error::{ControlError, codes},
     id::ErrorCode,
     registry::RegistryError,
     wire::{ActorContext, WireU64},
-};
-use quantick_control_schema::deal_recording::{
-    DealRecordingInput, DealRecordingResult, DealRecordingSnapshot, RecordedDaySnapshot, descriptor,
 };
 use quantick_replay::recorder::{DealRecordingError, RecState, RecordingView};
 

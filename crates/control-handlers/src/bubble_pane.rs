@@ -1,9 +1,9 @@
 //! The bubble families' one port: the window resolves the addressed pane,
 //! the pane answers the tick rule's facts, and its order-flow view serves
 //! the look and the asset save switch.
+use crate::wire::bubble_preset::{ListInput, ListResult};
+use crate::wire::orderflow::BubblesStateSnapshot;
 use quantick_control::{error::ControlError, wire::WireU64};
-use quantick_control_schema::bubble_preset::{ListInput, ListResult};
-use quantick_control_schema::orderflow::BubblesStateSnapshot;
 use quantick_orderflow::{HeatmapConfig, TickTuning};
 use quantick_stores::bubble_asset_store::SaveSwitch;
 
@@ -153,7 +153,7 @@ impl SphereRefusal {
 
 impl From<SphereRefusal> for ControlError {
     fn from(refusal: SphereRefusal) -> Self {
-        use quantick_control_schema::{bubble_scale, tick_bubbles};
+        use crate::wire::{bubble_scale, tick_bubbles};
         match refusal {
             SphereRefusal::NotTickChart => crate::bubble_scale::refused_precondition(
                 bubble_scale::TICK_CHART_PRECONDITION,

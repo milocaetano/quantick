@@ -15,7 +15,7 @@ use crate::surfaces::toast;
 use crate::toolrail::ToolRailExt as _;
 use crate::{chart_layers::shortcuts, tabstrip::TabAction, timezone::TzOffset};
 use eframe::egui;
-use quantick_control_schema::settings_sections::SettingsSection;
+use quantick_control_handlers::wire::settings_sections::SettingsSection;
 use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand};
 use quantick_ui_model::market_palette::Intent as PaletteIntent;
 use std::time::Instant;
@@ -300,7 +300,7 @@ impl QuantickApp {
 pub(in crate::app) fn menu_shortcuts(
     ctx: &egui::Context,
 ) -> Vec<(quantick_ui_model::chrome_menu_bar::Shortcut, String)> {
-    use quantick_control_schema::window_menu::RowId;
+    use quantick_control_handlers::wire::window_menu::RowId;
     use quantick_ui_model::chrome_menu_bar::Shortcut;
     [
         RowId::SaveToWorkspace,
@@ -323,7 +323,7 @@ pub(crate) fn menu_shortcut(
     ctx: &egui::Context,
     shortcut: quantick_ui_model::chrome_menu_bar::Shortcut,
 ) -> Option<String> {
-    use quantick_control_schema::window_menu::RowId;
+    use quantick_control_handlers::wire::window_menu::RowId;
     use quantick_ui_model::chrome_menu_bar::Shortcut;
     let binding = match shortcut {
         Shortcut::Row(RowId::SaveToWorkspace) => SAVE_TO_WORKSPACE_SHORTCUT,

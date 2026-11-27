@@ -1,7 +1,7 @@
 //! Native window menu geometry and settings/dialog host state.
 use eframe::egui;
+use quantick_control_handlers::wire::window_menu::HelpPage;
 use quantick_control_handlers::workspace_book::cell_menu::{CellMenuCache, CellRow};
-use quantick_control_schema::window_menu::HelpPage;
 
 /// The button the menu hangs from. Both open the same menu; the door only
 /// decides where it drops and which way its submenus open.

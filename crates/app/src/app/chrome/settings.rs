@@ -2,7 +2,7 @@
 use eframe::egui;
 use quantick_control_handlers::settings::SettleError;
 use quantick_control_handlers::settings::{SettingsAct, SettingsOwner, SettingsReadings};
-use quantick_control_schema::settings_sections::SettingsSection;
+use quantick_control_handlers::wire::settings_sections::SettingsSection;
 use quantick_ui_model::settings_window::{Action, AgentNote, Effects, Facts, Intent, Model};
 use quantick_ui_model::{HostEffect, Slot};
 

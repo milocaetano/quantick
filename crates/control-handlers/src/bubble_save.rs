@@ -2,8 +2,8 @@
 //! window resolves the pane, the look's asset binding answers the switch.
 use crate::bubble_pane::PaneBubblesPort;
 use crate::dock::ActionDock;
+use crate::wire::bubble_save::{SaveChangesInput, descriptor};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::bubble_save::{SaveChangesInput, descriptor};
 use serde_json::Value;
 
 pub fn register<D: ActionDock<H, A>, H: PaneBubblesPort + ?Sized, A>(

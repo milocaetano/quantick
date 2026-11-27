@@ -1,7 +1,7 @@
 //! The workspace calls through a fake window: changes reach the book and the
 //! charts once, a repeat answers no change, a failed write leaves nothing.
 
-use quantick_control_schema::workspace_book::READBACKS;
+use crate::wire::workspace_book::READBACKS;
 use quantick_stores::workspaces::DEFAULT_WORKSPACE;
 use serde_json::json;
 

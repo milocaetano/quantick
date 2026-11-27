@@ -42,7 +42,7 @@ fn panels(app: &mut QuantickApp, ctx: &egui::Context) -> egui::FullOutput {
     let pos = app
         .chrome
         .title_bar
-        .control_rect(quantick_control_schema::window_menu::KEBAB_CONTROL)
+        .control_rect(quantick_control_handlers::wire::window_menu::KEBAB_CONTROL)
         .unwrap()
         .center();
     click_sized(app, ctx, TEST_WINDOW, pos);

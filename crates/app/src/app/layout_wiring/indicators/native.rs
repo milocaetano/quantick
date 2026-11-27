@@ -2,7 +2,7 @@
 use super::super::super::indicator_manager::IndicatorEdit;
 use super::*;
 use quantick_control_handlers::indicator_host::IndicatorRefusal;
-use quantick_control_schema::native_indicator as wire;
+use quantick_control_handlers::wire::native_indicator as wire;
 impl LayoutAdapter<'_> {
     fn native_side(&self, target: &wire::Target) -> Result<PaneSide, IndicatorRefusal> {
         self.tabs

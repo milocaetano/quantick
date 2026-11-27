@@ -218,7 +218,7 @@ fn a_secondary_drag_is_temporary_until_it_is_dismissed_or_converted() {
         assert_eq!(control.capability_id.as_deref(), Some(capability_id));
         assert_eq!(
             control.role,
-            quantick_control_schema::scene::SceneRoleDto::Action
+            quantick_control_handlers::wire::scene::SceneRoleDto::Action
         );
         assert!(control.availability.available);
     }
@@ -233,7 +233,7 @@ fn a_secondary_drag_is_temporary_until_it_is_dismissed_or_converted() {
     );
     assert_eq!(
         channel.role,
-        quantick_control_schema::scene::SceneRoleDto::Tool
+        quantick_control_handlers::wire::scene::SceneRoleDto::Tool
     );
     assert!(channel.availability.available);
     assert!(

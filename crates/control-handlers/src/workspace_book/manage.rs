@@ -5,14 +5,14 @@
 //! `quantick_session::manage_workspaces`'s, the time arrives in the intent
 //! (the window's frame) or with the call (`requested_at_unix_ms`).
 
-use quantick_control::error::ControlError;
-use quantick_control::wire::{ActorContext, WireU64};
-use quantick_control_schema::window_menu as text;
-use quantick_control_schema::workspace_manage::{
+use crate::wire::window_menu as text;
+use crate::wire::workspace_manage::{
     WORKSPACE_DIALOG_OPENED_EVENT_KIND, WORKSPACE_RESTORED_EVENT_KIND, WorkspaceDeleteUndoInput,
     WorkspaceDeleteUndoResult, WorkspaceDialog, WorkspaceDialogOpenInput,
     WorkspaceDialogOpenResult,
 };
+use quantick_control::error::ControlError;
+use quantick_control::wire::{ActorContext, WireU64};
 use quantick_session::colour_popover::ColourIntent;
 use quantick_session::manage_workspaces::{ManageIntent, UndoRow};
 use quantick_session::workspace_menu::{NameDialog, NameDialogMode, WorkspaceMenuState};

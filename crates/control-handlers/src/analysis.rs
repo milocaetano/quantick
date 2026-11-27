@@ -33,7 +33,7 @@
 //! each pane's indicator views and marks, both already headless, with the
 //! side it sits on. Everything the two scopes decide from those is here.
 
-pub use quantick_control_schema::analysis::*;
+pub use crate::wire::analysis::*;
 
 use quantick_chart::indicator_views::{IndicatorView, IndicatorViews};
 use quantick_control::{

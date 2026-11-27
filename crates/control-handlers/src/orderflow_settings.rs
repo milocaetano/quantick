@@ -1,11 +1,11 @@
 //! `orderflow.settings.*` over the panel's narrow port.
 use crate::dock::ActionDock;
-use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::orderflow_settings::{
+use crate::wire::orderflow_settings::{
     AssetFolds, OrderFlowPanel, PanelSection, SettingsCloseInput, SettingsLightsInput,
     SettingsOpenInput, SettingsResult, SettingsSectionInput, close_descriptor, lights_descriptor,
     open_descriptor, section_descriptor,
 };
+use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 

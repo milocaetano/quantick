@@ -1,10 +1,8 @@
 //! `chart.time_axis.reset`: a time strip's, or open canvas's, double- and
 //! triple-click by name, on the addressed pane
 //! ([`crate::axis_pane::AxisPane`]).
+use crate::wire::time_axis::{TimeAxis, TimeAxisResetInput, TimeAxisResetResult, TimeAxisTarget};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::time_axis::{
-    TimeAxis, TimeAxisResetInput, TimeAxisResetResult, TimeAxisTarget,
-};
 use serde_json::Value;
 
 use crate::addressed_pane::AddressedPanePort;
@@ -19,7 +17,7 @@ use crate::invalid;
 pub fn register<D: ActionDock<H, A>, H: AddressedPanePort<Pane: AxisPane> + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
-    registry.register(quantick_control_schema::time_axis::descriptor(), reset_time)
+    registry.register(crate::wire::time_axis::descriptor(), reset_time)
 }
 
 /// The gestures' own paths and eligibility, so the call and the clicks

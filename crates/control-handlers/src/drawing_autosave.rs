@@ -1,11 +1,11 @@
 //! Save drawing uses the same addressed owner as the chart's native checkbox.
-use crate::{JournalAccess, chart_settings::ChartStylePort, dock::ActionDock, invalid};
-use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::{
+use crate::wire::{
     chart::MODULE_ID,
     drawing_autosave::{self as wire, Input, Output},
 };
+use crate::{JournalAccess, chart_settings::ChartStylePort, dock::ActionDock, invalid};
+use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
+use quantick_control_host::journal::NewEvent;
 use serde_json::{Value, json};
 
 /// The addressed pane is valid, but its scope or persistence is not ready.

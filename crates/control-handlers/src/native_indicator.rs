@@ -1,9 +1,9 @@
 //! Native mutation validation and dispatch over the existing indicator owner.
 use crate::indicator_host::{IndicatorControlHost, IndicatorRefusal, NativePort};
+use crate::wire::native_indicator as wire;
 use crate::{dock::ActionDock, tabs::JournalAccess};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::native_indicator as wire;
 use serde_json::Value;
 
 /// Dock the native indicator edit and list.

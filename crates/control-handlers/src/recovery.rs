@@ -15,6 +15,10 @@
 //! descriptor, and the answer is the whole reason the trader is offered a
 //! choice at all.
 
+use crate::wire::recovery::{
+    RECONNECT_CAPABILITY_ID, RECOVERY_MODULE_ID, RELOAD_CAPABILITY_ID, RELOAD_EVENT_KIND,
+    RecoveryInput, RecoveryResult, descriptor,
+};
 use quantick_control::{
     error::ControlError,
     registry::RegistryError,
@@ -22,10 +26,6 @@ use quantick_control::{
     wire::{ActorContext, WireU64},
 };
 use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::recovery::{
-    RECONNECT_CAPABILITY_ID, RECOVERY_MODULE_ID, RELOAD_CAPABILITY_ID, RELOAD_EVENT_KIND,
-    RecoveryInput, RecoveryResult, descriptor,
-};
 use quantick_sources::recovery::Recovery;
 use serde_json::{Value, json};
 

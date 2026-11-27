@@ -24,7 +24,7 @@ pub const GENERATED_MARKER: &str =
 /// The committed contents of `docs/control-plane/ui-behaviour-matrix.md`.
 ///
 /// Deterministic by construction: `behaviours` is the joined `const` table
-/// (`quantick_control_schema::ui_behaviours::UI_BEHAVIOURS`) rendered in its
+/// (`quantick_control_handlers::wire::ui_behaviours::UI_BEHAVIOURS`) rendered in its
 /// own order, so two runs on the same tree cannot disagree and the committed
 /// copy can be compared byte for byte instead of parsed.
 pub fn ui_behaviour_matrix_markdown(behaviours: &[UiBehaviour]) -> String {
@@ -57,7 +57,7 @@ fn preamble() -> String {
         "The rows live one file per family under\n",
         "`crates/operability/src/registry/`, or in the `ui` entry of a declared\n",
         "control call, joined by `FAMILIES` in\n",
-        "`crates/control-schema/src/ui_behaviours.rs`; the guard that compares\n",
+        "`crates/control-handlers/src/wire/ui_behaviours.rs`; the guard that compares\n",
         "them against the interface and against the capability registry runs as\n",
         "`cargo test -p quantick-app operability`.\n",
         "\n",

@@ -10,10 +10,10 @@
 //!
 //! [`WorkspaceBook::switch_drops`]: quantick_stores::workspaces::WorkspaceBook::switch_drops
 
+use crate::wire::workspace_book::{SwitchEdits, UNSAVED_EDITS_CODE};
 use quantick_control::error::ControlError;
 use quantick_control::wire::ActorContext;
 use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::workspace_book::{SwitchEdits, UNSAVED_EDITS_CODE};
 use quantick_session::close_queue::CloseAnswer;
 use quantick_session::prompt::Prompt;
 use quantick_session::switch_prompt::{SwitchAnswer, SwitchPrompt, SwitchQuestion};
@@ -164,9 +164,9 @@ fn unsaved(asked: &SwitchQuestion) -> ControlError {
         ..
     } = asked;
     let keep = if workspace == quantick_workspace::workspace_book::DEFAULT_WORKSPACE {
-        quantick_control_schema::workspace_book::WORKSPACE_SAVE_AS_CAPABILITY_ID
+        crate::wire::workspace_book::WORKSPACE_SAVE_AS_CAPABILITY_ID
     } else {
-        quantick_control_schema::workspace_book::WORKSPACE_SAVE_TO_CAPABILITY_ID
+        crate::wire::workspace_book::WORKSPACE_SAVE_TO_CAPABILITY_ID
     };
     let mut error = ControlError::invalid_request(format!(
         "{} Call {keep} first to keep them, or pass edits discard to switch to {target} without saving.",

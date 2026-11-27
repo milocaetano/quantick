@@ -1,6 +1,6 @@
 use super::*;
 use quantick_alerts::{AlertId, TargetKind};
-use quantick_control_schema::alerts::TargetResolveError;
+use quantick_control_handlers::wire::alerts::TargetResolveError;
 
 fn key(asset: &str) -> DrawingKey {
     DrawingKey::of_pane("fixture", asset.to_owned(), None)
