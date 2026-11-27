@@ -207,8 +207,7 @@ durable-report producer (`review_report.sh`) that only they used.
   The file names `mission-tier` and `mission-base` stay, read by
   `implement` and `feature`.
 
-Their records stay as history in [`history/campaign/`](history/campaign/) and in
-git.
+Their records live in git history.
 
 ## The hooks that make the gates real
 
