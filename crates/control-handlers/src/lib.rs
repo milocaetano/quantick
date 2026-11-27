@@ -19,8 +19,7 @@
 
 macro_rules! handler_modules {
     ($args:tt $($family:ident {
-        schemas: $schemas:tt, catalog: $catalog:tt, readbacks: $readbacks:tt,
-        handlers: [$($visibility:vis $handler:ident),*], actions: $actions:tt
+        wire: $wire:tt, handlers: [$($visibility:vis $handler:ident),*], actions: $actions:tt
     })*) => {
         $($($visibility mod $handler;)*)*
     };
