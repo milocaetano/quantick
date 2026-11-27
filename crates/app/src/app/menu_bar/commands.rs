@@ -7,11 +7,11 @@
 //! takes, so a click and an agent reach the same owner method.
 
 use eframe::egui;
+use quantick_control_handlers::wire::{settings_sections::SettingsSection, window_menu::HelpPage};
 use quantick_control_handlers::{
     alerts::AlertDefinitionsPort, desk::DeskAct, layout::LayoutHost,
     orderflow_settings::OrderflowSettingsPort, trade::PaperHost,
 };
-use quantick_control_schema::{settings_sections::SettingsSection, window_menu::HelpPage};
 use quantick_session::{paper::TradeCommand, workspace_menu::WorkspaceCommand};
 
 use crate::app::{ChromePort, GatewayPort, LayersPort, TabsPort};

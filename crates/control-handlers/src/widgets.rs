@@ -11,6 +11,10 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
+use crate::wire::widget::{
+    MAX_READ_TEXTS, WIDGET_CHANGED_EVENT_KIND, WidgetChip, WidgetInput, WidgetRead, WidgetState,
+    close_descriptor, open_descriptor, read_widget_descriptor,
+};
 use quantick_chart::widgets::big_trades::{BigTradesLayout, NotionalUnit, big_trades_view};
 use quantick_chart::widgets::depth::{
     DEPTH_RESTING_BAR_SHARE, DEPTH_VOLUME_BAR_SHARE, depth_rows_per_side, depth_view,
@@ -29,10 +33,6 @@ use quantick_civil::TzOffset;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::authority::WIDGET_MODULE_ID;
 use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::widget::{
-    MAX_READ_TEXTS, WIDGET_CHANGED_EVENT_KIND, WidgetChip, WidgetInput, WidgetRead, WidgetState,
-    close_descriptor, open_descriptor, read_widget_descriptor,
-};
 use quantick_engine::trade_tape::TradeTape;
 use quantick_orderflow::engine::BookLadder;
 use quantick_orderflow::history::Aggression;

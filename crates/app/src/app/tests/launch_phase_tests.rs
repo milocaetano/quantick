@@ -89,7 +89,7 @@ fn journaled(app: &QuantickApp, kind: &str) -> Vec<String> {
 fn the_tape_hook_switches_the_lane_through_the_layer_call() {
     let app = launched_with(&[("QUANTICK_TAPE", "off")]);
     assert!(!app.active_tab().tape().lane_enabled());
-    let kind = quantick_control_schema::layers::EVENT_KIND;
+    let kind = quantick_control_handlers::wire::layers::EVENT_KIND;
     assert_eq!(journaled(&app, kind), ["launch hook (agent)"]);
 }
 
@@ -97,7 +97,7 @@ fn the_tape_hook_switches_the_lane_through_the_layer_call() {
 fn the_workspace_save_hook_writes_the_desk_through_its_call() {
     let app = launched_with(&[("QUANTICK_WORKSPACE_SAVE", "1")]);
     assert!(app.runtime.workspace.session().saved());
-    let kind = quantick_control_schema::desk::DESK_SAVED_EVENT_KIND;
+    let kind = quantick_control_handlers::wire::desk::DESK_SAVED_EVENT_KIND;
     assert_eq!(journaled(&app, kind), ["launch hook (agent)"]);
 }
 
@@ -118,7 +118,7 @@ fn a_launch_hooks_call_never_lands_in_a_replays_control_trace() {
         "pane_id": app.active_tab().flow_pane.id.to_string(),
         "mode": { "kind": "manual", "low": "90", "high": "110" },
     });
-    let capability = quantick_control_schema::price_axis::PRICE_AXIS_CAPABILITY_ID;
+    let capability = quantick_control_handlers::wire::price_axis::PRICE_AXIS_CAPABILITY_ID;
     let traced = || std::fs::read_to_string(&sidecar).unwrap_or_default();
 
     let launch = crate::control::ActionOrigin::LaunchHook;

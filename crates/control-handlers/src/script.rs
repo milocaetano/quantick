@@ -8,6 +8,10 @@
 //! reliably.
 use crate::annotate::AnnotateAccess;
 use crate::indicator_host::IndicatorControlHost;
+use crate::wire::script::{
+    AttachInput, AttachResult, DetachInput, DetachResult, SCRIPT_ATTACHED_EVENT_KIND,
+    SCRIPT_DETACHED_EVENT_KIND, attach_descriptor, declared_inputs, detach_descriptor,
+};
 use crate::{dock::ActionDock, tabs::JournalAccess};
 use quantick_control::{
     error::ControlError,
@@ -15,10 +19,6 @@ use quantick_control::{
     wire::{ActorContext, ActorKind, WireU64},
 };
 use quantick_control_host::{authority::SCRIPT_MODULE_ID, journal::NewEvent};
-use quantick_control_schema::script::{
-    AttachInput, AttachResult, DetachInput, DetachResult, SCRIPT_ATTACHED_EVENT_KIND,
-    SCRIPT_DETACHED_EVENT_KIND, attach_descriptor, declared_inputs, detach_descriptor,
-};
 use serde::Serialize;
 use serde_json::{Value, json};
 

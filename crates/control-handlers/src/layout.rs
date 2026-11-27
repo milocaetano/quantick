@@ -16,6 +16,7 @@
 //! them its layout book through [`LayoutHost`] and each tab through
 //! [`LayoutTab`], whose every act is the one the window's own gesture makes.
 
+use crate::wire::layout::*;
 use quantick_chart::state::{BarConfiguration, BarKind, SpecSelector};
 use quantick_chart_interaction::pane::PaneSide;
 use quantick_control::{
@@ -23,7 +24,6 @@ use quantick_control::{
     registry::RegistryError,
     wire::{ActorContext, ActorKind, WireU64},
 };
-use quantick_control_schema::layout::*;
 use quantick_workspace::canvas_layout::{self, LayoutPreset};
 use quantick_workspace::layout_document::{LayoutBook, LayoutError, LayoutId};
 use serde_json::Value;

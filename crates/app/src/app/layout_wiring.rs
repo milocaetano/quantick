@@ -181,12 +181,12 @@ impl LayoutAdapter<'_> {
     /// Promote exactly the selected live object, then verify its committed copy.
     pub(crate) fn resolve_alert_target(
         &mut self,
-        selector: quantick_control_schema::alerts::DrawingSelector,
+        selector: quantick_control_handlers::wire::alerts::DrawingSelector,
     ) -> Result<
         quantick_alerts::DurableDrawingRef,
-        quantick_control_schema::alerts::TargetResolveError,
+        quantick_control_handlers::wire::alerts::TargetResolveError,
     > {
-        use quantick_control_schema::alerts::TargetResolveError as Error;
+        use quantick_control_handlers::wire::alerts::TargetResolveError as Error;
         self.persist_changed_drawings();
         let tab = self.tabs.by_id(selector.tab_id).ok_or(Error::Missing)?;
         let (pane, side) = tab
@@ -950,11 +950,14 @@ impl LayoutAdapter<'_> {
         }
     }
 
-    /// Each frame before a write: `quantick_drawings::PaneMarks::follow_store`.
+    /// Each frame before a write: `quantick_drawings::PaneMarks::follow_store`,
+    /// and each tab's lent marks.
     fn follow_quiet_recuts(&mut self) {
         let (store, session) = (self.store.market(), self.store.session());
-        for pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
-            marks_of(pane).follow_store(store, session);
+        for tab in self.tabs.iter_mut() {
+            tab.follow_lent_marks(store);
+            tab.panes_mut()
+                .for_each(|pane| marks_of(pane).follow_store(store, session));
         }
     }
 

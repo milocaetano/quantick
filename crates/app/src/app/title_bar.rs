@@ -4,7 +4,7 @@ use eframe::egui;
 
 use super::workspace_runtime::WorkspaceRuntime;
 use crate::config::AppConfig;
-use quantick_control_schema::native_window::WindowState;
+use quantick_control_handlers::wire::native_window::WindowState;
 use quantick_ui_model::chrome_tab_strip::{MarketFace, market_face};
 mod resize;
 
@@ -15,7 +15,7 @@ pub(crate) struct TitleBarState {
     pub(crate) surface: quantick_workspace::arrangement::strip::StripSurface,
     pub(crate) strip: crate::tabstrip::StripDrawn,
     pub(crate) controls: Vec<(&'static str, egui::Rect)>,
-    pub(crate) requests: quantick_control_schema::native_window::WindowRequests,
+    pub(crate) requests: quantick_control_handlers::wire::native_window::WindowRequests,
     /// Local agent access is on, so the strip shows its pill.
     pub(crate) agent_on: bool,
     pub(crate) menu_open: bool,
@@ -44,7 +44,7 @@ pub(super) fn push_scripted_menu(
     raw_input: &mut egui::RawInput,
 ) -> bool {
     let chrome = &mut app.chrome;
-    let kebab = quantick_control_schema::window_menu::KEBAB_CONTROL;
+    let kebab = quantick_control_handlers::wire::window_menu::KEBAB_CONTROL;
     let window = chrome.title_bar.control_rect(kebab);
     let history = chrome.history_menu_rect;
     chrome

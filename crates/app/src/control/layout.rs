@@ -6,7 +6,7 @@ use crate::app::GatewayPort;
 use crate::app::control_host::ControlPort;
 use crate::pane::PaneSide;
 use crate::tab::Tab;
-pub(crate) use quantick_control_schema::layout::*;
+pub(crate) use quantick_control_handlers::wire::layout::*;
 
 use quantick_chart::state::{BarConfiguration, SpecSelector};
 use quantick_control::wire::ActorKind;

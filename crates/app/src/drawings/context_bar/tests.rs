@@ -6,7 +6,6 @@ const PLAIN: Capabilities = Capabilities {
     authored: false,
     glyph_size: false,
     settings: true,
-    sharing: true,
     magnet: true,
     position: false,
     draw_again: false,
@@ -45,7 +44,6 @@ fn the_bar_has_no_overflow_menu() {
                 glyph_size: bits & 1 == 0 && bits & 64 == 0,
                 authored: bits & 2 != 0,
                 settings: bits & 4 != 0,
-                sharing: bits & 8 != 0,
                 magnet: bits & 16 != 0,
                 draw_again: bits & 32 != 0,
                 position: bits & 64 != 0,
@@ -93,7 +91,6 @@ fn an_unsupported_property_is_absent_not_disabled() {
         authored: false,
         glyph_size: true,
         settings: true,
-        sharing: true,
         magnet: true,
         position: false,
         draw_again: false,
@@ -144,7 +141,6 @@ fn the_bar_is_one_row_of_touch_targets() {
             authored: false,
             glyph_size: true,
             settings: false,
-            sharing: true,
             magnet: true,
             position: false,
             draw_again: true,
@@ -169,10 +165,10 @@ fn sharing_sits_beside_hide_and_names_both_states() {
     let cells = slots(PLAIN);
     let hide = cells.iter().position(|slot| *slot == Slot::Hide).unwrap();
     assert_eq!(cells[hide + 1], Slot::Sharing);
-    assert_eq!(sharing_control(false).1, "Show on all timeframes");
-    assert_eq!(sharing_control(true).1, "Show only on this chart");
-    assert_eq!(sharing_control(false).0, icons::GRID_FOUR);
-    assert_eq!(sharing_control(true).0, icons::GRID_FOUR);
+    assert_eq!(
+        SHARING_HOVER,
+        ["Show on all timeframes", "Show only on this chart"]
+    );
 }
 
 #[test]
@@ -190,15 +186,6 @@ fn the_magnet_sits_beside_lock_and_only_where_it_snaps() {
         !own_rule.contains(&Slot::Magnet),
         "a tool that snaps by its own rule has no dead magnet"
     );
-}
-
-#[test]
-fn an_unshareable_drawing_has_no_dead_sharing_control() {
-    let cells = slots(Capabilities {
-        sharing: false,
-        ..PLAIN
-    });
-    assert!(!cells.contains(&Slot::Sharing));
 }
 
 #[test]

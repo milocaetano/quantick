@@ -1,7 +1,7 @@
 //! Native presentation requests through a headless host port.
 use crate::dock::ActionDock;
+use crate::wire::native_window::{WindowInput, WindowResult, WindowState, descriptor};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::native_window::{WindowInput, WindowResult, WindowState, descriptor};
 use serde_json::Value;
 
 pub trait NativeWindowHost {
@@ -25,10 +25,10 @@ pub trait NativeWindowHost {
     ) -> Result<quantick_control::wire::WireU64, ControlError> {
         self.pin_capture_window(Some(window))
     }
-    fn capture_scene(&self) -> Option<&quantick_control_schema::scene::SceneSnapshot> {
+    fn capture_scene(&self) -> Option<&crate::wire::scene::SceneSnapshot> {
         None
     }
-    fn set_capture_scene(&mut self, _: Option<quantick_control_schema::scene::SceneSnapshot>) {}
+    fn set_capture_scene(&mut self, _: Option<crate::wire::scene::SceneSnapshot>) {}
 
     fn request_targeted_native_window(
         &mut self,
@@ -42,21 +42,21 @@ pub trait NativeWindowHost {
         self.request_native_window(input.state)?;
         Ok(quantick_control::wire::WireU64::new(0))
     }
-    fn market_windows(&self) -> quantick_control_schema::market_windows::WindowsSnapshot {
-        quantick_control_schema::market_windows::WindowsSnapshot::default()
+    fn market_windows(&self) -> crate::wire::market_windows::WindowsSnapshot {
+        crate::wire::market_windows::WindowsSnapshot::default()
     }
     fn operate_market_tabs(
         &mut self,
-        _: quantick_control_schema::market_windows::TabOperation,
-    ) -> Result<quantick_control_schema::market_windows::TabOperationResult, ControlError> {
+        _: crate::wire::market_windows::TabOperation,
+    ) -> Result<crate::wire::market_windows::TabOperationResult, ControlError> {
         Err(ControlError::invalid_request(
             "market windows are unavailable",
         ))
     }
     fn place_native_window(
         &mut self,
-        _: quantick_control_schema::market_windows::PlacementInput,
-    ) -> Result<quantick_control_schema::market_windows::PlacementResult, ControlError> {
+        _: crate::wire::market_windows::PlacementInput,
+    ) -> Result<crate::wire::market_windows::PlacementResult, ControlError> {
         Err(ControlError::invalid_request(
             "native window placement is unavailable",
         ))

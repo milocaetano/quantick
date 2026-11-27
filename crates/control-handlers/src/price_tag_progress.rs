@@ -8,8 +8,8 @@
 //! Rate class: a human or an agent changing a preference. Never per trade.
 use crate::chart_settings::ChartStylePort;
 use crate::dock::ActionDock;
+use crate::wire::price_tag_progress::{PriceTagProgressInput, descriptor};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::price_tag_progress::{PriceTagProgressInput, descriptor};
 use serde_json::Value;
 
 pub fn register<D: ActionDock<H, A>, H: ChartStylePort + ?Sized, A>(
@@ -51,9 +51,9 @@ mod tests {
         }
         fn apply_chart_settings(
             &mut self,
-            _: quantick_control_schema::chart_settings::ChartSettingsInput,
+            _: crate::wire::chart_settings::ChartSettingsInput,
         ) -> Result<
-            quantick_control_schema::chart_settings::ChartSettingsResult,
+            crate::wire::chart_settings::ChartSettingsResult,
             quantick_stores::candle_presets::PresetError,
         > {
             unreachable!("the price-tag call never opens chart settings")

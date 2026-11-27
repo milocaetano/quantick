@@ -1,7 +1,7 @@
 //! The connection state on the wire: what `feed.status` reports for one tab.
 
+use crate::wire::feed::ConnectionSnapshot;
 use quantick_chart::connection_state::{ConnectionTracker, Link};
-use quantick_control_schema::feed::ConnectionSnapshot;
 use quantick_sources::sync::Desync;
 
 /// Whether a one-click Reconnect stands on screen outside the popup: the

@@ -2,9 +2,9 @@
 //! call, the context bar and the inspector agree. The app only finds the pane
 //! and journals.
 
+pub use crate::wire::drawing_scope::*;
 use quantick_control::error::ControlError;
 use quantick_control::wire::WireU64;
-pub use quantick_control_schema::drawing_scope::*;
 use quantick_drawings::{DrawingId, DrawingScope, DrawingTool, Drawings};
 use serde_json::Value;
 

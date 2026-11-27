@@ -1,9 +1,9 @@
 //! `chart.price_axis.set` and `chart.tape_view.set`: named price and tape
 //! framing on the addressed pane ([`crate::axis_pane::AxisPane`]), over the
 //! same pane state as their gestures.
+use crate::wire::price_axis::{PriceAxisInput, PriceAxisResult};
+use crate::wire::tape_view::{TapeViewInput, TapeViewResult};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::price_axis::{PriceAxisInput, PriceAxisResult};
-use quantick_control_schema::tape_view::{TapeViewInput, TapeViewResult};
 use serde_json::Value;
 
 use crate::addressed_pane::AddressedPanePort;
@@ -20,8 +20,8 @@ const NO_NATIVE_TAPE: &str = "the pane draws no native tape";
 pub fn register<D: ActionDock<H, A>, H: AddressedPanePort<Pane: AxisPane> + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
-    registry.register(quantick_control_schema::price_axis::descriptor(), set_price)?;
-    registry.register(quantick_control_schema::tape_view::descriptor(), set_tape)
+    registry.register(crate::wire::price_axis::descriptor(), set_price)?;
+    registry.register(crate::wire::tape_view::descriptor(), set_tape)
 }
 
 fn set_price<H: AddressedPanePort<Pane: AxisPane> + ?Sized, A>(

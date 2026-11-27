@@ -20,11 +20,11 @@
 use std::collections::BTreeMap;
 
 use quantick_engine::{Bar, BarProgress};
-use quantick_script_trigger::ScriptInstance;
 use quantick_sim::{Command, VenueEvent};
 use quantick_strategy::anchors::{AlarmMark, AnchoredInstance, StrategyAnchors};
 use quantick_strategy::presets::{CompiledPreset, StoredPreset};
 use quantick_strategy::runner::{self, StrategyPort};
+use quantick_strategy::script::ScriptInstance;
 use quantick_strategy::sound::Cue;
 use quantick_strategy::{ArmedState, ArmedStrategy, DisarmReason, ForceTrigger, Region};
 use rust_decimal::Decimal;

@@ -387,7 +387,7 @@ fn a_tab_change_closes_the_picker_and_ctrl_z_spares_the_other_tab() {
 /// and the slot turns into the restore arrow, which brings the change back.
 #[test]
 fn the_revert_arrow_puts_the_saved_layout_back_and_its_restore_the_change() {
-    use quantick_control_schema::workspace_book::{
+    use quantick_control_handlers::wire::workspace_book::{
         WORKSPACE_REVERT_CAPABILITY_ID, WORKSPACE_REVERT_UNDO_CAPABILITY_ID,
     };
     let (mut app, _evt, _cmd, _book) = test_app();

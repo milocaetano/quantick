@@ -6,7 +6,7 @@ use super::{Intent, Model, Request, State};
 use crate::Model as _;
 use quantick_alerts::{AlertCommand, DurableDrawingRef};
 use quantick_control_handlers::alerts::AlertDefinitionsPort;
-use quantick_control_schema::alerts::DrawingSelector;
+use quantick_control_handlers::wire::alerts::DrawingSelector;
 use quantick_workspace::drawing_identity;
 use quantick_workspace::market_settings::DrawingKey;
 

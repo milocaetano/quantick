@@ -218,7 +218,7 @@ fn a_secondary_drag_is_temporary_until_it_is_dismissed_or_converted() {
         assert_eq!(control.capability_id.as_deref(), Some(capability_id));
         assert_eq!(
             control.role,
-            quantick_control_schema::scene::SceneRoleDto::Action
+            quantick_control_handlers::wire::scene::SceneRoleDto::Action
         );
         assert!(control.availability.available);
     }
@@ -233,7 +233,7 @@ fn a_secondary_drag_is_temporary_until_it_is_dismissed_or_converted() {
     );
     assert_eq!(
         channel.role,
-        quantick_control_schema::scene::SceneRoleDto::Tool
+        quantick_control_handlers::wire::scene::SceneRoleDto::Tool
     );
     assert!(channel.availability.available);
     assert!(
@@ -2189,6 +2189,19 @@ fn a_shared_drawing_is_painted_on_the_other_pane_of_the_tab() {
         both_panes > own_pane_only,
         "sharing must add strokes on the other pane: {own_pane_only} -> {both_panes}"
     );
+
+    let others: Vec<PaneSide> = app.active_tab().panes().map(|(_, side)| side).collect();
+    for side in others.into_iter().filter(|side| *side != PaneSide::Flow) {
+        app.active_tab_mut()
+            .pane_mut(side)
+            .drawings
+            .set_all_hidden(true);
+    }
+    let hidden = drawing_strokes(&run_frame(&mut app, &ctx));
+    assert_eq!(
+        hidden, own_pane_only,
+        "a pane with its marks hidden paints none lent to it"
+    );
 }
 
 /// Every chart of the market holds a mark shown on all timeframes itself: it is
@@ -3663,6 +3676,38 @@ fn the_context_bar_shares_a_drawing_across_charts_in_one_click() {
     );
 }
 
+/// A drawing that cannot be shared keeps its sharing button, disabled: a
+/// click changes nothing, and the gear beside it stays where the hand knows.
+#[test]
+fn an_unshareable_drawing_keeps_a_disabled_sharing_button_and_its_gear() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    app.surfaces
+        .toolrail
+        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+    run_frame(&mut app, &ctx);
+    let bar = |app: &QuantickApp| {
+        let bar = app.surfaces.drawing_chrome.context_bar();
+        (bar.sharing_rect(), bar.gear_rect())
+    };
+    let (_, gear) = bar(&app);
+
+    app.active_tab_mut().flow_pane.drawings.items_mut()[0].points[0].time_ms = None;
+    run_frame(&mut app, &ctx);
+    let (sharing, kept) = bar(&app);
+    let sharing = sharing.expect("the sharing button stays");
+    assert_eq!(kept, gear, "the gear does not shift");
+    click_chart(&mut app, &ctx, sharing.center());
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items()[0].scope,
+        DrawingScope::ThisChart,
+        "a disabled button shares nothing"
+    );
+}
+
 #[test]
 fn rectangle_anchor_resizes_while_the_settings_window_stays_non_modal() {
     let (mut app, _commands) = app_with_history(200);
@@ -4415,6 +4460,21 @@ fn two_context_charts_on_one_bar_rule_mirror_a_shared_mark_once() {
     );
     assert!(owners(top).is_empty(), "and so does each context chart");
     assert!(owners(bottom).is_empty());
+}
+
+/// A pane with its marks hidden shows no other pane's marks, so it takes
+/// none either: paint and pick ask the same gate.
+#[test]
+fn a_pane_with_hidden_marks_neither_paints_nor_takes_anothers() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let time = PaneSide::Time(0);
+    assert!(app.active_tab().shared_viewer(time.index()).is_some());
+    app.active_tab_mut()
+        .pane_mut(time)
+        .drawings
+        .set_all_hidden(true);
+    assert!(app.active_tab().shared_viewer(time.index()).is_none());
 }
 
 /// Missing legacy workspace ownership stays quarantined when two context

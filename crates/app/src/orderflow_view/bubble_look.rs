@@ -2,8 +2,8 @@
 use super::OrderflowView;
 use quantick_appearance::orderflow::OrderflowAppearance as Theme;
 use quantick_control_handlers::bubble_pane::{AssetSave, BubbleLook};
-use quantick_control_schema::bubble_preset::{ListInput, ListResult, page};
-use quantick_control_schema::orderflow::BubblesStateSnapshot;
+use quantick_control_handlers::wire::bubble_preset::{ListInput, ListResult, page};
+use quantick_control_handlers::wire::orderflow::BubblesStateSnapshot;
 use quantick_orderflow::{HeatmapConfig, TickTuning};
 use quantick_stores::bubble_asset_store::SaveSwitch;
 impl BubbleLook<Theme> for OrderflowView {

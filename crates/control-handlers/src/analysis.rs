@@ -33,7 +33,7 @@
 //! each pane's indicator views and marks, both already headless, with the
 //! side it sits on. Everything the two scopes decide from those is here.
 
-pub use quantick_control_schema::analysis::*;
+pub use crate::wire::analysis::*;
 
 use quantick_chart::indicator_views::{IndicatorView, IndicatorViews};
 use quantick_control::{
@@ -418,7 +418,7 @@ fn pane_drawings(pane: &dyn AnalysisPane, side: PaneSideDto) -> PaneDrawingsSnap
     }
 }
 
-fn drawing_snapshot(drawings: &Drawings<DrawingTool>, index: usize) -> DrawingSnapshot {
+pub(crate) fn drawing_snapshot(drawings: &Drawings<DrawingTool>, index: usize) -> DrawingSnapshot {
     let drawing = &drawings.items()[index];
     DrawingSnapshot {
         drawing_id: WireU64::new(drawing.id.0),
@@ -427,6 +427,7 @@ fn drawing_snapshot(drawings: &Drawings<DrawingTool>, index: usize) -> DrawingSn
         annotation_band: crate::annotate::annotation_band(&drawing.band),
         scope: scope_name(drawing).to_owned(),
         all_windows: drawings.in_all_windows(index),
+        time_projected: drawing.time_projected(),
         layout_id: drawing.layout.map(|layout| WireU64::new(layout.0)),
         locked: drawing.locked,
         magnet: drawing.own_magnet(),

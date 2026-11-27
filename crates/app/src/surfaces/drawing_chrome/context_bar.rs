@@ -279,7 +279,7 @@ fn alert_action(
                 .clicked()
             {
                 let readbacks = ask.readbacks.get_or_insert_with(Default::default);
-                readbacks.alert_target = Some(quantick_control_schema::alerts::DrawingSelector {
+                readbacks.alert_target = Some(quantick_control_handlers::wire::alerts::DrawingSelector {
                     tab_id: env.tab,
                     pane_id: env.pane_id,
                     drawing_id,

@@ -1,8 +1,8 @@
 //! The `⋮` window menu and the strip beside it, operated the way a trader does.
 use super::*;
 
-use quantick_control_schema::settings_sections::SettingsSection;
-use quantick_control_schema::window_menu::KEBAB_CONTROL;
+use quantick_control_handlers::wire::settings_sections::SettingsSection;
+use quantick_control_handlers::wire::window_menu::KEBAB_CONTROL;
 
 fn kebab(app: &QuantickApp) -> egui::Rect {
     app.chrome.title_bar.control_rect(KEBAB_CONTROL).unwrap()
@@ -266,8 +266,8 @@ fn the_scene_lists_the_kebab_beside_drag_and_the_window_buttons() {
 
 #[test]
 fn every_menu_row_names_a_behaviour_of_the_table() {
-    use quantick_control_schema::ui_behaviours::UI_BEHAVIOURS;
-    use quantick_control_schema::window_menu::ROWS;
+    use quantick_control_handlers::wire::ui_behaviours::UI_BEHAVIOURS;
+    use quantick_control_handlers::wire::window_menu::ROWS;
     for row in ROWS {
         assert!(
             UI_BEHAVIOURS.iter().any(|known| known.id == row.behaviour),
@@ -494,7 +494,7 @@ fn local_agent_menu_opens_registered_panel_in_the_same_frame() {
     run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
     fn button_center(shape: &egui::Shape) -> Option<egui::Pos2> {
-        use quantick_control_schema::settings_sections::SettingRow;
+        use quantick_control_handlers::wire::settings_sections::SettingRow;
         match shape {
             egui::Shape::Text(text) if text.galley.text() == SettingRow::ManageClients.label() => {
                 Some(text.visual_bounding_rect().center())

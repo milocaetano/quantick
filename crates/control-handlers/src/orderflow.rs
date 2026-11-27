@@ -25,8 +25,11 @@
 //! those is here. The sixth, the settings panel's state, reads the tab and not
 //! a pane, painted or not.
 
-pub use quantick_control_schema::orderflow::*;
+pub use crate::wire::orderflow::*;
 
+use crate::wire::orderflow_settings::{
+    AssetFolds, OrderFlowPanel, SETTINGS_SCOPE_ID, SettingsSnapshot, TabSettingsSnapshot,
+};
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     registry::ModuleDescriptor,
@@ -35,9 +38,6 @@ use quantick_control::{
 use quantick_control_host::{
     projection::{CaptureContext, ProjectionRegistryError},
     wire::{AvailabilitySnapshot, PaneSideDto, available, unavailable},
-};
-use quantick_control_schema::orderflow_settings::{
-    AssetFolds, OrderFlowPanel, SETTINGS_SCOPE_ID, SettingsSnapshot, TabSettingsSnapshot,
 };
 use quantick_orderflow::{
     HeatmapConfig,
@@ -353,7 +353,7 @@ fn project_heatmap<P: OrderflowPort + ?Sized>(
 fn heatmap_state(view: &dyn OrderflowEngine) -> HeatmapStateSnapshot {
     let (_status, _ladder, grouping, gaps) = view.book();
     HeatmapStateSnapshot {
-        gaps: quantick_control_schema::orderflow::book_gap_rows(gaps),
+        gaps: crate::wire::orderflow::book_gap_rows(gaps),
         book_held_at_unix_ms: view.book_held_at_ms(),
         ..HeatmapStateSnapshot::from_config(view.config(), grouping)
     }
@@ -395,7 +395,7 @@ fn engine_availability(pane: &dyn OrderflowPane) -> AvailabilitySnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quantick_control_schema::orderflow_settings::PanelSection;
+    use crate::wire::orderflow_settings::PanelSection;
     use quantick_orderflow::projection::GapPrimitive;
     use std::cell::Cell;
 

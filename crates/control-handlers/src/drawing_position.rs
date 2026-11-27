@@ -4,14 +4,14 @@
 //! lends the addressed pane's marks and the preset bank
 //! ([`DrawingDefaultsPort`]).
 
+use crate::wire::chart::PRICE_DECIMAL_PLACES;
+pub use crate::wire::drawing_position::*;
 use quantick_control::annotation::ANNOTATE_MODULE_ID;
 use quantick_control::error::ControlError;
 use quantick_control::registry::RegistryError;
 use quantick_control::wire::{ActorContext, CanonicalDecimal, WireU64};
 use quantick_control_host::journal::NewEvent;
 use quantick_control_host::wire::canonical_f64;
-use quantick_control_schema::chart::PRICE_DECIMAL_PLACES;
-pub use quantick_control_schema::drawing_position::*;
 use quantick_drawings::position_edit::{
     PositionDefault, PositionEdit, PositionLeg, apply_position_default, edited_position,
     opening_position, position_of,
@@ -46,8 +46,13 @@ where
 {
     registry.register(set_descriptor(), |host, access, actor, input| {
         let input: PositionSetInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-        let marks = host.addressed_pane(input.tab_id, input.pane_id)?.marks();
-        let result = set(marks, &input)?;
+        let pane = host.addressed_pane(input.tab_id, input.pane_id)?;
+        let result = set(pane.marks(), &input)?;
+        // A width moves an edge at an estimated pace; the pane names its time.
+        let id = DrawingId(input.drawing_id.get());
+        if let Some(index) = pane.marks().shown_index_of(id).filter(|_| result.changed) {
+            pane.restamp_mark(index);
+        }
         journal(access, actor, SET_EVENT_KIND, "position", &result)
     })?;
     registry.register(default_descriptor(), |host, access, actor, input| {

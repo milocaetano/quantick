@@ -18,7 +18,7 @@ cargo run -p quantick-app -- --dump-ui-behaviour-matrix \
 The rows live one file per family under
 `crates/operability/src/registry/`, or in the `ui` entry of a declared
 control call, joined by `FAMILIES` in
-`crates/control-schema/src/ui_behaviours.rs`; the guard that compares
+`crates/control-handlers/src/wire/ui_behaviours.rs`; the guard that compares
 them against the interface and against the capability registry runs as
 `cargo test -p quantick-app operability`.
 

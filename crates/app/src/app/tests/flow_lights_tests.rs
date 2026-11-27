@@ -2,7 +2,9 @@
 //! entry and its place in the saved tab.
 use super::*;
 use quantick_appearance::ChartSurface;
-use quantick_control_schema::orderflow_settings::{LIGHTS_CAPABILITY_ID, LIGHTS_DESCRIPTION};
+use quantick_control_handlers::wire::orderflow_settings::{
+    LIGHTS_CAPABILITY_ID, LIGHTS_DESCRIPTION,
+};
 
 const BULB: HeaderControl = HeaderControl::Settings(PanelControl::Lights);
 
@@ -21,7 +23,9 @@ fn lit(app: &QuantickApp) -> bool {
     app.active_tab().flow_pane.surface() == ChartSurface::LitFlow
 }
 
-fn scene_entry(app: &QuantickApp) -> Option<quantick_control_schema::scene::SceneControlSnapshot> {
+fn scene_entry(
+    app: &QuantickApp,
+) -> Option<quantick_control_handlers::wire::scene::SceneControlSnapshot> {
     let id = format!(
         "pane.{}.header.{}",
         app.active_tab().flow_pane.id,

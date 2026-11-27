@@ -1,8 +1,8 @@
 use super::strategy_describe_contract::DescribeHost;
 use quantick_control::{error::ControlError, registry::RegistryError};
+use quantick_control_handlers::wire::strategy_describe as wire;
 use quantick_control_handlers::{JournalAccess, dock::ActionDock};
 use quantick_control_host::{authority::STRATEGY_MODULE_ID, journal::NewEvent};
-use quantick_control_schema::strategy_describe as wire;
 use quantick_ui_model::strategy_describe::Intent;
 use serde_json::json;
 

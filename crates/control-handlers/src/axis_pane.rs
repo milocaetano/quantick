@@ -5,8 +5,8 @@
 //! and `chart.time_axis.reset` ([`crate::time_axis`]). They take the same
 //! paths the axis gestures take, so the call and the hand cannot drift. The
 //! pane's marks are [`crate::pane_marks::PaneMarks`].
-use quantick_control_schema::chart::ViewportSnapshot;
-use quantick_control_schema::tape_view::TapeViewSnapshot;
+use crate::wire::chart::ViewportSnapshot;
+use crate::wire::tape_view::TapeViewSnapshot;
 use quantick_orderflow::LaneWindow;
 use quantick_orderflow::tape_view::TapeEnd;
 

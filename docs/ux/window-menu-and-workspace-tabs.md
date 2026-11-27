@@ -297,5 +297,5 @@ agreement, disagreement and decision.
   a test.
 - Nothing in `app` holds the workspace list, the market settings store or the
   command registry; they are headless (`workspace`, `drawings`,
-  `control-schema`) with their tests.
+  `control-handlers`) with their tests.
 - English UI strings; the trader's own workspace names are data.

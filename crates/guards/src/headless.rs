@@ -91,7 +91,6 @@ pub const HEADLESS_CRATES: &[&str] = &[
     "control-local",
     "control-host",
     "control-handlers",
-    "control-schema",
     "operability",
     "indicators",
     "indicator-session",
@@ -104,7 +103,6 @@ pub const HEADLESS_CRATES: &[&str] = &[
     "paper",
     "civil",
     "strategy",
-    "script-trigger",
 ];
 
 /// One thing the headless rule forbids: how a finding spells it, and the

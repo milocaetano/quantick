@@ -1,6 +1,6 @@
 //! Workspace, tab, layout, and focus snapshot.
 
-pub(crate) use quantick_control_schema::workspace::*;
+pub(crate) use quantick_control_handlers::wire::workspace::*;
 
 use crate::app::{ChromePort, GatewayPort, HealthPort, TabsPort};
 use quantick_control::{

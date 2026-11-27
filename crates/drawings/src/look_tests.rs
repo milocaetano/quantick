@@ -521,3 +521,26 @@ fn a_ratio_pick_keeps_a_position_on_its_ground_and_a_colour_pick_owns_it() {
         (Inheritance::Explicit, [200, 0, 0], 1.0)
     );
 }
+
+/// Marks one store holds for painting on another pane (those a tab is lent)
+/// wear that pane's ground's ink, not the ink they were saved in, and only
+/// once per move.
+#[test]
+fn marks_held_for_another_pane_wear_its_ground() {
+    let mut store = store("look-lent");
+    let mut appearance = Appearance::default();
+    theme(&mut appearance, &mut store, LIGHT);
+    let (paper, island) = (ChartSurface::Paper.into(), ChartSurface::Flow.into());
+    let line = tool("trend-line");
+    let mut source = Drawings::default();
+    open(&mut source, &store, paper, line);
+    let mut pane = Drawings::<DrawingTool>::default();
+    pane.follow_ground(&store, island);
+
+    let mut lent = Drawings::default();
+    lent.adopt(source.items().iter().cloned());
+    assert!(lent.follow_ground_of(&pane));
+    assert_eq!(lent.items()[0].style, factory(&store, island, line));
+    assert_ne!(lent.items()[0].style, source.items()[0].style);
+    assert!(!lent.follow_ground_of(&pane), "once per move");
+}

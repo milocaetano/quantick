@@ -2,14 +2,12 @@
 //! of the bound workspace's indicators, and that owner serves every call —
 //! the picker, the scripts, the source editor, native indicators and the
 //! per-indicator guide.
+use crate::wire::indicator_picker::{PickerInput, PickerResult};
 use quantick_control::error::{ControlError, codes};
 use quantick_control_host::{admission::known_error, wire::PaneSideDto};
-use quantick_control_schema::indicator_picker::{PickerInput, PickerResult};
 
-use quantick_control_schema::native_indicator as wire;
-use quantick_control_schema::script_editor::{
-    EditorResult, NumericValue, ScriptDocument, ScriptEditorAction,
-};
+use crate::wire::native_indicator as wire;
+use crate::wire::script_editor::{EditorResult, NumericValue, ScriptDocument, ScriptEditorAction};
 use quantick_stores::indicator_state::SavedIndicator;
 
 /// The window's indicator job: lend the owner of the bound workspace's

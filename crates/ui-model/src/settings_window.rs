@@ -3,7 +3,7 @@
 use quantick_appearance::Builtin;
 use quantick_civil::TzOffset;
 use quantick_control_handlers::settings::{SettingsAct, SettingsReadings};
-use quantick_control_schema::settings_sections::{SettingRow, SettingsSection};
+use quantick_control_handlers::wire::settings_sections::{SettingRow, SettingsSection};
 
 /// The values the rows show, read from their owners while Settings is up.
 #[derive(Clone, Debug, Default, PartialEq)]

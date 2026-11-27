@@ -507,7 +507,7 @@ fn a_late_feed_pauses_the_toolbar_buy_and_offers_reconnect() {
     let painted = app.chrome_reads().feed_drawn().reconnect;
     assert!(painted.is_some(), "Reconnect stands beside the tape cell");
     let scene = crate::control::scene_snapshot(&app);
-    let named = quantick_control_schema::scene::FEED_RECONNECT_CONTROL_ID;
+    let named = quantick_control_handlers::wire::scene::FEED_RECONNECT_CONTROL_ID;
     let reconnect = (scene.controls.iter())
         .find(|control| control.control_id == named)
         .expect("the scene names the tape cell's Reconnect");

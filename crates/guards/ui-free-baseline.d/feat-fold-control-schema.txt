@@ -1,0 +1,5 @@
+# control-schema folded into control-handlers::wire: the longer
+# quantick_control_handlers::wire:: paths wrap where the old ones fit.
+# Path rewrites only; signed growth against the merge base.
+crates/app +4
+!budget +4

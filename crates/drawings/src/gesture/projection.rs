@@ -129,6 +129,7 @@ fn exact_coordinates(
     if let Some((_, source)) = sources.iter().find(|(at, _)| at.x == screen.x) {
         anchor.bar = source.bar;
         anchor.time_ms = source.time_ms;
+        anchor.time_projected = source.time_projected;
     }
     if let Some((_, source)) = sources.iter().find(|(at, _)| at.y == screen.y) {
         anchor.price = source.price;
@@ -203,11 +204,9 @@ impl DrawingProjection<'_> {
                 .flatten(),
         }
         .unwrap_or_else(|| scale.price_at(pos.y));
-        Some(ChartPoint::at_time(
-            bar,
-            value,
-            self.series.anchor_time(bar),
-        ))
+        let mut point = ChartPoint::at_time(bar, value, None);
+        self.series.stamp(&mut point);
+        Some(point)
     }
 
     /// The high or low of the bar `bar` falls on, on the price band only.
@@ -989,19 +988,8 @@ impl DrawingProjection<'_> {
     /// where it was: market time is what the other panes read, so a move that
     /// does not update it has moved only half the object.
     pub fn retime_selected(&self, drawings: &mut Marks) {
-        let Some(index) = drawings.selected() else {
-            return;
-        };
-        let Some(drawing) = drawings.items().get(index) else {
-            return;
-        };
-        // Collected first so the immutable borrow of the store ends before
-        // the write; every shipped tool has at most four anchors.
-        let times: SmallVec<[Option<i64>; 4]> = drawing
-            .points
-            .iter()
-            .map(|point| self.series.anchor_time(point.bar))
-            .collect();
-        drawings.set_times(index, &times);
+        if let Some(index) = drawings.selected() {
+            drawings.restamp(index, |point| self.series.stamp(point));
+        }
     }
 }

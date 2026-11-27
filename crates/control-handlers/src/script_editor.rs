@@ -1,11 +1,11 @@
 //! Source editor dispatch over the indicator owner, with no app dependency.
 use crate::indicator_host::{IndicatorControlHost, IndicatorRefusal, ScriptEditorPort};
+use crate::wire::script_editor::{
+    EVENT_KIND, EditorInput, EditorOperation, EditorResult, MAX_PAGE, descriptor,
+};
 use crate::{dock::ActionDock, tabs::JournalAccess};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::script_editor::{
-    EVENT_KIND, EditorInput, EditorOperation, EditorResult, MAX_PAGE, descriptor,
-};
 use serde_json::Value;
 
 /// Dock the editor call; a replay never records or runs it.

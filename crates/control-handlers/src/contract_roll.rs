@@ -3,6 +3,12 @@
 //! A roll is a source switch that keeps the tab's marks: the same mutation as
 //! the selectors, after the drawings were copied to the contract they are
 //! about to be looked up under. The next contract is only ever the config's.
+use crate::wire::contract_roll::{
+    CONTRACT_ROLL_EVENT_KIND, ContractRollInput, ContractRollResult, FROM_SYMBOL_PRECONDITION,
+    LIVE_SOURCE_PRECONDITION, NO_GESTURE_PRECONDITION, PAPER_FLAT_PRECONDITION,
+    ROLL_CONFIGURED_PRECONDITION, TARGET_OFFERED_PRECONDITION,
+};
+use crate::wire::feed::MODULE_ID;
 use crate::{
     dock::ActionDock,
     market_tab::{
@@ -13,12 +19,6 @@ use crate::{
 };
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::contract_roll::{
-    CONTRACT_ROLL_EVENT_KIND, ContractRollInput, ContractRollResult, FROM_SYMBOL_PRECONDITION,
-    LIVE_SOURCE_PRECONDITION, NO_GESTURE_PRECONDITION, PAPER_FLAT_PRECONDITION,
-    ROLL_CONFIGURED_PRECONDITION, TARGET_OFFERED_PRECONDITION,
-};
-use quantick_control_schema::feed::MODULE_ID;
 use serde_json::{Value, json};
 
 mod unlisted;
@@ -174,7 +174,7 @@ where
     H: MarketTabHost + ?Sized,
     A: NotifyAccess,
 {
-    registry.register(quantick_control_schema::contract_roll::descriptor(), roll)
+    registry.register(crate::wire::contract_roll::descriptor(), roll)
 }
 
 fn roll<H: MarketTabHost + ?Sized, A: NotifyAccess>(

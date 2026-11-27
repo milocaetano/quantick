@@ -1,11 +1,11 @@
 //! What a client does when a call that changes something did not answer: the
 //! app's door onto the retry matrix. The rows, and why they exist, are
-//! `quantick_control_schema::retry_matrix`; the check and the renderer are
+//! `quantick_control_handlers::wire::retry_matrix`; the check and the renderer are
 //! `quantick_control_handlers::retry_matrix`. This module renders
 //! `docs/control-plane/retry-matrix.md` from `main`'s dump path.
 
 pub(crate) use quantick_control_handlers::retry_matrix::*;
-pub(crate) use quantick_control_schema::retry_matrix::*;
+pub(crate) use quantick_control_handlers::wire::retry_matrix::*;
 // What the sidecar tests reach through `super::*`.
 #[cfg(test)]
 use super::{SNAPSHOT_CAPABILITY_ID, contract::ObserverContract, workspace};

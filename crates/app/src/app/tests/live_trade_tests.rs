@@ -339,10 +339,11 @@ fn live_trade_resume_does_not_evaluate_a_new_force_bar() {
     // The first actual drain settles launch's deferred reanchor. This anchor
     // names the first real bar; an undated anchor would instead keep its
     // distance beyond the original empty series and exclude the trigger.
+    let mut times = [Some(trades[0].timestamp_ms), None].into_iter();
     app.active_tab_mut()
         .flow_pane
         .drawings
-        .set_times(0, &[Some(trades[0].timestamp_ms), None]);
+        .restamp(0, |point| point.time_ms = times.next().flatten());
     assert!(
         crate::pane::strategies::drawing_region(&app.active_tab().flow_pane.drawings, drawing, 3)
             .unwrap()
@@ -397,10 +398,11 @@ fn a_refill_feeds_the_bars_and_the_mark_never_a_fill_a_strategy_or_the_latency()
     ingest(&mut app, &trades[..150]);
     // Settles the anchor as the resume test does, so the hole's bar is in
     // the strategy's region and would fire it if handed over.
+    let mut times = [Some(trades[0].timestamp_ms), None].into_iter();
     app.active_tab_mut()
         .flow_pane
         .drawings
-        .set_times(0, &[Some(trades[0].timestamp_ms), None]);
+        .restamp(0, |point| point.time_ms = times.next().flatten());
     assert!(
         crate::pane::strategies::drawing_region(&app.active_tab().flow_pane.drawings, drawing, 3)
             .unwrap()

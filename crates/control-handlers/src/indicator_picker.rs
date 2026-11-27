@@ -1,10 +1,10 @@
 //! The searchable indicator dialog's call: the picker contract over the
 //! indicator owner.
 use crate::indicator_host::IndicatorControlHost;
+use crate::wire::indicator_picker::{EVENT_KIND, PickerInput, descriptor};
 use crate::{dock::ActionDock, tabs::JournalAccess};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::indicator_picker::{EVENT_KIND, PickerInput, descriptor};
 use serde_json::Value;
 
 /// Dock the picker call.

@@ -1,9 +1,9 @@
 //! The frame emitter over a fake source: the first frame records nothing,
 //! and every later frame records only what changed, in the journal's words.
 
+use crate::wire::interaction::SelectionSnapshot;
 use quantick_chart::indicator_views::IndicatorViews;
 use quantick_control_host::wire::{PaneSideDto, available};
-use quantick_control_schema::interaction::SelectionSnapshot;
 use quantick_drawings::{DrawingTool, Drawings};
 use serde_json::{Value, json};
 

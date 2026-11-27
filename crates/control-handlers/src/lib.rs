@@ -4,7 +4,7 @@
 //! and validated, what it refuses and in which words, what it asks the window
 //! to do, and what it answers. What it may *not* do is name the window. Each
 //! family declares the narrow port it reads or acts through — a trait that
-//! speaks headless types only: the wire shapes in `quantick-control-schema`,
+//! speaks headless types only: the wire shapes in [`wire`],
 //! the chart model in `quantick-chart`, the history vocabulary in
 //! `quantick-sources`, the marks in `quantick-drawings`, or a plain struct
 //! of its own. The application keeps one adapter per port that reads its
@@ -29,6 +29,7 @@ macro_rules! handler_modules {
 quantick_control::control_families!(handler_modules);
 
 pub mod call;
+pub mod wire;
 
 pub(crate) use tabs::per_open_tab;
 pub use tabs::{JournalAccess, OpenTabs, TabDirectory, tab_index};

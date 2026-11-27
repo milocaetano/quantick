@@ -5,9 +5,11 @@ use crate::orderflow_view::OrderflowView;
 use quantick_control::error::ControlError;
 use quantick_control_handlers::bubble_scale::{BubbleScalePane, BubbleScalePort};
 use quantick_control_handlers::tape_fold::TapeFoldPort;
+use quantick_control_handlers::wire::{
+    bubble_scale::BubbleScaleTarget, opening_scale::OpeningScaleTarget,
+};
+use quantick_control_handlers::wire::{tape_fold::TapeFold, tape_view_set::TapeView};
 use quantick_control_handlers::{opening_scale::OpeningScalePort, tape_view_set::TapeViewPort};
-use quantick_control_schema::{bubble_scale::BubbleScaleTarget, opening_scale::OpeningScaleTarget};
-use quantick_control_schema::{tape_fold::TapeFold, tape_view_set::TapeView};
 use quantick_orderflow::HeatmapConfig;
 /// The refusal for a pane without an order-flow view.
 fn no_view() -> ControlError {

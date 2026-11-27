@@ -2,11 +2,11 @@
 use super::*;
 
 use quantick_control::error::{ControlError, codes};
-use quantick_control_schema::desk::{
+use quantick_control_handlers::wire::desk::{
     AGENT_ACCESS_REFUSED_CODE, DESK_FORGOTTEN_EVENT_KIND, DESK_REOPEN_EVENT_KIND,
     DESK_SAVED_EVENT_KIND,
 };
-use quantick_control_schema::settings_sections::SettingsSection;
+use quantick_control_handlers::wire::settings_sections::SettingsSection;
 
 const COCKPIT_SCOPES: &[&str] = &["cockpit", "cockpit.layout"];
 const DESK_SCOPES: &[&str] = &["cockpit", "cockpit.layout", "cockpit.desk"];
@@ -319,7 +319,7 @@ fn export_and_import_refuse_a_path_before_any_dialog() {
 fn the_agent_on_pill_is_amber_and_opens_agent_access() {
     let (mut app, ctx, _directory) = granted("agent-pill");
     let output = run_frame(&mut app, &ctx);
-    let label = quantick_control_schema::window_menu::AGENT_PILL_LABEL;
+    let label = quantick_control_handlers::wire::window_menu::AGENT_PILL_LABEL;
     assert_eq!(label, "Agent on");
     assert!(painted_text_center(&output, label).is_some());
     assert!(painted_text_center(&output, "agent").is_none());

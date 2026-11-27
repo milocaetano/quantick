@@ -33,20 +33,20 @@
 //! the fraction it reads back: an `f32` in 0..1 is accurate to far better
 //! than half a unit in the sixth place.
 
+use crate::wire::layout::*;
+use crate::wire::layout_v2::{ResizeInputV2, descriptor, exact};
 use quantick_control::{
     error::ControlError,
     registry::{CapabilityDescriptor, RegistryError},
     wire::ActorContext,
 };
 use quantick_control_host::actions::ActionHandler;
-use quantick_control_schema::layout::*;
-use quantick_control_schema::layout_v2::{ResizeInputV2, descriptor, exact};
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 use serde_json::Value;
 
 // Decimal places `fraction` is written and accepted with: `workspace.summary`'s
 // own, so the answer and the readback are one number written one way.
-use quantick_control_schema::workspace::SPLIT_FRACTION_DECIMAL_PLACES as FRACTION_DECIMAL_PLACES;
+use crate::wire::workspace::SPLIT_FRACTION_DECIMAL_PLACES as FRACTION_DECIMAL_PLACES;
 
 use super::{LayoutHost, parse};
 use crate::dock::ActionDock;

@@ -112,6 +112,10 @@ pub trait AnnotatedPane {
     fn slot_open_time(&self, slot: usize) -> Option<i64>;
     /// The market time a bar position names, where a bar exists there.
     fn anchor_time(&self, bar: f32) -> Option<i64>;
+    /// Name the market time behind `point`'s bar as the trader's hand does
+    /// (`PaneSeriesRead::stamp`): a projected one past the newest bar of a
+    /// chart that does not cut by time, marked so.
+    fn stamp(&self, point: &mut ChartPoint);
     /// The pane's marks.
     fn drawings(&self) -> &Drawings<DrawingTool>;
     /// The pane's marks, to fold an intent into.
@@ -353,10 +357,18 @@ fn place_chart<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
     let pane = target_pane(app, tab_id, side)?;
     let band = resolve_band(&*pane, tool, &input.band)?;
     let validated = resolve_chart(&*pane, tab_id, &input, required)?;
-    let points: Vec<_> = validated.iter().map(chart_point).collect();
+    let points: Vec<_> = validated
+        .iter()
+        .map(|anchor| chart_point(&*pane, anchor))
+        .collect();
     if let Some(reason) = tool.placement_refusal(&points) {
         return Err(ControlError::invalid_request(reason));
     }
+    let anchors: Vec<_> = validated
+        .iter()
+        .map(|anchor| anchor.slot)
+        .zip(points.clone())
+        .collect();
     let placement = Placement {
         tool,
         points,
@@ -372,7 +384,7 @@ fn place_chart<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
     let target = (tab_id, pane.pane_id(), side, &band);
     let result = ChartAnnotationResult {
         position,
-        ..chart_result(placed, target, tool, &validated, actor)
+        ..chart_result(placed, target, tool, &anchors, actor)
     };
     journal(access, actor, ANNOTATION_CREATED_EVENT_KIND, &result)?;
     answer(&result, "annotation result")
@@ -399,13 +411,15 @@ fn place_horizontal_levels<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
     let pane = target_pane(app, tab_id, side)?;
     let band = resolve_band(&*pane, tool, &input.band)?;
     let validated = resolve_chart(&*pane, tab_id, &input, 2)?;
-    let levels: Vec<_> = horizontal_level_anchors([validated[0], validated[1]]).collect();
+    let levels: Vec<_> = horizontal_level_anchors([validated[0], validated[1]])
+        .map(|anchor| (anchor.slot, chart_point(&*pane, &anchor)))
+        .collect();
     let placements = levels
         .iter()
         .zip(openings)
-        .map(|(anchor, opening)| Placement {
+        .map(|((_, point), opening)| Placement {
             tool,
-            points: vec![chart_point(anchor)],
+            points: vec![*point],
             band: band.clone(),
             opening,
             author: author.clone(),
@@ -605,8 +619,15 @@ fn registered_tool(tool_id: &str) -> Result<DrawingTool, ControlError> {
     })
 }
 
-fn chart_point(anchor: &resolver::ResolvedAnchor) -> ChartPoint {
-    ChartPoint::at_time(anchor.point.bar, anchor.point.price, anchor.point.time_ms)
+/// A resolved anchor as the pane holds it; one with no time (past the
+/// newest bar) is named its time as the hand's would be, a projected one
+/// included.
+fn chart_point(pane: &dyn AnnotatedPane, anchor: &resolver::ResolvedAnchor) -> ChartPoint {
+    let mut point = ChartPoint::at_time(anchor.point.bar, anchor.point.price, anchor.point.time_ms);
+    if point.time_ms.is_none() {
+        pane.stamp(&mut point);
+    }
+    point
 }
 
 /// The marks one placement intent left, or the refusal for the one that
@@ -677,14 +698,14 @@ fn chart_result(
     (annotation_id, label): (u64, String),
     (tab_id, pane_id, side, band): (u64, u64, PaneSide, &DrawingBand),
     tool: DrawingTool,
-    validated: &[resolver::ResolvedAnchor],
+    anchors: &[(Option<usize>, ChartPoint)],
     actor: &ActorContext,
 ) -> ChartAnnotationResult {
-    let anchors = validated
+    let anchors = anchors
         .iter()
-        .map(|anchor| {
-            let point = anchor.point;
-            chart_resolved_anchor(anchor.slot, point.time_ms, point.bar, point.price)
+        .map(|(slot, point)| {
+            let time = (point.time_ms, point.time_projected);
+            chart_resolved_anchor(*slot, time, point.bar, point.price)
                 .expect("a validated anchor is finite and a market one has time")
         })
         .collect();

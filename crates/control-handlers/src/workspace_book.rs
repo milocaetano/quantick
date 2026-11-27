@@ -7,16 +7,9 @@
 //!
 //! Rate class: a human or an agent acting on the window. Never per trade.
 
-use quantick_control::{
-    error::{ControlError, codes},
-    id::ErrorCode,
-    registry::RegistryError,
-    wire::{ActorContext, WireU64},
-};
-use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::window_menu as text;
-use quantick_control_schema::workspace::{MODULE_ID, WorkspaceColourDto, WorkspaceColourRow};
-use quantick_control_schema::workspace_book::{
+use crate::wire::window_menu as text;
+use crate::wire::workspace::{MODULE_ID, WorkspaceColourDto, WorkspaceColourRow};
+use crate::wire::workspace_book::{
     LAST_TAB_CODE, TAB_CLOSED_EVENT_KIND, TAB_NOT_READY_CODE, TAB_WORKSPACE_SET_EVENT_KIND,
     TabCloseInput, TabCloseResult, TabWorkspaceSetInput, TabWorkspaceSetResult, UNSAVED_EDITS_CODE,
     WORKSPACE_AUTOSAVE_SET_EVENT_KIND, WORKSPACE_COLOUR_SET_EVENT_KIND,
@@ -27,12 +20,19 @@ use quantick_control_schema::workspace_book::{
     WorkspaceRenameInput, WorkspaceRenameResult, WorkspaceSaveAsInput, WorkspaceSaveResult,
     WorkspaceTabInput,
 };
-use quantick_control_schema::workspace_colour::{
+use crate::wire::workspace_colour::{
     ColourWarningDto, workspace_colour_palette_descriptor, workspace_colour_popover_descriptor,
 };
-use quantick_control_schema::workspace_manage::{
+use crate::wire::workspace_manage::{
     workspace_delete_undo_descriptor, workspace_dialog_open_descriptor,
 };
+use quantick_control::{
+    error::{ControlError, codes},
+    id::ErrorCode,
+    registry::RegistryError,
+    wire::{ActorContext, WireU64},
+};
+use quantick_control_host::journal::NewEvent;
 use quantick_session::close_queue::{
     CloseAnswer, CloseQuestion, CloseQueue, CloseScope, CloseStep,
 };
@@ -336,7 +336,7 @@ macro_rules! register_declared {
         $($declared:tt)*
     })*) => {
         $($registry.register_outside_replay(
-            quantick_control_schema::workspace_book::$descriptor(),
+            crate::wire::workspace_book::$descriptor(),
             through_workspaces!($handler),
         )?;)*
     };
@@ -351,7 +351,7 @@ where
     A: NotifyAccess,
     D: ActionDock<H, A>,
 {
-    quantick_control_schema::workspace_book_calls!(register_declared, registry);
+    crate::wire::workspace_book::workspace_book_calls!(register_declared, registry);
     registry.register_outside_replay(
         workspace_delete_undo_descriptor(),
         through_workspaces!(manage::undo_call),

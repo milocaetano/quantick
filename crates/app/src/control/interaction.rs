@@ -7,7 +7,7 @@ use quantick_control::{
     wire::WireU64,
 };
 
-pub(crate) use quantick_control_schema::interaction::{
+pub(crate) use quantick_control_handlers::wire::interaction::{
     CursorSnapshot, DrawingHitSnapshot, DrawingSelectionSnapshot, PaperTradeSelectionSnapshot,
     PointerSnapshot, SelectionSnapshot,
 };
@@ -280,7 +280,7 @@ fn drawing_hit_snapshot(
     }
 }
 
-pub(crate) use quantick_control_schema::interaction::flow_cell_snapshot;
+pub(crate) use quantick_control_handlers::wire::interaction::flow_cell_snapshot;
 
 pub(crate) use quantick_control_handlers::analysis::drawing_band_name;
 

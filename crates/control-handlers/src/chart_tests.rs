@@ -2,8 +2,8 @@
 //! models: the summary's wire shape, the window read's refusals and pages,
 //! and the marks a bar short of its bucket carries.
 
+use crate::wire::chart::ChartWindowRange;
 use quantick_control::id::InstanceId;
-use quantick_control_schema::chart::ChartWindowRange;
 
 use super::*;
 use crate::test_support::{FakePane, FakeTab, FakeWindow, trade};

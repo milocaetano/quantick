@@ -17,8 +17,8 @@ use quantick_control::{
     },
     wire::WireU64,
 };
+use quantick_control_handlers::wire::scene::SceneSnapshot;
 use quantick_control_host::window_capture::CaptureTicket;
-use quantick_control_schema::scene::SceneSnapshot;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

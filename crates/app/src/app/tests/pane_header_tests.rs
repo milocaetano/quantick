@@ -6,7 +6,7 @@ use super::*;
 use crate::state::BarSpec;
 use crate::ui_state::PanelSection;
 use quantick_chart::pane_header::{BubbleSample, HeaderControl, LayerToggle};
-use quantick_control_schema::orderflow_settings::{
+use quantick_control_handlers::wire::orderflow_settings::{
     CLOSE_CAPABILITY_ID, OPEN_CAPABILITY_ID, SECTION_CAPABILITY_ID,
 };
 use quantick_engine::bar_selection::{BarInputAvailability, SelectionCommand};
@@ -803,7 +803,7 @@ fn candle_viewport(app: &QuantickApp) -> (f32, f32) {
 /// does not and the candles neither pan nor zoom.
 #[test]
 fn dragging_a_sample_moves_its_own_target_and_never_the_chart() {
-    use quantick_control_schema::bubble_scale::BubbleScaleTarget;
+    use quantick_control_handlers::wire::bubble_scale::BubbleScaleTarget;
     let ctx = egui::Context::default();
     let (mut app, _ends) = charted_fixture(&ctx);
     app.active_tab_mut()
@@ -895,7 +895,7 @@ fn a_wheel_over_the_header_is_private_and_the_chart_below_it_still_zooms() {
     assert_eq!(candle_viewport(&app), before);
     assert_eq!(
         app.active_tab().tape().bubble_display_scale(
-            quantick_control_schema::bubble_scale::BubbleScaleTarget::Tape.into()
+            quantick_control_handlers::wire::bubble_scale::BubbleScaleTarget::Tape.into()
         ),
         1.0
     );
@@ -1171,7 +1171,7 @@ fn a_market_hold_reads_in_the_scene_and_never_in_the_stored_view() {
     assert!(read.tape_fold_held_by_market && read.fold_market_closed);
     assert_eq!(
         read.tape_fold,
-        quantick_control_schema::tape_fold::TapeFold::Open
+        quantick_control_handlers::wire::tape_fold::TapeFold::Open
     );
 
     let pane_id = app.active_tab().flow_pane.id;

@@ -42,7 +42,7 @@ Full final-head CI remains mandatory for every PR:
 ```sh
 cargo fmt --all -- --check
 # Macro-generated module declarations require explicit rustfmt inputs.
-find crates/control-schema/src crates/control-handlers/src -name '*.rs' -type f -exec rustfmt --edition 2024 --check {} +
+find crates/control-handlers/src -name '*.rs' -type f -exec rustfmt --edition 2024 --check {} +
 cargo clippy --workspace --all-targets
 cargo build --workspace
 cargo test --workspace

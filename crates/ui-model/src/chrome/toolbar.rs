@@ -144,7 +144,7 @@ impl RevertSlot {
     /// What the slot does when pressed: none while empty.
     #[must_use]
     pub fn press(&self) -> Option<RevertPress<'_>> {
-        use quantick_control_schema::workspace_book as calls;
+        use quantick_control_handlers::wire::workspace_book as calls;
         let (action, hover, capability) = match self {
             Self::Empty => return None,
             Self::Revert(hover) => (

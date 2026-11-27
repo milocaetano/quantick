@@ -64,10 +64,8 @@ pub const RANK: &[(&str, u8)] = &[
     ("ui-model", 7),
     ("control-handlers", 6),
     ("backtest", 5),
-    ("control-schema", 5),
     ("session", 5),
     ("drawings", 4),
-    ("script-trigger", 4),
     ("stores", 4),
     ("chart", 3),
     ("feed", 3),
@@ -109,8 +107,7 @@ pub const RANK: &[(&str, u8)] = &[
 /// Shrink-only: an entry whose edge is gone, or whose edge the ranks already
 /// allow, is a finding, and the seed test refuses a new one. Removing an edge
 /// here is how the graph gets flatter; adding one is how it would get a cycle.
-pub const RANK_EXCEPTIONS: &[(&str, &str)] =
-    &[("control-schema", "session"), ("indicator-session", "pine")];
+pub const RANK_EXCEPTIONS: &[(&str, &str)] = &[("indicator-session", "pine")];
 
 /// The crate whose shipped sibling dependencies are capped.
 const TOP_OF_THE_GRAPH: &str = "app";
@@ -121,7 +118,7 @@ const TOP_OF_THE_GRAPH: &str = "app";
 /// Shrink-only, like the size ratchet: going over is a finding, and so is
 /// sitting under it, which asks for the lower number. A crate only a test
 /// needs goes to `[dev-dependencies]`; one only a harness needs is optional.
-pub const APP_DEPENDENCY_CEILING: usize = 30;
+pub const APP_DEPENDENCY_CEILING: usize = 29;
 
 /// What a `feed-*` venue crate may reach, and nothing else. A feed produces
 /// trades; it links the vocabulary of a trade and of a book, and the source
@@ -1284,13 +1281,12 @@ mod tests {
     /// this test, which a review sees.
     #[test]
     fn the_exceptions_and_the_ceiling_only_shrink() {
-        const SEEDED: &[(&str, &str)] =
-            &[("control-schema", "session"), ("indicator-session", "pine")];
+        const SEEDED: &[(&str, &str)] = &[("indicator-session", "pine")];
         assert!(
             RANK_EXCEPTIONS.iter().all(|entry| SEEDED.contains(entry)),
             "RANK_EXCEPTIONS only loses entries: {RANK_EXCEPTIONS:?}"
         );
-        const { assert!(APP_DEPENDENCY_CEILING <= 30, "the app ceiling only falls") };
+        const { assert!(APP_DEPENDENCY_CEILING <= 29, "the app ceiling only falls") };
     }
 
     #[test]

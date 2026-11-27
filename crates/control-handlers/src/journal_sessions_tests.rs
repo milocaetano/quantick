@@ -391,8 +391,8 @@ fn journal_edits_are_never_recorded_into_or_replayed_from_a_control_trace() {
         quantick_control_host::actions::ActionRegistry::<FakeJournal, FakeAccess>::new();
     register(&mut registry).unwrap();
     for capability in [
-        quantick_control_schema::journal_sessions::JOURNAL_SESSIONS_CAPABILITY_ID,
-        quantick_control_schema::journal_sessions::JOURNAL_DELETE_CAPABILITY_ID,
+        crate::wire::journal_sessions::JOURNAL_SESSIONS_CAPABILITY_ID,
+        crate::wire::journal_sessions::JOURNAL_DELETE_CAPABILITY_ID,
     ] {
         let action = registry.lookup(capability, 1).expect("the call is docked");
         assert!(!action.traced(false).unwrap(), "{capability}");

@@ -4,15 +4,15 @@
 //! owner's saved slots, the addressed pane's marks — and the strategies
 //! through [`ArmedTab`], the tab's own reading of them.
 
+use crate::wire::chart_context::{
+    self as wire, Document, Drawing, MAX_DRAWINGS, MAX_STRATEGIES, Strategy,
+};
+use crate::wire::native_indicator::Target;
 use quantick_control::annotation::ANNOTATION_PRICE_DECIMALS;
 use quantick_control::error::ControlError;
 use quantick_control::registry::RegistryError;
 use quantick_control::wire::{ActorContext, WireU64};
 use quantick_control_host::wire::{canonical_decimal, canonical_f64, wire_usize};
-use quantick_control_schema::chart_context::{
-    self as wire, Document, Drawing, MAX_DRAWINGS, MAX_STRATEGIES, Strategy,
-};
-use quantick_control_schema::native_indicator::Target;
 use quantick_drawings::{DrawingId, DrawingTool, Drawings};
 use quantick_engine::Side;
 use quantick_session::strategy_reading::ArmedReading;

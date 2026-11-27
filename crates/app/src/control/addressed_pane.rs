@@ -8,8 +8,8 @@ use quantick_control::{error::ControlError, wire::WireU64};
 use quantick_control_handlers::axis_pane::{AxisPane, NativeTape};
 use quantick_control_handlers::pane_marks::PaneMarks;
 use quantick_control_handlers::tab_index;
-use quantick_control_schema::chart::ViewportSnapshot;
-use quantick_control_schema::tape_view::TapeViewSnapshot;
+use quantick_control_handlers::wire::chart::ViewportSnapshot;
+use quantick_control_handlers::wire::tape_view::TapeViewSnapshot;
 use quantick_drawings::{DrawingTool, Drawings};
 use quantick_orderflow::LaneWindow;
 use quantick_orderflow::tape_view::TapeEnd;
@@ -67,6 +67,9 @@ impl PaneMarks for ChartPane {
         self.layout
             .drawings_spec
             .unwrap_or(*self.series.state.spec())
+    }
+    fn restamp_mark(&mut self, index: usize) {
+        self.shared_marks_mut().restamp(index);
     }
 }
 

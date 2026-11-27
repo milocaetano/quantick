@@ -5,12 +5,12 @@
 //! the palette, the question's words and the warnings are
 //! `quantick_stores::workspaces::palette`'s.
 
-use quantick_control::error::ControlError;
-use quantick_control::wire::ActorContext;
-use quantick_control_schema::workspace_colour::{
+use crate::wire::workspace_colour::{
     ColourWarningDto, POPOVER_CLOSED_CODE, WorkspaceColourPaletteInput,
     WorkspaceColourPaletteResult, WorkspaceColourPopoverInput, WorkspaceColourPopoverResult,
 };
+use quantick_control::error::ControlError;
+use quantick_control::wire::ActorContext;
 use quantick_session::colour_popover::{ColourIntent, ColourPopover};
 use quantick_session::workspace_menu::WorkspaceMenuState;
 use quantick_stores::workspaces::palette::{

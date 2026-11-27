@@ -1,6 +1,28 @@
 //! Generated observer contracts committed under `schemas/control`: the list of
 //! documents whose types live below the app.
 
+use crate::wire::analysis::{DrawingsSnapshot, IndicatorsSnapshot};
+use crate::wire::chart::{ChartSnapshot, ChartWindowPage, ChartWindowQuery};
+use crate::wire::drawing_magnet::{
+    DrawingMagnetInput, DrawingMagnetResult, ObjectMagnetInput, ObjectMagnetResult,
+};
+use crate::wire::drawing_scope::{DrawingScopeInput, DrawingScopeResult};
+use crate::wire::evidence::{
+    EvidenceCaptureInput, EvidenceChunkPage, EvidenceDocument, EvidenceManifest, EvidenceReadInput,
+};
+use crate::wire::feed::FeedSnapshot;
+use crate::wire::health::HealthSnapshot;
+use crate::wire::indicator_guide::{IndicatorGuideInput, IndicatorGuideResult};
+use crate::wire::interaction::{CursorSnapshot, SelectionSnapshot};
+use crate::wire::layers::{LayersSnapshot, SetVisibilityInput, VisibilityResult};
+use crate::wire::layout_v2::{LayoutResultV2, ResizeInputV2};
+use crate::wire::notify::{NotifyInput, NotifyResult};
+use crate::wire::orderflow::{
+    BubblesSnapshot, FootprintSnapshot, HeatmapSnapshot, L2Snapshot, TapeSnapshot,
+};
+use crate::wire::scene::SceneSnapshot;
+use crate::wire::script::{AttachInput, AttachResult, DetachInput, DetachResult, ScriptDiagnostic};
+use crate::wire::workspace::WorkspaceSnapshot;
 use quantick_control::annotation::{AnnotationInput, AnnotationResult, RemoveInput, RemoveResult};
 use quantick_control::schema::generated_schema;
 use quantick_control_host::authority::{DescribeResult, EmptyInput, SnapshotReadInput};
@@ -9,30 +31,6 @@ use quantick_control_host::events::{EventsReadInput, EventsWaitInput};
 use quantick_control_host::journal::EventPage;
 use quantick_control_host::projection::SerializedSnapshotCapture;
 use quantick_control_host::system::SystemSnapshot;
-use quantick_control_schema::analysis::{DrawingsSnapshot, IndicatorsSnapshot};
-use quantick_control_schema::chart::{ChartSnapshot, ChartWindowPage, ChartWindowQuery};
-use quantick_control_schema::drawing_magnet::{
-    DrawingMagnetInput, DrawingMagnetResult, ObjectMagnetInput, ObjectMagnetResult,
-};
-use quantick_control_schema::drawing_scope::{DrawingScopeInput, DrawingScopeResult};
-use quantick_control_schema::evidence::{
-    EvidenceCaptureInput, EvidenceChunkPage, EvidenceDocument, EvidenceManifest, EvidenceReadInput,
-};
-use quantick_control_schema::feed::FeedSnapshot;
-use quantick_control_schema::health::HealthSnapshot;
-use quantick_control_schema::indicator_guide::{IndicatorGuideInput, IndicatorGuideResult};
-use quantick_control_schema::interaction::{CursorSnapshot, SelectionSnapshot};
-use quantick_control_schema::layers::{LayersSnapshot, SetVisibilityInput, VisibilityResult};
-use quantick_control_schema::layout_v2::{LayoutResultV2, ResizeInputV2};
-use quantick_control_schema::notify::{NotifyInput, NotifyResult};
-use quantick_control_schema::orderflow::{
-    BubblesSnapshot, FootprintSnapshot, HeatmapSnapshot, L2Snapshot, TapeSnapshot,
-};
-use quantick_control_schema::scene::SceneSnapshot;
-use quantick_control_schema::script::{
-    AttachInput, AttachResult, DetachInput, DetachResult, ScriptDiagnostic,
-};
-use quantick_control_schema::workspace::WorkspaceSnapshot;
 use serde_json::Value;
 
 use crate::attention::{MarkInput, MarkResult};
@@ -66,7 +64,7 @@ pub fn documents() -> Vec<SchemaDocument> {
         document::<BubblesSnapshot>("observer-orderflow-bubbles-v1.schema.json"),
         document::<HeatmapSnapshot>("observer-orderflow-heatmap-v1.schema.json"),
         document::<L2Snapshot>("observer-orderflow-l2-v1.schema.json"),
-        document::<quantick_control_schema::orderflow_settings::SettingsSnapshot>(
+        document::<crate::wire::orderflow_settings::SettingsSnapshot>(
             "observer-orderflow-settings-v1.schema.json",
         ),
         document::<SceneSnapshot>("observer-scene-controls-v1.schema.json"),
@@ -115,7 +113,7 @@ pub fn documents() -> Vec<SchemaDocument> {
         document::<VisibilityResult>("layers-visibility-set-result-v1.schema.json"),
     ];
     documents.extend(
-        quantick_control_schema::catalog::documents()
+        crate::wire::catalog::documents()
             .into_iter()
             .map(|(file_name, schema)| SchemaDocument { file_name, schema }),
     );

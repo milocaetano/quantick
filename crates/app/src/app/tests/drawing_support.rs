@@ -339,11 +339,7 @@ pub(super) fn place_level(app: &mut QuantickApp, side: PaneSide, price: f64) {
         .expect("bars to anchor on");
     let placed = app.active_tab_mut().pane_mut(side).drawings.place(
         tool,
-        crate::drawings::ChartPoint {
-            bar: 0.5,
-            price,
-            time_ms: Some(time),
-        },
+        crate::drawings::ChartPoint::at_time(0.5, price, Some(time)),
     );
     assert!(placed, "a horizontal line places on one anchor");
 }

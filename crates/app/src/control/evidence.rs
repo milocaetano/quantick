@@ -39,7 +39,7 @@
 //! that thread, on the same response worker that already serializes a
 //! snapshot.
 
-pub(crate) use quantick_control_schema::evidence::*;
+pub(crate) use quantick_control_handlers::wire::evidence::*;
 
 use std::collections::BTreeSet;
 

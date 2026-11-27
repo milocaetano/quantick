@@ -3,14 +3,14 @@
 //! schema accepts.
 
 use crate::canvas::{CanvasAct, CanvasHost, register};
+use crate::wire::canvas::{
+    CANVAS_CAPABILITY_IDS, CanvasPaneDto, CanvasPaneKind, CanvasPaneMode, CanvasRectDto,
+    CanvasResult,
+};
 use quantick_control::error::ControlError;
 use quantick_control::wire::CanonicalDecimal;
 use quantick_control_host::actions::ActionRegistry;
 use quantick_control_host::authority::CAPABILITY_VERSION;
-use quantick_control_schema::canvas::{
-    CANVAS_CAPABILITY_IDS, CanvasPaneDto, CanvasPaneKind, CanvasPaneMode, CanvasRectDto,
-    CanvasResult,
-};
 use serde_json::{Value, json};
 
 #[derive(Default)]
@@ -25,10 +25,8 @@ impl CanvasHost for FakeCanvas {
         Ok(true)
     }
 
-    fn layout_picker(
-        &mut self,
-    ) -> Result<quantick_control_schema::canvas::LayoutPickerResult, ControlError> {
-        Ok(quantick_control_schema::canvas::LayoutPickerResult {
+    fn layout_picker(&mut self) -> Result<crate::wire::canvas::LayoutPickerResult, ControlError> {
+        Ok(crate::wire::canvas::LayoutPickerResult {
             open: true,
             workspace: "Flow".to_owned(),
             status: "Saved: Flow".to_owned(),
@@ -75,7 +73,7 @@ fn rect() -> CanvasRectDto {
 
 /// One valid call per capability, with the act it must reach the host as.
 fn calls() -> Vec<(&'static str, Value, Option<CanvasAct>)> {
-    use quantick_control_schema::canvas::*;
+    use crate::wire::canvas::*;
     vec![
         (OPEN_WINDOW_MENU_CAPABILITY_ID, json!({}), None),
         (
@@ -165,7 +163,7 @@ fn calls() -> Vec<(&'static str, Value, Option<CanvasAct>)> {
             }),
         ),
         (
-            quantick_control_schema::canvas::SEAM_DRAG_CAPABILITY_ID,
+            crate::wire::canvas::SEAM_DRAG_CAPABILITY_ID,
             json!({"path": [0], "index": 0, "travel": "-1600"}),
             Some(CanvasAct::SeamDrag {
                 path: vec![0],
@@ -238,7 +236,7 @@ fn every_canvas_action_is_registered_and_readable() {
 /// read only, and a host without a canvas refuses it.
 #[test]
 fn the_layout_picker_read_answers_the_hosts_picker() {
-    use quantick_control_schema::canvas::{LAYOUT_PICKER_CAPABILITY_ID, LayoutPickerResult};
+    use crate::wire::canvas::{LAYOUT_PICKER_CAPABILITY_ID, LayoutPickerResult};
     let mut registry = ActionRegistry::<FakeCanvas, ()>::new();
     register(&mut registry).unwrap();
     let actor = crate::test_support::FakeWindow::assistant();
@@ -260,7 +258,7 @@ fn the_layout_picker_read_answers_the_hosts_picker() {
 
 #[test]
 fn malformed_canvas_calls_never_reach_the_canvas() {
-    use quantick_control_schema::canvas::*;
+    use crate::wire::canvas::*;
     let mut registry = ActionRegistry::<FakeCanvas, ()>::new();
     register(&mut registry).unwrap();
     let actor = crate::test_support::FakeWindow::assistant();
@@ -394,7 +392,7 @@ fn drops_windows_and_hooks_become_canvas_acts() {
         PRIMARY_MONITOR, drop_act, drop_targets, held_by_hook, hook_acts, moved, placed_pop_out,
         settled, surface_widget, window_act,
     };
-    use quantick_control_schema::canvas::CanvasCorner;
+    use crate::wire::canvas::CanvasCorner;
     use quantick_workspace::canvas::{
         CanvasRect, CanvasState, Corner, DockTarget, DropOutcome, Edge, PaneKind, preset,
     };
@@ -506,7 +504,7 @@ fn drops_windows_and_hooks_become_canvas_acts() {
                 && id == "canvas.dock.swap.0"
                 && label == "Swap with chart 0"
                 && *rect == swap
-                && *cap == quantick_control_schema::canvas::DOCK_CAPABILITY_ID)
+                && *cap == crate::wire::canvas::DOCK_CAPABILITY_ID)
     );
     assert!(!visible.iter().any(|(id, ..)| id == "canvas.dock.swap.1"));
     let (held, share) = held_by_hook(&state, &format!("{added}:0.02,0.5")).unwrap();
@@ -545,7 +543,7 @@ fn drops_windows_and_hooks_become_canvas_acts() {
 #[test]
 fn a_resize_moves_the_tree_share_and_reads_it_back() {
     use crate::canvas::{Drawn, act, hook_acts, result};
-    use quantick_control_schema::canvas::CanvasDimension;
+    use crate::wire::canvas::CanvasDimension;
     use quantick_workspace::canvas::{CanvasRect, CanvasState, preset};
     let area = Drawn {
         area: CanvasRect::new(0.0, 0.0, 1600.0, 900.0),
@@ -609,7 +607,7 @@ fn a_resize_moves_the_tree_share_and_reads_it_back() {
 #[test]
 fn resize_works_on_a_column_layout() {
     use crate::canvas::{Drawn, act, view};
-    use quantick_control_schema::canvas::CanvasDimension;
+    use crate::wire::canvas::CanvasDimension;
     use quantick_workspace::canvas::{CanvasRect, CanvasState, preset};
     let drawn = Drawn {
         area: CanvasRect::new(0.0, 0.0, 1600.0, 900.0),
@@ -756,7 +754,7 @@ impl CanvasHost for LiveCanvas {
 /// partner, and a target that is not docked is refused by its stable code.
 #[test]
 fn dock_beside_a_named_pane_round_trips() {
-    use quantick_control_schema::canvas::{DOCK_CAPABILITY_ID, FLOAT_CAPABILITY_ID};
+    use crate::wire::canvas::{DOCK_CAPABILITY_ID, FLOAT_CAPABILITY_ID};
     use quantick_workspace::canvas::{CanvasRect, CanvasState, preset};
     let area = CanvasRect::new(0.0, 0.0, 1600.0, 900.0);
     let mut host = LiveCanvas {
@@ -939,7 +937,7 @@ fn a_seam_drag_call_folds_past_the_threshold_and_reopens_back() {
 #[test]
 fn the_readback_lists_each_seam_with_its_address_and_rail() {
     use crate::canvas::{Drawn, act};
-    use quantick_control_schema::canvas::{CanvasDimension, CanvasSeamDto};
+    use crate::wire::canvas::{CanvasDimension, CanvasSeamDto};
     use quantick_workspace::canvas::{self, CanvasRect, CanvasState};
     let drawn = Drawn {
         area: CanvasRect::new(0.0, 0.0, 1600.0, 900.0),

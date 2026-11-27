@@ -1,4 +1,4 @@
-use quantick_control_schema::ui_behaviours::UI_BEHAVIOURS;
+use quantick_control_handlers::wire::ui_behaviours::UI_BEHAVIOURS;
 use quantick_operability::registry::NOT_A_BEHAVIOUR;
 use quantick_operability::{
     Drift, ExclusionClass, Mapping, Registered, Source, UiBehaviour, drift,

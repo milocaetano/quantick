@@ -291,7 +291,7 @@ fn window_picks_use_the_latest_flow_projection() {
 #[test]
 fn the_scene_reads_the_side_switches() {
     use quantick_chart::pane_header::{TAPE_DESCRIPTION, TRAIL_DESCRIPTION};
-    use quantick_control_schema::scene::SceneRoleDto;
+    use quantick_control_handlers::wire::scene::SceneRoleDto;
     let last = Some("the_last_side_showing_stays");
     let held = |mut state: FlowHeaderState| {
         state.market_held = true;
@@ -355,7 +355,7 @@ fn the_scene_reads_the_side_switches() {
 
 #[test]
 fn the_scene_rows_of_glyphs_samples_window_and_panel() {
-    use quantick_control_schema::scene::SceneRoleDto;
+    use quantick_control_handlers::wire::scene::SceneRoleDto;
     use quantick_workspace::orderflow_panel::PanelControl;
     let unreached = |_: PanelControl| -> SceneRow { unreachable!("only settings reads the panel") };
     for on in [false, true] {

@@ -9,7 +9,7 @@
 use quantick_control_handlers::analysis::AnalysisPane;
 pub(super) use quantick_control_handlers::semantic::SemanticBaseline;
 use quantick_control_handlers::semantic::{SelectionIdentity, SemanticSource, SemanticTab};
-use quantick_control_schema::interaction::SelectionSnapshot;
+use quantick_control_handlers::wire::interaction::SelectionSnapshot;
 
 use crate::app::ControlWindow;
 use crate::tab::Tab;

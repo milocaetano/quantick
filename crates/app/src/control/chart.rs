@@ -10,9 +10,9 @@ use quantick_control_handlers::chart::{
 };
 use quantick_control_handlers::chart_layer::{LayerBlocked, LayerRead};
 use quantick_control_handlers::chart_settings::ChartStylePort;
-pub(crate) use quantick_control_schema::chart::*;
-use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
-use quantick_control_schema::layers::LayerSnapshot;
+pub(crate) use quantick_control_handlers::wire::chart::*;
+use quantick_control_handlers::wire::chart_settings::{ChartSettingsInput, ChartSettingsResult};
+use quantick_control_handlers::wire::layers::LayerSnapshot;
 use quantick_layers::ChartLayer;
 use quantick_stores::candle_presets::PresetError;
 

@@ -24,6 +24,9 @@ struct FakePane {
     sweeps: usize,
     /// The CVD pane is a collapsed strip: shown, but taking no anchor.
     cvd_collapsed: bool,
+    /// A chart that does not cut by time projects a time past its newest
+    /// bar at this many milliseconds per slot; `None` names none there.
+    projected_step: Option<i64>,
 }
 
 impl FakePane {
@@ -35,6 +38,7 @@ impl FakePane {
             drawings: Drawings::default(),
             sweeps: 0,
             cvd_collapsed: false,
+            projected_step: None,
         }
     }
 }
@@ -63,6 +67,19 @@ impl AnnotatedPane for FakePane {
     }
     fn anchor_time(&self, bar: f32) -> Option<i64> {
         slot_at_position(bar).and_then(|slot| self.slot_open_time(slot))
+    }
+    fn stamp(&self, point: &mut ChartPoint) {
+        let past = |slot: usize| {
+            let last = self.opens.len().checked_sub(1)?;
+            let ahead = i64::try_from(slot.checked_sub(last)?).ok()?;
+            Some(self.opens[last] + ahead * self.projected_step?)
+        };
+        point.time_ms = self.anchor_time(point.bar);
+        point.time_projected = false;
+        if point.time_ms.is_none() {
+            point.time_ms = slot_at_position(point.bar).and_then(past);
+            point.time_projected = point.time_ms.is_some();
+        }
     }
     fn drawings(&self) -> &Drawings<DrawingTool> {
         &self.drawings
@@ -709,4 +726,49 @@ fn a_flat_position_plan_is_refused_and_places_nothing() {
     );
     assert!(window.flow.drawings.items().is_empty());
     assert!(access.events.is_empty());
+}
+
+/// A call's anchor past the newest bar of a chart that does not cut by time
+/// takes the time the hand's would: projected, marked so in the result and
+/// the listing, and the drawing can then show on all timeframes.
+#[test]
+fn a_future_anchor_on_a_tick_chart_is_stamped_projected_and_shares() {
+    let mut window = FakeWindow::new();
+    window.flow.projected_step = Some(1_000);
+    let anchors = json!([
+        { "time_unix_ms": 2_000, "bar_position": "1.5", "price": "100" },
+        { "bar_position": "4.5", "price": "104" }
+    ]);
+    let input = json!({ "anchors": anchors });
+    let placed = call(
+        &mut window,
+        &mut FakeAccess::default(),
+        RECTANGLE_CAPABILITY_ID,
+        input,
+    )
+    .expect("placed");
+    assert_eq!(
+        placed["anchors"][1]["time_unix_ms"], 5_000,
+        "two slots past"
+    );
+    assert_eq!(placed["anchors"][1]["time_projected"], true);
+    assert!(
+        placed["anchors"][0].get("time_projected").is_none(),
+        "exact"
+    );
+
+    let drawings = &mut window.flow.drawings;
+    let mark = &drawings.items()[0];
+    assert!(mark.time_projected() && mark.shareable());
+    let listed = crate::analysis::drawing_snapshot(drawings, 0);
+    assert!(listed.time_projected, "the listing labels it");
+    let scope = crate::drawing_scope::DrawingScopeInput {
+        tab_id: WireU64::new(7),
+        pane_id: WireU64::new(70),
+        drawing_id: WireU64::new(mark.id.0),
+        scope: crate::drawing_scope::ScopeName::AllCharts,
+        all_windows: None,
+    };
+    let shared = crate::drawing_scope::set_scope(drawings, &scope, "tick:100");
+    assert!(shared.expect("a projected time places it").changed);
 }

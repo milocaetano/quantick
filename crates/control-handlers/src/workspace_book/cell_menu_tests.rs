@@ -3,7 +3,7 @@
 //! status, the filter, the footer, what each asks and the call that does the
 //! same, read off a book as the window would draw them.
 
-use quantick_control_schema::workspace_book as calls;
+use crate::wire::workspace_book as calls;
 use quantick_session::workspace_menu::WorkspaceMenuState;
 use quantick_stores::workspaces::{WorkspaceBook, WorkspaceRecipe};
 use quantick_workspace::canvas::{PaneKind, PaneTree};

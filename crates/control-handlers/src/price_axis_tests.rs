@@ -2,8 +2,8 @@
 //! to do, and what each call refuses before anything moves.
 use super::*;
 use crate::test_support::{FakePane, FakeTab, FakeTape, FakeWindow};
+use crate::wire::tape_view::TapeViewSnapshot;
 use quantick_control::error::codes;
-use quantick_control_schema::tape_view::TapeViewSnapshot;
 use quantick_orderflow::LaneWindow;
 use quantick_orderflow::tape_view::TapeEnd;
 use serde_json::json;

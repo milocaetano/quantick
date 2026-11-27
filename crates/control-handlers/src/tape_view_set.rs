@@ -3,8 +3,8 @@
 //! `orderflow.tape.fold.set` open does.
 use crate::addressed_pane::AddressedPanePort;
 use crate::dock::ActionDock;
+use crate::wire::tape_view_set::{TapeView, TapeViewSetInput, descriptor};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::tape_view_set::{TapeView, TapeViewSetInput, descriptor};
 use serde_json::Value;
 
 /// The view capability's narrow port on the pane.

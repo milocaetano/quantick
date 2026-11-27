@@ -97,7 +97,7 @@ fn run_dump_subcommand(argument: &str) -> bool {
         }
         "--dump-ui-behaviour-matrix" => {
             emit(Ok(
-                quantick_control_schema::ui_behaviours::ui_behaviour_matrix_markdown(),
+                quantick_control_handlers::wire::ui_behaviours::ui_behaviour_matrix_markdown(),
             ));
             true
         }

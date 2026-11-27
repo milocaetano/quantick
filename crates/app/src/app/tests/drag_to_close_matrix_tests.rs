@@ -514,7 +514,9 @@ fn model_boundary(tab: &crate::tab::Tab, slots: &[PaneSlot], axis: SplitAxis) ->
     along(union(&ours).unwrap_or(egui::Rect::NOTHING), axis).1
 }
 
-fn scene_rect(bounds: &quantick_control_schema::scene::SceneBoundsSnapshot) -> Option<egui::Rect> {
+fn scene_rect(
+    bounds: &quantick_control_handlers::wire::scene::SceneBoundsSnapshot,
+) -> Option<egui::Rect> {
     let value = |decimal: &quantick_control::wire::CanonicalDecimal| decimal.as_str().parse().ok();
     let (x, y) = (value(&bounds.x_pt)?, value(&bounds.y_pt)?);
     let (w, h) = (value(&bounds.width_pt)?, value(&bounds.height_pt)?);

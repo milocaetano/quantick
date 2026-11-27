@@ -3,7 +3,7 @@
 use super::*;
 use crate::chart_layer::LayerBlocked;
 use crate::test_support::{FakeAccess, FakePane, FakeTab, FakeWindow};
-use quantick_control_schema::layers::LayerSnapshot;
+use crate::wire::layers::LayerSnapshot;
 
 fn layer(id: &str, requested: bool) -> LayerSnapshot {
     LayerSnapshot {

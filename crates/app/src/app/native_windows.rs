@@ -13,12 +13,14 @@ mod control;
 pub(super) struct NativeWindows {
     pub(super) pump: quantick_platform::HiddenRootPump,
     current: WindowId,
-    capture_scene: Option<quantick_control_schema::scene::SceneSnapshot>,
+    capture_scene: Option<quantick_control_handlers::wire::scene::SceneSnapshot>,
     titles: BTreeMap<WindowId, TitleBarState>,
     strips: BTreeMap<WindowId, Strip>,
     positions: BTreeMap<WindowId, Point>,
-    placements: BTreeMap<WindowId, quantick_control_schema::market_windows::PhysicalPlacement>,
-    observed: BTreeMap<WindowId, quantick_control_schema::market_windows::NativeObservation>,
+    placements:
+        BTreeMap<WindowId, quantick_control_handlers::wire::market_windows::PhysicalPlacement>,
+    observed:
+        BTreeMap<WindowId, quantick_control_handlers::wire::market_windows::NativeObservation>,
     pub(super) gesture: Gesture,
     pointer: Option<Point>,
     released: bool,

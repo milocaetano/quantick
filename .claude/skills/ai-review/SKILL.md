@@ -5,40 +5,35 @@ description: Review a diff the way an AI engineer would - modularity, decoupling
 
 # AI engineer review
 
-Target: `git diff origin/main...HEAD`, or the path, branch or PR given. Read
-the code, not its description. Never edit or build; write only PR findings and the
-report.
+Target: `git diff origin/main...HEAD`, or the path, branch or PR given.
+Read the code, not its description.
+Never edit or build; write only PR findings and the report.
 
-Answer six questions. Each gets one verdict and `file:line` evidence, PASS
-included. FAIL: the diff breaks the rule. WEAK: it holds today but the next
-variant breaks it - name that variant. PASS: cite the line that proves it,
-or say why the diff cannot reach the question.
+Answer six questions.
+Each gets one verdict and `file:line` evidence, PASS included.
+FAIL: the diff breaks the rule.
+WEAK: it holds today but the next variant breaks it - name that variant.
+PASS: cite the line that proves it, or say why the diff cannot reach the question.
 
-1. **Is it modular?** One responsibility per unit, and the file name says
-   which. Count the pre-existing files the diff edits and name the one with
-   the most edited lines: that is the blast radius.
-2. **Is it decoupled?** Judge what the compiler cannot: a consumer naming a
-   concrete producer where a trait bound would do; state owned by the caller
-   that the unit should own; a `pub` item nothing outside the crate calls.
-3. **Is it ready for MCP and other AI use?** Every behaviour the diff adds
-   is a named call with a typed request, a typed result and a typed error -
-   never a `String` standing in for a failure - and calling it twice is safe.
-   Evidence is the call site in the registry the UI reads; a click handler
-   as the only entry is FAIL.
-4. **Can agents test it and understand it?** Name the test that fails
-   without the diff, runnable alone with `cargo test -p <crate> <name>`,
-   below `app`, with an error-path fixture; an expectation derived from the
-   code under test is FAIL. Hunt: `SystemTime`, `Instant`, `HashMap`
-   iteration, `rand`, env reads, thread timing.
-5. **Is it extensible?** The next variant - feed, bar type, indicator, tool -
-   is added, not patched in. A closed `enum` where the variants are the
-   domain; a trait object where the next variant is a capability. A registry
-   keyed by name appends; one keyed by position makes every branch edit the
-   same line.
-6. **Does it scale?** State the rate of every touched loop - per trade, per
-   depth update, per frame, rare. Per-event cost is independent of session
-   length: a new trade updates the open bar, never rescans history. No
-   buffer without a stated cap, no burst dropped in silence.
+1. **Is it modular?**
+   One responsibility per unit, and the file name says which.
+   Count the pre-existing files the diff edits and name the one with the most edited lines: that is the blast radius.
+2. **Is it decoupled?**
+   Judge what the compiler cannot: a consumer naming a concrete producer where a trait bound would do; state owned by the caller that the unit should own; a `pub` item nothing outside the crate calls.
+3. **Is it ready for MCP and other AI use?**
+   Every behaviour the diff adds is a named call with a typed request, a typed result and a typed error - never a `String` standing in for a failure - and calling it twice is safe.
+   Evidence is the call site in the registry the UI reads; a click handler as the only entry is FAIL.
+4. **Can agents test it and understand it?**
+   Name the test that fails without the diff, runnable alone with `cargo test -p <crate> <name>`, below `app`, with an error-path fixture; an expectation derived from the code under test is FAIL.
+   Hunt: `SystemTime`, `Instant`, `HashMap` iteration, `rand`, env reads, thread timing.
+5. **Is it extensible?**
+   The next variant - feed, bar type, indicator, tool - is added, not patched in.
+   A closed `enum` where the variants are the domain; a trait object where the next variant is a capability.
+   A registry keyed by name appends; one keyed by position makes every branch edit the same line.
+6. **Does it scale?**
+   State the rate of every touched loop - per trade, per depth update, per frame, rare.
+   Per-event cost is independent of session length: a new trade updates the open bar, never rescans history.
+   No buffer without a stated cap, no burst dropped in silence.
 
 ## Report
 
@@ -57,19 +52,13 @@ Top fix: <file> - <change> - flips: <verdicts>
 
 ## Where the findings go
 
-With a PR number, post every FAIL and WEAK as its own resolvable thread -
-severity first, anchored at `file:line`, one per finding, body on stdin to
-`sh .claude/hooks/ai_review_threads.sh post <pr> <file> <line>`. With no PR
-target, print the report and post nothing. Never apply a fix either way.
+With a PR number, post every FAIL and WEAK as its own resolvable thread - severity first, anchored at `file:line`, one per finding, body on stdin to `sh .claude/hooks/ai_review_threads.sh post <pr> <file> <line>`.
+With no PR target, print the report and post nothing.
+Never apply a fix either way.
 
-**Round one reviews the whole diff.** Missing prior report, changed base or
-scope, or uncertain impact requires a full current review under the delivery
-contract. Otherwise a later run takes its subject from `... list <pr>` and
-verifies those open threads plus a narrow check that fixes introduced no new
-FAIL; it may not open a new WEAK against code it already passed.
+**Round one reviews the whole diff.**
+Missing prior report, changed base or scope, or uncertain impact requires a full current review under the delivery contract.
+Otherwise a later run takes its subject from `... list <pr>` and verifies those open threads plus a narrow check that fixes introduced no new FAIL; it may not open a new WEAK against code it already passed.
 
-**A thread closes by the fix - `... resolve <thread-id>` - or by an
-acceptance the trader records on it**; a WEAK whose breaking variant you cannot
-name is a PASS. When to stop follows [the delivery
-contract](../../../docs/workflow/delivery.md); an open thread id is a finding's
-durable identity.
+**A thread closes by the fix - `... resolve <thread-id>` - or by an acceptance the trader records on it**; a WEAK whose breaking variant you cannot name is a PASS.
+When to stop follows [the delivery contract](../../../docs/workflow/delivery.md); an open thread id is a finding's durable identity.

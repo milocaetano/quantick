@@ -3,12 +3,12 @@
 //! `orderflow.bubbles.size.set` both ask it, so they cannot disagree.
 use crate::addressed_pane::AddressedPanePort;
 use crate::dock::ActionDock;
-use quantick_control::{
-    error::ControlError, id::PreconditionId, registry::RegistryError, wire::ActorContext,
-};
-use quantick_control_schema::bubble_scale::{
+use crate::wire::bubble_scale::{
     BubbleScaleInput, BubbleScaleTarget, DISPLAY_ACTIVE_PRECONDITION, TICK_CHART_PRECONDITION,
     descriptor,
+};
+use quantick_control::{
+    error::ControlError, id::PreconditionId, registry::RegistryError, wire::ActorContext,
 };
 use serde_json::Value;
 

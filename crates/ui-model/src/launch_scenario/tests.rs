@@ -133,7 +133,7 @@ fn price_range_and_absent_scenarios_target_only_the_requested_pane() {
     };
     assert_eq!(
         *id,
-        quantick_control_schema::price_axis::PRICE_AXIS_CAPABILITY_ID
+        quantick_control_handlers::wire::price_axis::PRICE_AXIS_CAPABILITY_ID
     );
     assert_eq!(input["tab_id"], "13");
     assert_eq!(input["pane_id"], "72");

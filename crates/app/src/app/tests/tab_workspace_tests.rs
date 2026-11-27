@@ -1169,7 +1169,7 @@ fn the_layout_snapshot_counts_what_the_focused_pane_shows() {
     );
 
     let answer = switch_by_script(&mut app, serde_json::json!({}));
-    let rows: Vec<quantick_control_schema::layout::LayoutTabSnapshot> =
+    let rows: Vec<quantick_control_handlers::wire::layout::LayoutTabSnapshot> =
         serde_json::from_value(answer["layouts"].clone()).expect("the strip rows");
     let row = rows
         .iter()
@@ -1181,7 +1181,7 @@ fn the_layout_snapshot_counts_what_the_focused_pane_shows() {
 
 /// The switch and delete rows in the window's journal, as kind and payload.
 fn workspace_journal(app: &QuantickApp) -> Vec<(String, serde_json::Value)> {
-    use quantick_control_schema::workspace_book as kinds;
+    use quantick_control_handlers::wire::workspace_book as kinds;
     let ours = [
         kinds::TAB_WORKSPACE_SET_EVENT_KIND,
         kinds::WORKSPACE_DELETED_EVENT_KIND,
@@ -1816,11 +1816,7 @@ fn a_flow_bar_size_change_never_counts_as_a_drawing_edit() {
     let time = flow.slot_open_time(slot).expect("bars to anchor on");
     let tool = crate::drawings::DrawingTool::by_id("horizontal-line").expect("the tool");
     #[allow(clippy::cast_precision_loss)]
-    let point = crate::drawings::ChartPoint {
-        bar: slot as f32,
-        price: 100.0,
-        time_ms: Some(time),
-    };
+    let point = crate::drawings::ChartPoint::at_time(slot as f32, 100.0, Some(time));
     let flow = app.active_tab_mut().pane_mut(PaneSide::Flow);
     assert!(flow.drawings.place(tool, point), "a level places");
     frames(&mut app, 2);
@@ -2529,7 +2525,7 @@ fn open_workspace_submenu(
     app: &mut QuantickApp,
     ctx: &egui::Context,
 ) -> (egui::Rect, egui::Rect, egui::FullOutput) {
-    use quantick_control_schema::window_menu::KEBAB_CONTROL;
+    use quantick_control_handlers::wire::window_menu::KEBAB_CONTROL;
     run_frame(app, ctx);
     let kebab = app.chrome.title_bar.control_rect(KEBAB_CONTROL).unwrap();
     click_sized(app, ctx, TEST_WINDOW, kebab.center());
@@ -3070,7 +3066,9 @@ fn a_colour_set_by_call_reads_alike_on_every_surface() {
         let said = said(id).unwrap_or_else(|| panic!("{id}"));
         assert!(said.ends_with("Custom #3A7BD5"), "{id}: {said}");
     }
-    let corner = said(&quantick_control_schema::scene::tab_control_id(first));
+    let corner = said(&quantick_control_handlers::wire::scene::tab_control_id(
+        first,
+    ));
     let corner = corner.expect("the tab's words");
     assert!(
         corner.starts_with("Workspace corner #3A7BD5; price "),

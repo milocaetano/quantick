@@ -6,14 +6,14 @@ use crate::addressed_pane::AddressedPanePort;
 use crate::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming};
 use crate::chart_layer::LayerRead;
 use crate::chart_settings::ChartStylePort;
+use crate::wire::chart::{BarProvenanceContext, ViewportSnapshot};
+use crate::wire::chart_settings::{ChartSettingsInput, ChartSettingsResult};
+use crate::wire::layers::LayerSnapshot;
 use quantick_chart::state::ChartState;
 use quantick_chart::style::ChartStyle;
 use quantick_control::error::ControlError;
 use quantick_control::wire::WireU64;
 use quantick_control_host::wire::PaneSideDto;
-use quantick_control_schema::chart::{BarProvenanceContext, ViewportSnapshot};
-use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
-use quantick_control_schema::layers::LayerSnapshot;
 use quantick_engine::Bar;
 use quantick_stores::candle_presets::PresetError;
 

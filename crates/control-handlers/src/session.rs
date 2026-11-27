@@ -9,7 +9,7 @@
 //! while a recording is linked — the replay as [`ReplayRead`]. Everything the
 //! two scopes decide from those is here.
 
-pub use quantick_control_schema::session::*;
+pub use crate::wire::session::*;
 
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},

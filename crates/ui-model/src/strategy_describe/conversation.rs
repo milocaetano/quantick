@@ -63,7 +63,7 @@ pub fn dispatch(
         if matches!(intent, Intent::Command(Command::Read)) {
             return Ok(state.status.clone());
         }
-        return Err(quantick_control_schema::strategy_describe::unavailable_error());
+        return Err(quantick_control_handlers::wire::strategy_describe::unavailable_error());
     }
     let opened = match &intent {
         Intent::Command(Command::Open) => {

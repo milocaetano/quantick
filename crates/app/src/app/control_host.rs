@@ -430,7 +430,7 @@ pub(crate) struct ChromeReads<'a> {
     drawn: ChromeDrawn,
     title_bar: Option<&'a super::title_bar::TitleBarState>,
     window_menu: Option<&'a super::menu_bar::WindowMenuState>,
-    settings: Option<quantick_control_schema::settings_sections::SettingsSection>,
+    settings: Option<quantick_control_handlers::wire::settings_sections::SettingsSection>,
     /// The toolbar's list door, capsule and layout popover, as drawn.
     pub(crate) toolbar: &'a [crate::toolbar::DrawnControl],
     /// The Trading panel's route block, while broker routes are offered.
@@ -456,7 +456,7 @@ impl<'a> ChromeReads<'a> {
     /// The section Settings is showing, while it is up.
     pub(crate) fn settings_section(
         self,
-    ) -> Option<quantick_control_schema::settings_sections::SettingsSection> {
+    ) -> Option<quantick_control_handlers::wire::settings_sections::SettingsSection> {
         self.settings
     }
 
@@ -706,7 +706,7 @@ impl TabsMutPort for QuantickApp {
 /// A pane's close button closes it through `widget.close`, so the journal
 /// hears the trader's close as it hears an agent's; directly without a gateway.
 pub(super) fn close_widget(app: &mut QuantickApp, id: &str) {
-    let close = quantick_control_schema::widget::WIDGET_CLOSE_CAPABILITY_ID;
+    let close = quantick_control_handlers::wire::widget::WIDGET_CLOSE_CAPABILITY_ID;
     let input = serde_json::json!({ "id": id });
     if app
         .control_action(close, 1, crate::control::ActionOrigin::Human, input)

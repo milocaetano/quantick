@@ -69,7 +69,7 @@ impl ScriptEditorPort for FakeEditor {
         &mut self,
         _id: &str,
         _name: &str,
-        _value: quantick_control_schema::script_editor::NumericValue,
+        _value: quantick_control_handlers::wire::script_editor::NumericValue,
     ) -> Result<(), IndicatorRefusal> {
         Err(IndicatorRefusal::NotAttached)
     }
@@ -80,7 +80,7 @@ impl ScriptEditorPort for FakeEditor {
         &self,
         _offset: usize,
         _limit: usize,
-    ) -> quantick_control_schema::script_editor::EditorResult {
+    ) -> quantick_control_handlers::wire::script_editor::EditorResult {
         Default::default()
     }
     fn script_editor(
@@ -154,7 +154,7 @@ fn actor() -> ActorContext {
 #[test]
 fn script_library_extension_contract() {
     let mut registry: ActionRegistry<FakeEditor, ()> = ActionRegistry::new();
-    let mut descriptor = quantick_control_schema::indicator_picker::descriptor();
+    let mut descriptor = quantick_control_handlers::wire::indicator_picker::descriptor();
     descriptor.id = quantick_control::id::CapabilityId::new("indicator.fake_editor").unwrap();
     descriptor.input_schema = quantick_control::schema::generated_schema::<Value>();
     descriptor.output_schema = quantick_control::schema::generated_schema::<Value>();

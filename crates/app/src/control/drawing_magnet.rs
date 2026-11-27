@@ -3,7 +3,7 @@
 //! hand's two paths onto the calls `quantick_control_handlers::drawing_magnet`
 //! docks.
 
-pub(crate) use quantick_control_schema::drawing_magnet::*;
+pub(crate) use quantick_control_handlers::wire::drawing_magnet::*;
 
 use crate::app::{GatewayPort, TabsPort};
 use quantick_control_handlers::drawing_magnet::RailMagnetPort;

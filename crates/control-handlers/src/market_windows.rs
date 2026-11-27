@@ -1,7 +1,7 @@
 //! Validated market presentation actions and bounded window inspection through one host port.
+use crate::wire::market_windows::*;
 use crate::{dock::ActionDock, native_window::NativeWindowHost};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::market_windows::*;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
@@ -10,7 +10,7 @@ pub fn register_scope<H: NativeWindowHost + ?Sized>(
 ) -> Result<(), quantick_control_host::projection::ProjectionRegistryError> {
     registry.register_scope(
         quantick_control::id::SnapshotScopeId::new(WINDOWS_SCOPE_ID).expect("static window scope"),
-        quantick_control::id::ModuleId::new(quantick_control_schema::workspace::MODULE_ID).expect("static workspace module"),
+        quantick_control::id::ModuleId::new(crate::wire::workspace::MODULE_ID).expect("static workspace module"),
         1, "Market windows",
         "Bounded windows, stable IDs, ordered tabs, independent selections, staged gesture state and observed native geometry. Join tab IDs with workspace.summary, chart.summary, health.summary and session.replay for runtime and processing continuity. Observations are independent of accepted requests.",
         &["observe", "observe.workspace"], project,
