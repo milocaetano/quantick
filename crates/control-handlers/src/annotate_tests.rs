@@ -772,3 +772,34 @@ fn a_future_anchor_on_a_tick_chart_is_stamped_projected_and_shares() {
     let shared = crate::drawing_scope::set_scope(drawings, &scope, "tick:100");
     assert!(shared.expect("a projected time places it").changed);
 }
+
+/// The trader's report: a profile range dragged past the newest bar of a tick
+/// chart carries the time the hand projected there, and its conversion placed
+/// nothing. The end keeps the slot it was released on and the pane's own
+/// projected time.
+#[test]
+fn a_profile_range_released_past_the_newest_tick_bar_places_on_that_slot() {
+    let mut window = FakeWindow::new();
+    window.flow.projected_step = Some(1_000);
+    let mut end = ChartPoint::at_time(6.25, 104.0, None);
+    window.flow.stamp(&mut end);
+    assert!(
+        end.time_projected,
+        "the hand's own stamp past the newest bar"
+    );
+    let mut range = range_on(Action::Profile, DrawingBand::Price);
+    range.anchors[1] = quantick_chart_interaction::quick_range::Anchor {
+        bar: end.bar,
+        price: end.price,
+        time_ms: end.time_ms,
+    };
+    let input = quick_range_input(&range, PaneSide::Flow).expect("serializable");
+    let version = (PROFILE_CAPABILITY_ID, PROFILE_CAPABILITY_VERSION);
+    let placed = call_version(&mut window, &mut FakeAccess::default(), version, input)
+        .expect("a future end never blocks");
+
+    assert_eq!(placed["anchors"][1]["bar_position"], "6.25");
+    assert_eq!(placed["anchors"][1]["time_projected"], true);
+    let points = &window.flow.drawings.items()[0].points;
+    assert_eq!(points[1], end, "the released slot, stamped by the pane");
+}

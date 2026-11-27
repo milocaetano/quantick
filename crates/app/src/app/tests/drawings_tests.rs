@@ -5567,3 +5567,42 @@ fn drawing_controller_registered_conversion_precedes_ordinary_deletion() {
         "fib-retracement"
     );
 }
+
+/// The trader's report on a tick chart: a profile range dragged past the
+/// newest bar placed nothing. The hand stamps that end with a projected time;
+/// the conversion keeps the slot it was released on.
+#[test]
+fn a_quick_range_profile_released_past_the_newest_tick_bar_is_placed() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    let total = app.active_tab().flow_pane.slots();
+    // Room past the newest bar to release in.
+    let pane = &mut app.active_tab_mut().flow_pane;
+    pane.model.viewport.pan_pixels(-300.0, total);
+    settled_frame(&mut app, &ctx);
+    let pane = &app.active_tab().flow_pane;
+    let chart = pane.frame.chart_area.expect("the chart was laid out");
+    let history_right = pane.frame.candles_right.expect("the candles were laid out");
+    let x_at = |bar: f32| {
+        pane.model
+            .viewport
+            .x_at_bar_position(bar, history_right, total)
+    };
+    let future = total as f32 + 8.0;
+    let start = egui::pos2(x_at(150.5), chart.center().y + 55.0);
+    let end = egui::pos2(x_at(future), chart.center().y - 55.0);
+
+    drag_quick_range(&mut app, &ctx, start, end);
+    let profile = crate::surfaces::drawing_chrome::QuickRangeAction::Profile;
+    click_quick_range_action(&mut app, &ctx, profile);
+
+    let drawings = app.active_tab().flow_pane.drawings.items();
+    assert_eq!(drawings.len(), 1, "the conversion placed the profile");
+    let end = drawings[0].points[1];
+    assert_eq!(end.bar, future, "the slot it was released on");
+    assert!(
+        end.time_projected,
+        "past the newest tick bar the time is projected"
+    );
+}
