@@ -68,8 +68,7 @@ pub trait Call<H: ?Sized>: DeserializeOwned + JsonSchema {
 
     /// The journal payload for a successful call: the encoded answer, unless
     /// the family records more.
-    fn entry(asked: Value, answer: &Value) -> Value {
-        let _ = asked;
+    fn entry(_asked: Value, answer: &Value) -> Value {
         answer.clone()
     }
 }

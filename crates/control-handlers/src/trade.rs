@@ -62,6 +62,7 @@ use serde_json::{Value, json};
 
 use crate::JournalAccess;
 use crate::call::{Call, CallCx, CallSpec, dock_call};
+use quantick_control_host::actions::ReplayTrace;
 use crate::dock::ActionDock;
 
 pub use quantick_control_host::authority::{TRADE_MODULE_ID, TRADE_PERMISSION_ID};
@@ -170,7 +171,8 @@ fn answer(paper: &dyn PaperOwner, events: &[VenueEvent]) -> Result<TradeResult, 
 
 /// Append one journal event naming who asked and what the venue answered.
 ///
-/// Every `trade.*` action records, accepted or refused, and the actor rides
+/// Every ticket call and, through [`Call::entry`], every order call records,
+/// accepted or refused by the venue, and the actor rides
 /// in the event rather than beside it. An order placed by an operator that
 /// looked exactly like one the trader placed would be the authorship half of
 /// the honesty contract quietly dropped — and a refusal is worth recording
@@ -206,7 +208,7 @@ fn run(
     command: TradeCommand,
 ) -> Result<TradeResult, ControlError> {
     // A broker order from anyone but the trader's hand is the config's to
-    // allow; refused before it reaches the desk, and journaled as asked.
+    // allow; refused before it reaches the desk.
     if let Some(refusal) = paper.broker_write_block(crate::trade_account::actor_of(actor)) {
         return Err(crate::trade_account::refusal_error(refusal));
     }
@@ -369,7 +371,7 @@ impl<H: PaperHost + ?Sized> Call<H> for PlaceInput {
         description: "Places one market, limit or stop order on the charted symbol, optionally with the protective stop and target that arm when it fills. The kind is stated, never inferred from where the market happens to be - a kind that cannot rest at the given price is refused with the reason, in the venue's own words.",
         permissions: &[TRADE_PERMISSION_ID],
         event: Some(PLACE_EVENT_KIND),
-        replay: quantick_control_host::actions::ReplayTrace::Recorded,
+        replay: ReplayTrace::Recorded,
         posture: |spec| {
             posture(
                 spec,
@@ -402,7 +404,7 @@ impl<H: PaperHost + ?Sized> Call<H> for BracketInput {
         description: "Replaces the stop and target riding a working order, which arm the moment it fills. Both legs are replaced wholesale: an absent leg is a cleared leg, exactly as dragging one off the chart clears it. The levels are judged against the order's own resting price, not the market.",
         permissions: &[TRADE_PERMISSION_ID],
         event: Some(BRACKET_EVENT_KIND),
-        replay: quantick_control_host::actions::ReplayTrace::Recorded,
+        replay: ReplayTrace::Recorded,
         posture: |spec| {
             posture(
                 spec,
@@ -435,7 +437,7 @@ impl<H: PaperHost + ?Sized> Call<H> for CancelInput {
         description: "Removes one working order without trading. Risk-reducing: it can only ever take exposure off, never add any. Re-placing the same order afterwards is a new order at the back of the queue.",
         permissions: &[TRADE_PERMISSION_ID],
         event: Some(CANCEL_EVENT_KIND),
-        replay: quantick_control_host::actions::ReplayTrace::Recorded,
+        replay: ReplayTrace::Recorded,
         posture: |spec| {
             posture(
                 spec,
@@ -468,7 +470,7 @@ impl<H: PaperHost + ?Sized> Call<H> for FlattenInput {
         description: "Exits the open position at the next print and removes every working order, in one call, so the account is never half-flat between two calls. Risk-reducing: it only ever takes exposure off. Flat with nothing working, it changes nothing.",
         permissions: &[TRADE_PERMISSION_ID],
         event: Some(FLATTEN_EVENT_KIND),
-        replay: quantick_control_host::actions::ReplayTrace::Recorded,
+        replay: ReplayTrace::Recorded,
         posture: |spec| {
             posture(
                 spec,
@@ -501,7 +503,7 @@ impl<H: PaperHost + ?Sized> Call<H> for ReverseInput {
         description: "Flips the open position in one market order for twice its size, protected by the ticket's offsets for the new side. The opening leg is measured by the risk per trade like any entry and refused with its sentence. Refused while flat: there is nothing to reverse.",
         permissions: &[TRADE_PERMISSION_ID],
         event: Some(REVERSE_EVENT_KIND),
-        replay: quantick_control_host::actions::ReplayTrace::Recorded,
+        replay: ReplayTrace::Recorded,
         posture: |spec| {
             posture(
                 spec,

@@ -40,7 +40,10 @@ fn posture(spec: &CallSpec) -> CapabilityDescriptor {
         true,
         "stale",
     );
-    assert!(spec.id.starts_with("test.call."), "the posture sees the spec");
+    assert!(
+        spec.id.starts_with("test.call."),
+        "the posture sees the spec"
+    );
     CapabilityDescriptor {
         idempotency: IdempotencyPolicy::Optional,
         ..descriptor
