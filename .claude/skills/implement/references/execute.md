@@ -1,5 +1,4 @@
 # Goal: validated PR
-Read this file and the plan.
 Follow repo permissions, hooks, `CLAUDE.md` and `CONTRIBUTING.md`.
 
 **Level:** the higher of the plan's `Review:` and this floor: `high` for hooks, guards, auth, orders/trading, concurrency, public contracts or >600 changed lines outside `schemas/`; `low` for non-behavioral docs/config/tests or a local <=150-line change with no contract change; otherwise `medium`.
@@ -9,6 +8,7 @@ Estimate it before building; raise it when risk or the diff crosses a floor, the
 Past ~50 build or repair tool calls since the last commit or handoff, commit a green seam (WIP if needed), append done/next to the plan and continue in a fresh `Agent` given plan path, worktree, SHA, level and next action, never the conversation; it returns SHA and check results.
 
 1. **Isolate:** verify the pinned base, target, remote and CI.
+   The base must contain each `After:` PR's merge, not be its branch; else stop `BLOCKED`.
    Reuse an isolated task worktree only when its ownership, branch, base and status are right; otherwise create one from the pinned base.
    Target not `main`: `echo "$(git branch --show-current) origin/<target> none none" > "$(git rev-parse --absolute-git-dir)/mission-base"`.
    Else update by `sh tools/merge_main.sh`.

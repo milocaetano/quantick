@@ -10,9 +10,9 @@ The user's `/feature` or `run` command authorizes execution; `plan` never does.
 Merging into `feature/<slug>` also needs the user's grant comment (step 7).
 Ask once when the outcome or parent is ambiguous.
 
-Parallel workers save wall-clock time, not tokens; the child count drives cost.
-
 ## Plan
+
+An outcome with no trader-visible behaviour (refactor, tests, CI, guards, tooling, moves) opens no `feature/<slug>`: it becomes `/implement` lines on `main`, one at a time per shared file, so a move or split campaign never has two PRs open on one hub file.
 
 1. Search paths, symbols and existing issues/PRs; do not read code bodies here (hand that to one `haiku` retrieval agent that returns paths).
    Reuse matching work.
@@ -42,7 +42,7 @@ Parallel workers save wall-clock time, not tokens; the child count drives cost.
    ```
 
    States: `todo`, `running`, `ready`, `merged`, `blocked`.
-   `merged` means on `feature/<slug>`; the coordinator closes the child issue after readback, since `Closes #N` fires only on `main`.
+   `merged` means on `feature/<slug>`.
 
 ## Run
 
@@ -51,7 +51,7 @@ Parallel workers save wall-clock time, not tokens; the child count drives cost.
    If it is older, ask the user before taking over.
    With `grant: none`, ask the user for a grant comment on the parent and only plan.
    Otherwise create `feature/<slug>` from `origin/main` if absent: `git push origin origin/main:refs/heads/feature/<slug>`.
-8. Dispatch the next unblocked child; at most two run at once, as a host CPU cap, never to save tokens.
+8. Dispatch the next unblocked child; at most two run at once.
    A dependency clears once it is `merged`.
 9. Before launch, write the claim: `running`, branch `<prefix>/<issue>-<slug>`, worktree `../quantick-worktrees/<prefix>-<issue>-<slug>`.
    Spawn with `model: opus` (Codex: its strongest configured model) and pass only the issue URL, repository, `feature/<slug>`, the parent and grant URLs, the `Design:` block and the absolute path of [worker.md](references/worker.md).
@@ -65,7 +65,6 @@ Parallel workers save wall-clock time, not tokens; the child count drives cost.
 
     Anything missing counts as a failed check.
     Then merge it, one child at a time, from its worktree: `cd <worktree> && gh pr merge <PR> --merge --match-head-commit <SHA>`.
-    The hooks require the worker's base record, the grant, green CI and its `code-review-ok` at that head.
     Read back the merge, mark the row `merged` and close the child issue.
 11. A failed criterion or check earns one repair dispatch per child, across resumes.
     Brief it with only the failed `C<n>`, the evidence and the HEAD; the worker reruns that check and CI, with a `low` delta review only when the fix goes beyond the criterion.
@@ -87,13 +86,13 @@ A draft, pending or red PR is `blocked`, never done.
    Declare tier `implement` there ([execute.md](../implement/references/execute.md) step 1).
 2. **Judge.**
    Spawn one fresh judge (`model: opus`) with the synced SHA and the `C<n>` list.
-   It runs the `combined` tests (PASS or FAIL per criterion, with the gap), then code-review `low` over `origin/main...<SHA>` (each child had its own review; this pass covers seams and the sync) and records `code-review-ok` as execute.md step 5 does.
+   It runs the `combined` tests (PASS or FAIL per criterion, with the gap), then code-review `low` over `origin/main...<SHA>` and records `code-review-ok` as execute.md step 5 does.
    A FAIL earns one repair child; then the parent is `blocked`.
 3. **PR.**
-   On PASS, open the PR non-draft from that worktree (a draft skips CI and `gh pr ready` re-runs it), body `Parent: <parent URL>` and the verdict.
+   On PASS, open the PR non-draft from that worktree, body `Parent: <parent URL>` and the verdict.
    Record PR and head in the coordinator section; a resume reuses them.
 4. **Watch.**
-   One background `gh pr checks <PR> --watch --interval 60`; stop it early on `CONFLICTING` (no merge ref, no CI) or a step running past 25 min (`gh run cancel`, then `gh run rerun --failed`).
+   One background `gh pr checks <PR> --watch --interval 60`; stop it early on `CONFLICTING` or a step running past 25 min (`gh run cancel`, then `gh run rerun --failed`).
    Green means `sh .claude/hooks/full_ci.sh verify <worktree>` exits 0.
    Rerun a red job once only when its failing test lies outside the feature's diff.
    Any other red, a second red, a conflict or a second stall earns one fix child (steps 9-11, briefed with the job, its shortest error line and the head), then a new watch.

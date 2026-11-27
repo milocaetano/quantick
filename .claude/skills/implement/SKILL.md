@@ -36,6 +36,7 @@ Repo: <root>; base: <SHA>; PR: <remote/target>.
 Rules: <absolute-path>/references/execute.md
 Do: <change and essential contract>.
 Touch: <paths/symbols: headless crate outside `crates/app` for logic first; `crates/app` only for the field, calls and painting>.
+After: <#N of each open PR touching a Touch path; omit if none>.
 Done: <verifiable acceptance>.
 Size: <crate.lines.app (<=0, or why) and .total deltas>.
 Check: <known checks or discovery location; performance if relevant>.
@@ -43,11 +44,8 @@ Review: <requested low|medium|high; only when the request starts with small|medi
 No: <essential exclusion; optional>.
 ```
 
-Be unambiguous.
-Omit empty optional fields.
 Never invent commands.
 Set `Review:` only from a leading `small` (low), `medium` or `high`; otherwise omit it.
-Execution applies the risk floor in `execute.md`.
 
 # Output
 Recheck and compact the saved plan.
