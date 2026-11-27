@@ -260,26 +260,10 @@ impl Tab {
         true
     }
 
-    /// The pane holding the drawing selection — which is not always the
-    /// focused one.
-    ///
-    /// A shared mark can be taken from either chart it appears on, and it
-    /// stays in the store of the pane it was drawn on. So the inspector, the
-    /// keyboard and the object manager follow the *object*, not the pane the
-    /// pointer happens to be over: selecting a level on the time pane and
-    /// pressing Delete has to delete that level, wherever it lives.
-    ///
-    /// Exactly one pane holds a selection at a time
-    /// ([`Self::apply_shared_interactions`] drops the other's), so this asks
-    /// the focused pane first and takes the answer it finds.
+    /// The pane holding the drawing selection: `quantick_drawings::gesture::selection_side`.
     pub fn drawing_side(&self) -> PaneSide {
-        let focused = self.focused_side();
-        if self.pane(focused).drawings.selected().is_some() || self.time_panes.is_empty() {
-            return focused;
-        }
-        self.sides()
-            .find(|side| *side != focused && self.pane(*side).drawings.selected().is_some())
-            .unwrap_or(focused)
+        let holds = |side| self.pane(side).drawings.selected().is_some();
+        quantick_drawings::gesture::selection_side(self.focused_side(), self.sides(), holds)
     }
 
     /// The pane every drawing surface reads from — see [`Self::drawing_side`].

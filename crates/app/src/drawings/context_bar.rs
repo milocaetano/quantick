@@ -23,7 +23,7 @@
 use crate::drawings::StyleColor32;
 use eframe::egui;
 use egui_phosphor::regular as icons;
-pub use quantick_drawings::context_bar::{Capabilities, Slot, slots};
+pub use quantick_drawings::context_bar::{Capabilities, Slot, UNSHAREABLE_REASON, slots};
 use quantick_drawings::position_edit::{
     PositionAsk, PositionDefault, PositionEdit, PositionFace, PositionLeg,
 };
@@ -42,6 +42,8 @@ pub const BAR_HEIGHT_PX: f32 = 2.0 * BAR_PAD_Y_PX + TOOLRAIL_ICON.hit;
 const BAR_PAD_X_PX: f32 = 6.0;
 const BAR_PAD_Y_PX: f32 = 4.0;
 const DUPLICATE_HOVER_TEXT: &str = "Duplicate (Ctrl+D) · Copy and paste (Ctrl+C, Ctrl+V)";
+/// The sharing slot's hover, while kept to this chart and while shared.
+const SHARING_HOVER: [&str; 2] = ["Show on all timeframes", "Show only on this chart"];
 /// Gap between two neighbouring slots.
 const ITEM_GAP_PX: f32 = 4.0;
 /// Width of the hairline that isolates a group.
@@ -362,7 +364,6 @@ pub fn capabilities(object: &BarObject<'_>) -> Capabilities {
         glyph_size: object.glyph_size.is_some(),
         authored: object.author.is_some(),
         settings: object.settings_available,
-        sharing: object.shareable,
         magnet: object.magnet.is_some(),
         draw_again: object.draw_again.is_some(),
         position: object.position.is_some(),
@@ -524,10 +525,11 @@ fn draw_slot(
             }
         }
         Slot::Sharing => {
-            let (glyph, hover) = sharing_control(object.shared);
-            let sharing = IconButton::new(glyph, TOOLRAIL_ICON)
+            let sharing = IconButton::new(icons::GRID_FOUR, TOOLRAIL_ICON)
                 .active(object.shared)
-                .hover_text(hover)
+                .enabled(object.shareable)
+                .hover_text(SHARING_HOVER[usize::from(object.shared)])
+                .disabled_explanation(UNSHAREABLE_REASON)
                 .show(ui);
             #[cfg(test)]
             {
@@ -590,14 +592,6 @@ fn magnet_control(on: bool) -> (&'static str, &'static str) {
         (icons::MAGNET, "Stop snapping this drawing to OHLC")
     } else {
         (icons::MAGNET, "Snap this drawing to OHLC")
-    }
-}
-
-fn sharing_control(shared: bool) -> (&'static str, &'static str) {
-    if shared {
-        (icons::GRID_FOUR, "Show only on this chart")
-    } else {
-        (icons::GRID_FOUR, "Show on all timeframes")
     }
 }
 

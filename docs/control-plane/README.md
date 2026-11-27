@@ -1,8 +1,8 @@
 # Control plane architecture contract
 
 The rules the Quantick control plane must satisfy, and the decisions behind
-them. The development plan describes the intended outcome and delivery
-sequence; the files here fix the details that outcome has to honour.
+them. The development plan describes the intended outcome; the files here
+fix the details that outcome has to honour.
 
 ## Documents
 
@@ -24,11 +24,9 @@ sequence; the files here fix the details that outcome has to honour.
   local transport and running-instance discovery mechanism.
 - [Observer threat model](observer-threat-model.md) defines the assets, trust
   boundaries, threats, and required controls for the first profile.
-- [Roadmap](roadmap.md) says where to look for what has shipped, what is
-  planned, and what the rules are. It states no delivery status itself.
-- [`history/`](history/) holds the archaeology: the per-pull-request evidence
-  records, the August 2026 roadmap ledger, and the PR 0 migration baseline the
-  generated inventory replaced. Correctly dated, never current state.
+- The per-pull-request evidence records, the August 2026 roadmap ledger and
+  the PR 0 migration baseline the generated inventory replaced live in git
+  history: correctly dated, never current state.
 
 ## Precedence
 
@@ -75,12 +73,9 @@ disagrees with the contract is a bug in the code. A breaking change is a
 reviewed contract change with a capability version bump and a schema snapshot
 diff, in that order — never a code change the documents catch up with later.
 
-**Scope and ordering** belong to the [development
+**Scope** belongs to the [development
 plan](../mcp-control-plane-development-plan.md), which states intent, not
 delivery. For delivery, ask the registry.
-
-Anything under [`history/`](history/) is archaeology: correctly dated, kept for
-the reasoning it records, and never current state.
 
 ## Change policy
 
@@ -91,13 +86,3 @@ the reasoning it records, and never current state.
   threat model.
 - A new action must appear in the capability registry, and the inventory in
   this directory is regenerated from it — never hand-edited into agreement.
-
-## Roadmap
-
-[Roadmap](roadmap.md) used to be a hand-kept ledger of which plan item was at
-which stage. It stopped being true without anyone noticing, which is how a
-document that claims currency fails, so it no longer states a delivery status
-of its own: it points at the generated inventory for what exists, the plan for
-what is intended, and [`history/`](history/) for why a past decision was taken.
-The ledger as it stood on 2026-08-26 is
-[`history/roadmap-2026-08.md`](history/roadmap-2026-08.md).

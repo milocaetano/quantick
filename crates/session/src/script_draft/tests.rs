@@ -1,6 +1,6 @@
 use super::*;
 use quantick_engine::Bar;
-use quantick_script_trigger::ScriptPlacement;
+use quantick_strategy::script::ScriptPlacement;
 use rust_decimal::Decimal;
 
 const SOURCE: &str = include_str!("../../../app/scripts/renko_poc_flip.pine");

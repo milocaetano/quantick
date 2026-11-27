@@ -1,7 +1,7 @@
 //! Inputs shared by a historical preview and its explicit alarm publication.
 use quantick_engine::Side;
-use quantick_script_trigger::{Script, ScriptInstance, ScriptPlacement};
 use quantick_strategy::Region;
+use quantick_strategy::script::{Script, ScriptInstance, ScriptPlacement};
 
 use crate::strategies::LiveClose;
 

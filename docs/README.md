@@ -17,25 +17,18 @@ the repository or driving the running application over MCP.
 ## The control plane and the MCP adapter
 
 How an agent operates Quantick: the wire contract, the transport, the trust
-boundary and the evidence each delivery left behind.
+boundary.
 
 | Document | What it settles |
 | --- | --- |
 | [`control-plane/README.md`](control-plane/README.md) | The directory's own index, its precedence order and its change policy |
-| [`mcp-control-plane-development-plan.md`](mcp-control-plane-development-plan.md) | Scope and delivery sequence — it owns ordering; the contract owns details |
+| [`mcp-control-plane-development-plan.md`](mcp-control-plane-development-plan.md) | Scope, principles and target architecture — intent; the contract owns details |
 | [`control-plane/control-contract.md`](control-plane/control-contract.md) | Identifier, schema, revision, authority, limit, tool-surface, determinism and trade-annotation rules |
 | [`control-plane/adr-0001-local-transport-and-instance-discovery.md`](control-plane/adr-0001-local-transport-and-instance-discovery.md) | Why the transport is an authenticated loopback socket and how a client discovers a running instance |
 | [`control-plane/observer-threat-model.md`](control-plane/observer-threat-model.md) | Assets, trust boundaries, threats and required controls for the first profile |
 | [`control-plane/capability-inventory.md`](control-plane/capability-inventory.md) | Every registered capability — identifier, version, module, permissions. Generated from the registry and guarded against drift |
-| [`control-plane/roadmap.md`](control-plane/roadmap.md) | Where to look for what shipped, what is planned and what the rules are — it states no delivery status itself |
 
-The per-PR evidence records — what each delivery proved and what it carried
-forward — are archaeology, kept under `control-plane/history/`: [`pr2-performance.md`](control-plane/history/pr2-performance.md),
-[`pr3-gateway-evidence.md`](control-plane/history/pr3-gateway-evidence.md),
-[`pr4-mcp-evidence.md`](control-plane/history/pr4-mcp-evidence.md),
-[`pr5a-events-evidence.md`](control-plane/history/pr5a-events-evidence.md),
-[`pr5b-annotate-evidence.md`](control-plane/history/pr5b-annotate-evidence.md) and
-[`pr5c-evidence.md`](control-plane/history/pr5c-evidence.md).
+The per-PR evidence records and finished studies live in git history.
 
 The generated wire schemas live outside this tree, in
 [`../schemas/control/`](../schemas/control/).
@@ -85,7 +78,6 @@ to their owners and records intentional renderer/authored-value exclusions.
 | --- | --- |
 | [`deal-recording.md`](deal-recording.md) | Trades bars on MetaTrader B3: why a tick is not a deal, where the count comes from feed by feed, and the recording that lets a day reopen |
 | [`footprint-design.md`](footprint-design.md) | Footprint / candle tape reading, distilled from a survey of ATAS, Sierra Chart, Bookmap, exocharts and Quantower |
-| [`order-flow-and-cross-venue-execution-ideas.md`](order-flow-and-cross-venue-execution-ideas.md) | Research note on cross-venue execution — not an approved implementation plan |
 
 ## User experience
 
@@ -101,4 +93,4 @@ to their owners and records intentional renderer/authored-value exclusions.
 | [`ux/drawing-tools-2026-08.md`](ux/drawing-tools-2026-08.md) | The design review that reshaped the drawing rail into a price-action toolbox |
 | [`ux/drawing-tools-ux-spec.html`](ux/drawing-tools-ux-spec.html) | The detailed interaction target for user-authored chart objects: toolbox, non-modal inspector, selection, lock/visibility/delete semantics, keyboard grammar and the Fibonacci level editor. Pre-dates the English rule and is allowlisted by the language guard |
 | [`ux/img/`](ux/img/) | The shell diagrams `ui-design-model.md` refers to as part of the spec, not decoration |
-| [`ux/ux-audit-2026-08.md`](ux/ux-audit-2026-08.md) | The August 2026 audit of the whole `crates/app` surface — six reviewers, one report per area in [`ux/ux-audit-2026-08/`](ux/ux-audit-2026-08/) |
+| [`ux/ux-audit-2026-08.md`](ux/ux-audit-2026-08.md) | The August 2026 audit of the whole `crates/app` surface — six reviewers; the per-area reports live in git history |

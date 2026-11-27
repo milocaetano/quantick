@@ -67,10 +67,12 @@ pub use family::{
 };
 pub use geometry::{distance_to_segment, level_with, off_line_by, pos2, unit_normal, vec2};
 mod layout_scope;
+mod lent_marks;
 mod look;
 mod pane_sync;
 mod saved;
 pub use layout_scope::retarget_layout;
+pub use lent_marks::{LentMarks, mirror_owners};
 pub use object::{
     ChartPoint, DeleteOutcome, Drawing, DrawingAuthor, DrawingBand, DrawingId, DrawingScope,
     Duplicated, NewDrawing, PaneKey,

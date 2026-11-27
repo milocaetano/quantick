@@ -46,19 +46,10 @@ const DOSSIER_SUFFIX: &str = "-evidence.md";
 
 /// Documents that carry the dossier suffix and stay, each for a reason.
 ///
-/// The control-plane history is curated archaeology: `docs/README.md`
-/// indexes it as the reasoning behind the published contract, and it is
-/// frozen. The Windows authority record describes maintained tests rather
-/// than one run. A new entry needs the same kind of reason; a record of one
-/// run is never one.
-const ALLOWED: &[&str] = &[
-    "docs/control-plane/history/pr3-gateway-evidence.md",
-    "docs/control-plane/history/pr4-mcp-evidence.md",
-    "docs/control-plane/history/pr5a-events-evidence.md",
-    "docs/control-plane/history/pr5b-annotate-evidence.md",
-    "docs/control-plane/history/pr5c-evidence.md",
-    "docs/control-plane/windows-authority-evidence.md",
-];
+/// The Windows authority record describes maintained tests rather than one
+/// run. A new entry needs the same kind of reason; a record of one run is
+/// never one.
+const ALLOWED: &[&str] = &["docs/control-plane/windows-authority-evidence.md"];
 
 /// What the guard asks for.
 pub const REMEDY: &str = "Execution evidence and goal files do not belong in Git. Remove the \
@@ -177,11 +168,10 @@ mod tests {
         for path in [
             ".claude/skills/implement/SKILL.md",
             ".claude/skills/GOAL-notes/SKILL.md",
-            "docs/control-plane/screenshot-evidence-proof.md",
-            "docs/control-plane/history/pr5c-evidence.md",
+            "docs/control-plane/windows-authority-evidence.md",
             "docs/quality/session-length.md",
             "crates/control/src/evidence.rs",
-            "tools/evidence/capture_screenshot_evidence.py",
+            "tools/edit_loop/evidence.py",
         ] {
             assert!(!forbidden(path), "{path} should pass");
         }

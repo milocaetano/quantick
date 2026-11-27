@@ -603,7 +603,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Sets one drawing's scope, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists (a drawing id is unique only within its pane, and a pane lists only what its layout shows): `all_charts` shows it at any timeframe on every chart of its market (feed and asset), workspace and named layout, placed by market time and price; `this_chart`, a new drawing's default, keeps it to its chart, pinned to the bars that chart is cut to now. Optional `all_windows` also shows an `all_charts` drawing in every chart window of the same market, workspace and named layout, never across those boundaries; absent leaves it as it stands. The inspector's \"Show on all timeframes\" and \"All windows\"; saved with the market's drawings and read back as `scope`, `all_windows` and `layout_id`. Refused with control.invalid_request: `all_charts` on a drawing with an anchor past the newest bar (`reason` `anchor_without_market_time`), `all_windows: true` beside `this_chart` (`reason` `all_windows_needs_all_charts`), and an id the named pane does not show.",
+      "description": "Sets one drawing's scope, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists (a drawing id is unique only within its pane, and a pane lists only what its layout shows): `all_charts` shows it at any timeframe on every chart of its market (feed and asset), workspace and named layout, placed by market time and price; `this_chart`, a new drawing's default, keeps it to its chart, pinned to the bars that chart is cut to now. Optional `all_windows` also shows an `all_charts` drawing on every chart of the same market and workspace, whatever layout it shows; absent leaves it as it stands. The inspector's \"Show on all timeframes\" and \"All windows\"; saved with the market's drawings and read back as `scope`, `all_windows` and `layout_id`. Refused with control.invalid_request: `all_charts` on a drawing with an anchor that names no market time, past the newest bar of a chart with too few bars to project one (`reason` `anchor_without_market_time`; an anchor past the newest bar of a tick, volume or renko chart takes a projected time, read back as `time_projected`), `all_windows: true` beside `this_chart` (`reason` `all_windows_needs_all_charts`), and an id the named pane does not show.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -8275,7 +8275,7 @@
           "DrawingSnapshot": {
             "properties": {
               "all_windows": {
-                "description": "Whether every chart window of the same market, workspace and named\nlayout shows it (\"All windows\"). Legacy unscoped entries retain their\nprior flag. Written only when true for compatibility with v1 readers.",
+                "description": "Whether every chart of the same market and workspace shows it,\nwhatever layout it shows (\"All windows\"). Legacy unscoped entries\nretain their prior flag. Written only when true for compatibility with\nv1 readers.",
                 "type": "boolean"
               },
               "anchor_count": {
@@ -8363,6 +8363,10 @@
               "scope": {
                 "description": "`all_charts` when every chart of its market, workspace and named\nlayout shows it at any timeframe; `this_chart` pins it to its bars.",
                 "type": "string"
+              },
+              "time_projected": {
+                "description": "An anchor's market time is projected past the newest bar of a tick,\nvolume or renko chart from the recent bars' pace, not read off a bar:\nan estimate, which the inspector labels. Written only when true.",
+                "type": "boolean"
               },
               "tool_id": {
                 "type": "string"

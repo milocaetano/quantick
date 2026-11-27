@@ -129,6 +129,19 @@
             },
             "price": {
               "$ref": "#/$defs/CanonicalDecimal"
+            },
+            "time_projected": {
+              "description": "`time_unix_ms` is projected, an estimate, not read off a bar or a\nclock. Written only when true.",
+              "type": "boolean"
+            },
+            "time_unix_ms": {
+              "description": "The market time the chart names there, as the trader's hand gets\nit: a time chart's clock, or past the newest bar of a tick, volume\nor renko chart one projected from the recent bars' pace\n(`time_projected`). Absent where none can be named: too few bars.",
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "x-unit": "unix_milliseconds"
             }
           },
           "required": [

@@ -104,7 +104,6 @@ pub const HEADLESS_CRATES: &[&str] = &[
     "paper",
     "civil",
     "strategy",
-    "script-trigger",
 ];
 
 /// One thing the headless rule forbids: how a finding spells it, and the

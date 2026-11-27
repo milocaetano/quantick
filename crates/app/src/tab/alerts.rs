@@ -1,16 +1,16 @@
 //! Borrowed observation docking. No queue, history scan, or rule decisions.
-use crate::pane::ChartPane;
 pub(crate) use quantick_stores::alerts::{Observation, PaneFacts, Source};
+pub(crate) type Facts<'a> = PaneFacts<'a, quantick_drawings::alerts::Facts<'a>>;
 
 /// Pane facts at the boundary; the cache that reads them lives in `stores`.
 /// A function, not `From`: a trait impl on the public `PaneFacts` would make
 /// `ChartPane` effectively public and trip `private_interfaces`.
-pub(crate) fn facts(pane: &ChartPane) -> PaneFacts<'_> {
+pub(crate) fn facts(pane: &crate::pane::ChartPane) -> Facts<'_> {
     PaneFacts {
         id: pane.id,
         series: &pane.series.state,
-        drawings: &pane.drawings,
-        drawing_key: pane.layout.drawings_key.as_ref(),
+        drawing_revision: pane.drawings.revision(),
+        drawings: pane.drawings.alert_facts(pane.layout.drawings_key.as_ref()),
         prefix_slots: pane.seam_slot(),
         hydrating: pane.history_pending(),
     }
@@ -20,13 +20,13 @@ pub(crate) trait Observer {
     fn reset(&mut self, reason: quantick_alerts::ResetReason);
     fn source(&mut self, source: Source<'_>);
     /// `None` refreshes lifecycle availability without evaluating a price.
-    fn pane(&mut self, facts: PaneFacts<'_>, observation: Option<Observation<'_>>);
+    fn pane(&mut self, facts: Facts<'_>, observation: Option<Observation<'_>>);
 }
 
 impl Observer for () {
     fn reset(&mut self, _: quantick_alerts::ResetReason) {}
     fn source(&mut self, _: Source<'_>) {}
-    fn pane(&mut self, _: PaneFacts<'_>, _: Option<Observation<'_>>) {}
+    fn pane(&mut self, _: Facts<'_>, _: Option<Observation<'_>>) {}
 }
 
 impl Observer for crate::app::alerts_runtime::Runtime {
@@ -36,7 +36,7 @@ impl Observer for crate::app::alerts_runtime::Runtime {
     fn source(&mut self, source: Source<'_>) {
         self.cache.source(source);
     }
-    fn pane(&mut self, facts: PaneFacts<'_>, observation: Option<Observation<'_>>) {
+    fn pane(&mut self, facts: Facts<'_>, observation: Option<Observation<'_>>) {
         self.cache.pane(
             &mut self.core,
             facts,
