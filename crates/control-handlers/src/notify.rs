@@ -17,6 +17,10 @@
 
 use std::time::Duration;
 
+use crate::wire::notify::{
+    AgentPopup, NOTIFICATION_EVENT_KIND, NotifyChannel, NotifyInput, NotifyResult,
+    POPUP_CAPABILITY_ID, SOUND_CAPABILITY_ID, TOAST_CAPABILITY_ID, notify_descriptor,
+};
 use quantick_control::{
     error::{ControlError, codes},
     limits::{CONTROL_NOTIFICATION_BURST, CONTROL_NOTIFICATION_RATE_PER_MINUTE},
@@ -28,10 +32,6 @@ use quantick_control_host::{
     authority::{NOTIFY_MODULE_ID, NOTIFY_PERMISSION_ID, NOTIFY_SOUND_PERMISSION_ID},
     journal::NewEvent,
     wire::actor_kind_name,
-};
-use quantick_control_schema::notify::{
-    AgentPopup, NOTIFICATION_EVENT_KIND, NotifyChannel, NotifyInput, NotifyResult,
-    POPUP_CAPABILITY_ID, SOUND_CAPABILITY_ID, TOAST_CAPABILITY_ID, notify_descriptor,
 };
 use serde_json::{Value, json};
 

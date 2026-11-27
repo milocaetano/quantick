@@ -79,9 +79,7 @@ impl<T: PaperOwner + ?Sized> PaperOwner for &mut T {
     fn route_call(&mut self) -> Option<quantick_paper::route::RouteCall<'_>> {
         (**self).route_call()
     }
-    fn account_route(
-        &mut self,
-    ) -> Option<quantick_control_schema::trade_account::AccountRouteResult> {
+    fn account_route(&mut self) -> Option<crate::wire::trade_account::AccountRouteResult> {
         (**self).account_route()
     }
     fn request_route(

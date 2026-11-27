@@ -1,4 +1,5 @@
 //! Validated note editing and style-only repetition through the drawing store.
+pub use crate::wire::drawing_text::*;
 use crate::{
     annotate::{AnnotateAccess, AnnotatePort, AnnotatedPane},
     dock::ActionDock,
@@ -10,7 +11,6 @@ use quantick_control::{
     wire::ActorContext,
 };
 use quantick_control_host::{journal::NewEvent, wire::actor_kind_name};
-pub use quantick_control_schema::drawing_text::*;
 use quantick_drawings::{
     ChartPoint, DrawingAuthor, DrawingEffect, DrawingId, DrawingIntent, DrawingTool, FontFamily,
     Placement, TextPayload, text::TextAppearance, update,

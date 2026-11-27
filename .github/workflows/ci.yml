@@ -147,8 +147,9 @@ jobs:
           fi
           echo "mode=$mode" | tee -a "$GITHUB_OUTPUT"
 
-  # The fast checks. Nothing here builds more than the guards and two small
-  # owner crates, so a guard, ratchet or drift failure is red within minutes.
+  # The fast checks. Nothing here builds more than the guards, two small
+  # owner crates and the control handlers' library, whose `wire` module holds
+  # the drift tests, so a guard, ratchet or drift failure is red within minutes.
   # It runs beside the Rust jobs, not before them, and `full_ci.sh` requires
   # it green at the head like any of them, so a red `gate` still blocks the
   # merge. Ordered cheapest-to-fail first: a red step ends the job, so what
@@ -185,7 +186,7 @@ jobs:
         name: Format control families
         shell: bash
         # Macro-generated module declarations require explicit rustfmt inputs.
-        run: find crates/control-schema/src crates/control-handlers/src -name '*.rs' -type f -exec rustfmt --edition 2024 --check {} +
+        run: find crates/control-handlers/src -name '*.rs' -type f -exec rustfmt --edition 2024 --check {} +
       - name: Drop ratchet checkouts a cache restored
         shell: bash
         run: rm -rf target/ratchet-delta && git worktree prune
@@ -213,8 +214,12 @@ jobs:
         # their committed files with what the generator emits today. The app's
         # own generated files (capability inventory, retry matrix, hook
         # registry) are compared byte for byte by its tests in the full jobs;
-        # the guard tests above see their drift first.
-        run: cargo test -p quantick-control -p quantick-operability -p quantick-control-schema
+        # the guard tests above see their drift first. The matrix test lives in
+        # the handlers' `wire` module; `wire::` is a substring filter that runs
+        # that module's tests, and any other test path containing it.
+        run: |
+          cargo test -p quantick-control -p quantick-operability
+          cargo test -p quantick-control-handlers --lib -- wire::
       - name: Workflow policy
         # Who runs when, evaluated from this file's own expressions.
         run: python3 tools/ci/test_workflow_policy.py

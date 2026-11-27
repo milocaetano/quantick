@@ -8,7 +8,7 @@ use quantick_control::wire::WireU64;
 use quantick_control_handlers::health::{
     FrameReading, HealthScopePort, HealthTab, PaneHealthRead, TabVisit,
 };
-use quantick_control_schema::health::{FeedIntegritySnapshot, IntakeLagSnapshot};
+use quantick_control_handlers::wire::health::{FeedIntegritySnapshot, IntakeLagSnapshot};
 use quantick_feed::FeedLatency;
 
 impl HealthScopePort for dyn ControlPort {

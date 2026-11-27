@@ -1,10 +1,10 @@
 //! The Home tab through its owner, which the window lends ([`HomeTabHost`]).
 use crate::dock::ActionDock;
-use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::home_tab::{
+use crate::wire::home_tab::{
     HomeLeaveInput, HomeLeaveResult, HomeShowInput, HomeShowResult, descriptor, leave_descriptor,
 };
-use quantick_control_schema::scene::ActiveSurfaceDto;
+use crate::wire::scene::ActiveSurfaceDto;
+use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_workspace::arrangement::strip::{MarketShown, StripSurface};
 use serde_json::Value;
 

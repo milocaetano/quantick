@@ -12,15 +12,15 @@
 
 use quantick_appearance::Token;
 use quantick_appearance::workspace_menu::{FilledButton, MenuChrome, chrome};
+use quantick_control_handlers::wire::window_menu as text;
+use quantick_control_handlers::wire::workspace_book as calls;
+use quantick_control_handlers::wire::workspace_manage::{
+    WORKSPACE_DELETE_UNDO_CAPABILITY_ID as UNDO_CALL, WORKSPACE_DIALOG_OPEN_CAPABILITY_ID as OPEN,
+};
 use quantick_control_handlers::workspace_book::cell_menu::{
     CellRow, RowColour, RowKind, described,
 };
 use quantick_control_handlers::workspace_book::manage::chosen;
-use quantick_control_schema::window_menu as text;
-use quantick_control_schema::workspace_book as calls;
-use quantick_control_schema::workspace_manage::{
-    WORKSPACE_DELETE_UNDO_CAPABILITY_ID as UNDO_CALL, WORKSPACE_DIALOG_OPEN_CAPABILITY_ID as OPEN,
-};
 use quantick_session::colour_popover::ColourIntent;
 use quantick_session::manage_workspaces::{ManageDialog, ManageIntent};
 use quantick_session::workspace_menu::{NameDialog, NameDialogMode, WorkspaceCommand};

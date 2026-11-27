@@ -1,7 +1,7 @@
 //! Paint cached menu rows and emit navigation or activation intents.
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_control_schema::window_menu::{self as menu, RowId};
+use quantick_control_handlers::wire::window_menu::{self as menu, RowId};
 use quantick_session::workspace_menu::{MenuMetrics, WorkspaceCommand, list_cap};
 use quantick_ui_model::chrome_menu_bar::{
     Action, Door, Effects, Event, Intent, Model, Node, State,

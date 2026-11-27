@@ -10,7 +10,9 @@
 
 use quantick_appearance::layout_picker::{self as look, ColourInks, colour_inks};
 use quantick_appearance::{PremultipliedRgba, ResolvedTheme};
-use quantick_control_schema::canvas::{LayoutGroupDto, LayoutPickerCell, LayoutPickerResult};
+use quantick_control_handlers::wire::canvas::{
+    LayoutGroupDto, LayoutPickerCell, LayoutPickerResult,
+};
 use quantick_workspace::canvas::{
     CanvasRect, LAYOUT_PRESETS, LayoutMarks, LayoutPreset, PaneKind, PaneTree, PresetGroup,
 };

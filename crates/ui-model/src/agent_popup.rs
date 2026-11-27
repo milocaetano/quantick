@@ -1,5 +1,5 @@
-//! Assistant notification presentation state; notification policy stays in control-schema.
-use quantick_control_schema::notify::AgentPopup;
+//! Assistant notification presentation state; notification policy stays in control-handlers' wire module.
+use quantick_control_handlers::wire::notify::AgentPopup;
 
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct State {

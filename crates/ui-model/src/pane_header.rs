@@ -7,8 +7,8 @@ use quantick_chart::pane_header::{
     PaneHeader, PaneIdentity, SAMPLE_RESET_SCALE, SegmentInk, SideRefusal, SideSegment,
     dragged_scale, side_description,
 };
-use quantick_control_schema::orderflow_settings::SceneRow;
-use quantick_control_schema::scene::SceneRoleDto;
+use quantick_control_handlers::wire::orderflow_settings::SceneRow;
+use quantick_control_handlers::wire::scene::SceneRoleDto;
 use quantick_engine::bar_registry::BarConfiguration;
 use quantick_orderflow::LaneSide;
 use quantick_workspace::orderflow_panel::PanelControl;
@@ -194,7 +194,7 @@ pub fn scene_row(
     glyph: impl FnOnce(LayerToggle) -> LayerGlyph,
     settings: impl FnOnce(PanelControl) -> SceneRow,
 ) -> SceneRow {
-    use quantick_control_schema::{bubble_scale, layers, tape_view, tape_view_set};
+    use quantick_control_handlers::wire::{bubble_scale, layers, tape_view, tape_view_set};
     match control {
         HeaderControl::Side(side) => {
             let segment = flow.map(|state| SideSegment::of(side, state));

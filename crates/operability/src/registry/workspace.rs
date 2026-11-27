@@ -15,7 +15,7 @@ const AUTHORITY_ARBITRARY_PATH: Mapping = Mapping::Excluded {
 };
 
 /// The desk's rows, read before the doors a workspace-book call performs:
-/// those are that call's `ui` entry in `quantick_control_schema::workspace_book`.
+/// those are that call's `ui` entry in `quantick_control_handlers::wire::workspace_book`.
 pub const DESK: &[UiBehaviour] = &[
     UiBehaviour {
         id: "alerts.list",

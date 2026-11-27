@@ -4,14 +4,14 @@
 //! lends the addressed pane's marks and the preset bank
 //! ([`DrawingDefaultsPort`]).
 
+use crate::wire::chart::PRICE_DECIMAL_PLACES;
+pub use crate::wire::drawing_position::*;
 use quantick_control::annotation::ANNOTATE_MODULE_ID;
 use quantick_control::error::ControlError;
 use quantick_control::registry::RegistryError;
 use quantick_control::wire::{ActorContext, CanonicalDecimal, WireU64};
 use quantick_control_host::journal::NewEvent;
 use quantick_control_host::wire::canonical_f64;
-use quantick_control_schema::chart::PRICE_DECIMAL_PLACES;
-pub use quantick_control_schema::drawing_position::*;
 use quantick_drawings::position_edit::{
     PositionDefault, PositionEdit, PositionLeg, apply_position_default, edited_position,
     opening_position, position_of,

@@ -1,14 +1,16 @@
 //! Replaying a recording's control trace: which tabs play a recording, and
 //! how its sidecar is read. When an entry is due, and which tab's playhead
 //! drives a recording's walk, is [`TraceWalks`]'s, in
-//! `quantick_control_schema::trace_replay`; `ControlAccess::service_replay_trace`
+//! `quantick_control_handlers::wire::trace_replay`; `ControlAccess::service_replay_trace`
 //! re-injects what came due through the same `invoke_local_action` the
 //! hotkey uses.
 
 use crate::app::arrangement_host::ArrangementHost;
 
 use super::super::trace::TraceReplay;
-pub(super) use quantick_control_schema::trace_replay::{PlayingTab, ReplayPosition, TraceWalks};
+pub(super) use quantick_control_handlers::wire::trace_replay::{
+    PlayingTab, ReplayPosition, TraceWalks,
+};
 
 /// Read a session's sidecar for re-injection, naming an unreadable or an
 /// unfinished trace in the log: either way that run is not a fixture.

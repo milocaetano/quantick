@@ -3,14 +3,14 @@
 //! [`HistoryAct`] and judges its outcome; the act runs on the tab through
 //! [`run_history`], the toolbar press's own path, and the tab's own cancel.
 
+use crate::wire::history::{
+    HistoryCancelInput, HistoryCancelResult, HistoryLoadInput, HistoryLoadResult,
+    HistoryLoadSnapshot, cancel_descriptor, load_descriptor,
+};
 use quantick_control::{
     error::ControlError,
     registry::RegistryError,
     wire::{ActorContext, WireU64},
-};
-use quantick_control_schema::history::{
-    HistoryCancelInput, HistoryCancelResult, HistoryLoadInput, HistoryLoadResult,
-    HistoryLoadSnapshot, cancel_descriptor, load_descriptor,
 };
 use quantick_session::{HistoryAct, HistoryOutcome, HistoryReply};
 use quantick_sources::history_reach::{HistoryReach, MAX_REACH_HOURS, MAX_REACH_SESSIONS};

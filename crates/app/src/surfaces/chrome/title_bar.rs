@@ -2,7 +2,7 @@
 use crate::surfaces::{HostEffect, SurfaceEnv, SurfaceResponse, ViewContext};
 use crate::theme;
 use eframe::egui;
-use quantick_control_schema::window_menu::{AGENT_PILL_CONTROL, AGENT_PILL_LABEL, KEBAB_CONTROL};
+use quantick_control_handlers::wire::window_menu::{AGENT_PILL_CONTROL, AGENT_PILL_LABEL, KEBAB_CONTROL};
 use quantick_ui_model::chrome_title_bar::{Action, Effects, Intent, Model, State};
 pub(crate) const HEIGHT: f32 = 36.0;
 pub(crate) const WINDOW_BUTTON_WIDTH: f32 = 46.0;

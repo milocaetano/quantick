@@ -6,7 +6,7 @@ use quantick_chart::{
     style::{CandlePreset, ChartStyle},
 };
 use quantick_control_handlers::chart_settings::ChartSettingsSession;
-pub use quantick_control_schema::chart_settings::ChartSettingsTab;
+pub use quantick_control_handlers::wire::chart_settings::ChartSettingsTab;
 use quantick_stores::{
     candle_settings::CandleSettings, footprint_config::FootprintConfig,
     footprint_presets::PresetStore,

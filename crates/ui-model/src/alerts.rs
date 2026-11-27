@@ -6,7 +6,7 @@ use quantick_alerts::{
     AlertCommand, AlertError, AlertId, AlertSpec, DurableDrawingRef, Expiration, FORMAT_VERSION,
     Frequency, MarketRef, Notification, Operator, Predicate, TargetKind, TargetRef,
 };
-use quantick_control_schema::alerts::DrawingSelector;
+use quantick_control_handlers::wire::alerts::DrawingSelector;
 
 #[path = "alerts/requests.rs"]
 pub mod requests;

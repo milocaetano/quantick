@@ -91,7 +91,7 @@ fn title_bar_narrow_overflow_keeps_selection_plus_and_window_buttons_reachable()
 
 #[test]
 fn title_bar_window_requests_emit_native_commands_without_mutating_markets() {
-    use quantick_control_schema::native_window::WindowState;
+    use quantick_control_handlers::wire::native_window::WindowState;
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     let identity = app.runtime.tabs.active_id();

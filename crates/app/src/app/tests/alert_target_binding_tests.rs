@@ -1,6 +1,6 @@
 use super::*;
 use quantick_control_handlers::alerts::AlertDefinitionsPort;
-use quantick_control_schema::alerts::{DrawingSelector, TargetResolveError};
+use quantick_control_handlers::wire::alerts::{DrawingSelector, TargetResolveError};
 
 fn legacy(app: &mut QuantickApp) -> DrawingSelector {
     run_frame(app, &egui::Context::default());

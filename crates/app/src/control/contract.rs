@@ -15,14 +15,14 @@ pub(crate) use quantick_control_handlers::observer::{
     ANALYST_PROFILE_ID, COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID, DeferredActionResult,
     OBSERVER_PROFILE_ID, ParkedWait, PreparedDispatch, PreparedRequest, UiReadExecution,
 };
+use quantick_control_handlers::wire::{
+    chart::{ChartWindowInput, ChartWindowPage},
+    evidence::{EvidenceCapture, EvidenceCaptureInput},
+};
 use quantick_control_host::{
     events::{EventsReadInput, read_page},
     journal::EventPage,
     projection::SnapshotCapture,
-};
-use quantick_control_schema::{
-    chart::{ChartWindowInput, ChartWindowPage},
-    evidence::{EvidenceCapture, EvidenceCaptureInput},
 };
 use std::collections::BTreeSet;
 pub(crate) type ObserverContract = quantick_control_handlers::observer::ObserverContract<

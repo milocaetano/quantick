@@ -1,14 +1,14 @@
 //! Report gestures docked outside replay; the paper owner resolves their scope.
+use crate::wire::session_reports::{
+    EVENT_KIND, MergedWire, RateUsedWire, ReportInput, ReportOrigin as WireOrigin, ReportOutput,
+    ReportResult, UnconvertedWire, descriptor,
+};
 use quantick_control::{
     error::{ControlError, codes},
     registry::RegistryError,
     wire::{ActorContext, WireU64},
 };
 use quantick_control_host::{admission::known_error, journal::NewEvent, wire::canonical_decimal};
-use quantick_control_schema::session_reports::{
-    EVENT_KIND, MergedWire, RateUsedWire, ReportInput, ReportOrigin as WireOrigin, ReportOutput,
-    ReportResult, UnconvertedWire, descriptor,
-};
 use quantick_paper::pnl::PnlPick;
 use quantick_paper::rates::Currency;
 use quantick_paper::report::{
@@ -186,7 +186,7 @@ fn open<H: PaperHost + ?Sized, A: NotifyAccess>(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     if !inspect_only {
         access.record_event(NewEvent::by(
-            quantick_control_schema::session::MODULE_ID,
+            crate::wire::session::MODULE_ID,
             EVENT_KIND,
             actor,
             json!({"report": result}),
@@ -211,7 +211,7 @@ fn report(
 }
 
 fn readout(view: ReportReadout, action: &str, tz: quantick_civil::TzOffset) -> ReportOutput {
-    use quantick_control_schema::journal_sessions::JournalSourceFilter as WireSource;
+    use crate::wire::journal_sessions::JournalSourceFilter as WireSource;
     let sources = [WireSource::Broker, WireSource::Real, WireSource::Replay]
         .into_iter()
         .filter(|source| {

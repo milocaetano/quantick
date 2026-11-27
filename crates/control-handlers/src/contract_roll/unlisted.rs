@@ -13,11 +13,11 @@ pub use quantick_sources::recovery::{AutoRoll, RollOffer, rolled_sentence as unl
 use super::{RollRefusal, apply, resolve};
 use crate::JournalAccess;
 use crate::market_tab::{MarketTab as _, MarketTabHost, market};
+use crate::wire::contract_roll::{CONTRACT_ROLL_EVENT_KIND, ContractRollResult};
+use crate::wire::feed::MODULE_ID;
 use crate::workspace_book::Journal;
 use quantick_control::wire::WireU64;
 use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::contract_roll::{CONTRACT_ROLL_EVENT_KIND, ContractRollResult};
-use quantick_control_schema::feed::MODULE_ID;
 use serde_json::{Value, json};
 
 /// The journal's `trigger` for a roll the notice's Roll button asked for.

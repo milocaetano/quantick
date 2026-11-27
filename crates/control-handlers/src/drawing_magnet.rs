@@ -4,12 +4,12 @@
 //! rail's switch ([`RailMagnetPort`]) or the addressed pane
 //! ([`AddressedPanePort::addressed_pane`]).
 
+pub use crate::wire::drawing_magnet::*;
 use quantick_control::annotation::ANNOTATE_MODULE_ID;
 use quantick_control::error::ControlError;
 use quantick_control::registry::RegistryError;
 use quantick_control::wire::{ActorContext, WireU64};
 use quantick_control_host::journal::NewEvent;
-pub use quantick_control_schema::drawing_magnet::*;
 use quantick_drawings::{DrawingId, DrawingTool, Drawings};
 use serde_json::Value;
 

@@ -1,8 +1,6 @@
+use crate::wire::trade::PLACE_CAPABILITY_ID;
+use crate::wire::trade_account::{DISARM_CAPABILITY_ID, READ_CAPABILITY_ID, SELECT_CAPABILITY_ID};
 use quantick_control::error::codes;
-use quantick_control_schema::trade::PLACE_CAPABILITY_ID;
-use quantick_control_schema::trade_account::{
-    DISARM_CAPABILITY_ID, READ_CAPABILITY_ID, SELECT_CAPABILITY_ID,
-};
 use quantick_paper::route::{AccountRoute, RouteFacts};
 use serde_json::json;
 

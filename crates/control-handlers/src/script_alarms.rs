@@ -1,14 +1,12 @@
 //! `alerts.script.history` and the `alerts.script.fired` journal event: the
 //! alarms indicator scripts raised, read from the alert runtime that keeps
 //! them and journaled as the window delivers them.
+use crate::wire::alerts::MODULE_ID;
+use crate::wire::script_alarms::{self as wire, FIRED_EVENT_KIND, History, ScriptAlarm};
 use quantick_control::error::ControlError;
 use quantick_control::registry::RegistryError;
 use quantick_control::wire::{ActorContext, WireU64};
 use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::alerts::MODULE_ID;
-use quantick_control_schema::script_alarms::{
-    self as wire, FIRED_EVENT_KIND, History, ScriptAlarm,
-};
 use quantick_stores::script_alarms::{ScriptAlarmEntry, ScriptAlarmLog};
 use serde_json::Value;
 

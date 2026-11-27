@@ -2,7 +2,7 @@
 //! the one on screen on the right. Paints the model's facts and emits intents.
 use eframe::egui;
 use quantick_appearance::Builtin;
-use quantick_control_schema::settings_sections::{SettingRow, SettingsSection};
+use quantick_control_handlers::wire::settings_sections::{SettingRow, SettingsSection};
 use quantick_ui_model::UpdateSession;
 use quantick_ui_model::settings_window::{AgentNote, Control, Effects, Intent, Model, State};
 

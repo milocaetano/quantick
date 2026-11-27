@@ -349,7 +349,7 @@ fn menu_labels() -> (Vec<String>, usize) {
         labels.push(literal[..end].to_owned());
     }
     // Settings paints its rows from this table, so its labels are read here.
-    for section in quantick_control_schema::settings_sections::SettingsSection::ALL {
+    for section in quantick_control_handlers::wire::settings_sections::SettingsSection::ALL {
         labels.extend(section.rows().iter().map(|row| row.label().to_owned()));
     }
     assert!(
@@ -415,11 +415,11 @@ pub(crate) fn registered() -> Vec<Registered> {
     for label in labels {
         entries.push(Registered::new(Source::MenuEntry, label));
     }
-    for row in quantick_control_schema::window_menu::ROWS {
+    for row in quantick_control_handlers::wire::window_menu::ROWS {
         entries.push(Registered::new(Source::MenuEntry, row.label));
     }
-    for id in quantick_control_schema::window_menu::SUBMENUS {
-        let label = quantick_control_schema::window_menu::submenu(*id).0;
+    for id in quantick_control_handlers::wire::window_menu::SUBMENUS {
+        let label = quantick_control_handlers::wire::window_menu::submenu(*id).0;
         entries.push(Registered::new(Source::MenuEntry, label));
     }
 

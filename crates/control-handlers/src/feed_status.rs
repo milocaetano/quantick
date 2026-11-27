@@ -6,13 +6,13 @@
 //! and the contract roll know nothing of the chip, so neither module reaches
 //! back into the other through it.
 
-use quantick_control_host::wire::{available, bounds_not_recorded, unavailable};
-use quantick_control_schema::contract_roll::CONTRACT_ROLL_CAPABILITY_ID;
-use quantick_control_schema::scene::{
+use crate::wire::contract_roll::CONTRACT_ROLL_CAPABILITY_ID;
+use crate::wire::scene::{
     FEED_CHIP_CONTROL_ID, FEED_RECONNECT_CONTROL_ID, FEED_RELOAD_CONTROL_ID, FEED_ROLL_CONTROL_ID,
     FEED_STATUS_OWNER_ID, SceneBoundsSnapshot, SceneControlSnapshot, SceneOwnerKindDto,
     SceneOwnerSnapshot, SceneRoleDto,
 };
+use quantick_control_host::wire::{available, bounds_not_recorded, unavailable};
 use quantick_sources::recovery::{Recovery, roll_label, roll_refused_sentence};
 
 use crate::contract_roll::RollRefusal;

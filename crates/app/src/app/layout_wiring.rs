@@ -181,12 +181,12 @@ impl LayoutAdapter<'_> {
     /// Promote exactly the selected live object, then verify its committed copy.
     pub(crate) fn resolve_alert_target(
         &mut self,
-        selector: quantick_control_schema::alerts::DrawingSelector,
+        selector: quantick_control_handlers::wire::alerts::DrawingSelector,
     ) -> Result<
         quantick_alerts::DurableDrawingRef,
-        quantick_control_schema::alerts::TargetResolveError,
+        quantick_control_handlers::wire::alerts::TargetResolveError,
     > {
-        use quantick_control_schema::alerts::TargetResolveError as Error;
+        use quantick_control_handlers::wire::alerts::TargetResolveError as Error;
         self.persist_changed_drawings();
         let tab = self.tabs.by_id(selector.tab_id).ok_or(Error::Missing)?;
         let (pane, side) = tab

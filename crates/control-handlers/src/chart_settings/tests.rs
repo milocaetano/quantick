@@ -31,7 +31,7 @@ fn document(style: ChartStyle) -> Value {
 
 #[test]
 fn effective_style_readback_resolves_stale_theme_values_for_time_and_bookmap_updates() {
-    let descriptor = quantick_control_schema::chart_settings::descriptor();
+    let descriptor = crate::wire::chart_settings::descriptor();
     let bytes = serde_json::to_vec(&descriptor).unwrap().len();
     assert!(
         bytes <= quantick_control::limits::CONTROL_CAPABILITY_DESCRIPTOR_MAX_BYTES,

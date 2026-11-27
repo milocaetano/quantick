@@ -20,8 +20,7 @@ and `.agents/skills/`.
 | `backtest` | Recorded sessions to performance. |
 | `mcp` | The MCP adapter; stdout carries MCP frames only. |
 | `guards` | Ratchets and scans. |
-| `control-handlers` | Port handlers. |
-| `control-schema` | Wire schemas over the domain. |
+| `control-handlers` | Port handlers; `wire`: wire schemas. |
 | `stores` | Cockpit documents; the alert observer cache. |
 | `ui-model` | UI contracts and catalog. |
 | `session` | Candles, paging, draft choices. |

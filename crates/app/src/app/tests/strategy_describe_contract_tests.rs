@@ -1,7 +1,7 @@
 use crate::app::control_host::tests::fake::FakeWindow;
 use crate::control::{ControlAccess, strategy_describe};
+use quantick_control_handlers::wire::strategy_describe as wire;
 use quantick_control_host::actions::ActionRegistry;
-use quantick_control_schema::strategy_describe as wire;
 use quantick_ui_model::Slot;
 use quantick_ui_model::strategy_describe::conversation::Provider as _;
 use serde_json::json;
@@ -47,7 +47,7 @@ fn registered_contracts_are_inert() {
         .iter()
         .find_map(|node| match node {
             menu::Node::Submenu {
-                id: quantick_control_schema::window_menu::SubmenuId::Panels,
+                id: quantick_control_handlers::wire::window_menu::SubmenuId::Panels,
                 nodes,
                 ..
             } => Some(nodes),

@@ -45,7 +45,7 @@
 //! module revision and once for scope, as other capture-derived projections do.
 
 use crate::toolrail::ToolRailExt as _;
-pub(crate) use quantick_control_schema::scene::*;
+pub(crate) use quantick_control_handlers::wire::scene::*;
 
 use crate::app::{ChromePort, TabsPort};
 use quantick_control::{
@@ -57,7 +57,7 @@ use quantick_control::{
 
 use eframe::egui;
 use quantick_control_handlers::feed_status::{FeedChip, FeedStatusView, feed_status_scene};
-use quantick_control_schema::orderflow_settings as settings;
+use quantick_control_handlers::wire::orderflow_settings as settings;
 
 use crate::{
     dock::DockTab,
@@ -431,15 +431,16 @@ fn push_title_bar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
                     "maximize" if title.maximized => "Restore window",
                     "maximize" => "Maximize window",
                     "close" => "Close window",
-                    quantick_control_schema::window_menu::KEBAB_CONTROL => "Window menu",
-                    quantick_control_schema::window_menu::AGENT_PILL_CONTROL => {
+                    quantick_control_handlers::wire::window_menu::KEBAB_CONTROL => "Window menu",
+                    quantick_control_handlers::wire::window_menu::AGENT_PILL_CONTROL => {
                         "Local agent access"
                     }
                     _ => unreachable!("the title strip publishes registered controls"),
                 },
                 Some(*rect),
-                matches!(*id, "minimize" | "maximize")
-                    .then_some(quantick_control_schema::native_window::WINDOW_STATE_CAPABILITY_ID),
+                matches!(*id, "minimize" | "maximize").then_some(
+                    quantick_control_handlers::wire::native_window::WINDOW_STATE_CAPABILITY_ID,
+                ),
             )
         })
         .chain([
@@ -447,7 +448,7 @@ fn push_title_bar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
                 "home",
                 "Home",
                 title.strip.home,
-                Some(quantick_control_schema::home_tab::HOME_SHOW_CAPABILITY_ID),
+                Some(quantick_control_handlers::wire::home_tab::HOME_SHOW_CAPABILITY_ID),
             ),
             ("new", "Open another market", title.strip.add, None),
             ("overflow", "All markets", title.strip.overflow, None),
@@ -468,7 +469,7 @@ fn push_title_bar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
             selected: (id == "maximize" && title.maximized)
                 || (id == "minimize" && title.minimized)
                 || (id == "home" && title.surface.is_home())
-                || (id == quantick_control_schema::window_menu::KEBAB_CONTROL
+                || (id == quantick_control_handlers::wire::window_menu::KEBAB_CONTROL
                     && title.kebab_pressed),
             availability: available(),
             bounds: rect_bounds(rect).into_snapshot(),
@@ -545,7 +546,7 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
             },
             bounds: bounds.into_snapshot(),
             capability_id: Some(
-                quantick_control_schema::tape_fold::TAPE_FOLD_CAPABILITY_ID.to_owned(),
+                quantick_control_handlers::wire::tape_fold::TAPE_FOLD_CAPABILITY_ID.to_owned(),
             ),
         });
     }
@@ -609,7 +610,7 @@ fn push_dock<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, a
         return;
     }
     controls.push(SceneControlSnapshot {
-        control_id: quantick_control_schema::alerts::RAIL_CONTROL.to_owned(),
+        control_id: quantick_control_handlers::wire::alerts::RAIL_CONTROL.to_owned(),
         label: "Alerts".to_owned(),
         description: None,
         role: SceneRoleDto::Tab,
@@ -621,7 +622,7 @@ fn push_dock<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, a
         availability: available(),
         bounds: None,
         bounds_availability: bounds_not_recorded(),
-        capability_id: Some(quantick_control_schema::alerts::OPEN.to_owned()),
+        capability_id: Some(quantick_control_handlers::wire::alerts::OPEN.to_owned()),
     });
     let (open, route) = (dock.tab(), app.chrome_reads().route);
     for tab in DockTab::ALL {
@@ -646,7 +647,7 @@ fn push_dock<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, a
 /// The Settings window's sections, while it is up; the one on screen is selected.
 /// `settings.open` operates all but Agent access, which only the trader opens.
 fn push_settings<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
-    use quantick_control_schema::settings_sections::SettingsSection;
+    use quantick_control_handlers::wire::settings_sections::SettingsSection;
     let Some(shown) = app.chrome_reads().settings_section() else {
         return;
     };
@@ -665,8 +666,9 @@ fn push_settings<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot
             availability: available(),
             bounds: None,
             bounds_availability: bounds_not_recorded(),
-            capability_id: (section != SettingsSection::AgentAccess)
-                .then(|| quantick_control_schema::desk::SETTINGS_OPEN_CAPABILITY_ID.to_owned()),
+            capability_id: (section != SettingsSection::AgentAccess).then(|| {
+                quantick_control_handlers::wire::desk::SETTINGS_OPEN_CAPABILITY_ID.to_owned()
+            }),
         });
     }
 }

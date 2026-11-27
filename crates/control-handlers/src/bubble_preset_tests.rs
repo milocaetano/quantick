@@ -3,7 +3,7 @@
 use super::*;
 use crate::bubble_pane::TickSpherePane;
 use crate::test_support::{FakeBubbles, FakePane, FakeTab, FakeWindow};
-use quantick_control_schema::bubble_preset::ListResult;
+use crate::wire::bubble_preset::ListResult;
 use serde_json::json;
 
 /// One tab (id 1) whose pane (id 2) has these facts and an order-flow view.
@@ -79,7 +79,7 @@ fn tick_set_asks_the_rule_before_the_pane_wears_anything() {
     };
     assert_eq!(
         violated(refused.unwrap_err()).as_deref(),
-        Some(quantick_control_schema::bubble_scale::TICK_CHART_PRECONDITION)
+        Some(crate::wire::bubble_scale::TICK_CHART_PRECONDITION)
     );
     assert_eq!(look(&volume_chart).worn, None, "refused before any edit");
     let mut no_mode = window(TickSpherePane {
@@ -94,7 +94,7 @@ fn tick_set_asks_the_rule_before_the_pane_wears_anything() {
     );
     assert_eq!(
         violated(refused.unwrap_err()).as_deref(),
-        Some(quantick_control_schema::tick_bubbles::ASSET_MODE_PRECONDITION)
+        Some(crate::wire::tick_bubbles::ASSET_MODE_PRECONDITION)
     );
     assert_eq!(look(&no_mode).worn, None, "refused before any edit");
     let mut plain_asset = window(TickSpherePane {
@@ -212,7 +212,7 @@ impl BubbleLook<()> for Shelf {
     fn wear_tick(&mut self, _: Option<&str>, _: TickTuning) -> Result<bool, String> {
         unreachable!("a listing wears nothing")
     }
-    fn look_snapshot(&self) -> quantick_control_schema::orderflow::BubblesStateSnapshot {
+    fn look_snapshot(&self) -> crate::wire::orderflow::BubblesStateSnapshot {
         unreachable!("a listing reads the page alone")
     }
     fn look_config(&self) -> &quantick_orderflow::HeatmapConfig {

@@ -6,7 +6,7 @@ use quantick_control_handlers::analysis::{AnalysisPaneEntry, AnalysisTab};
 use quantick_control_handlers::attention::MarkTab;
 use quantick_control_handlers::session::{ReplayRead, SessionTab};
 use quantick_control_handlers::trade::{PaperHost, PaperOwner, TradeDesk};
-use quantick_control_schema::interaction::CursorSnapshot;
+use quantick_control_handlers::wire::interaction::CursorSnapshot;
 
 use crate::app::control_host::ControlPort;
 use crate::config::AppConfig;
@@ -112,8 +112,8 @@ impl ReplayRead for ReplayLinkRead<'_> {
         self.0.day_prints()
     }
     fn trace_file_name(&self) -> String {
-        quantick_control_schema::session::file_name(&super::trace::ReplayTraceFile::path_for(
-            &self.0.session.path,
-        ))
+        quantick_control_handlers::wire::session::file_name(
+            &super::trace::ReplayTraceFile::path_for(&self.0.session.path),
+        )
     }
 }

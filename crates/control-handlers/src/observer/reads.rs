@@ -31,19 +31,19 @@ use super::{
     PreparedCapability, PreparedDispatch, PreparedUiRead, PreparedWorkerRead, SerializedUiRead,
     SnapshotReadInput, UiReadExecution, UiReadPort, WorkerReadPort,
 };
-use quantick_control_host::{
-    admission::known_error,
-    events::{EventsReadInput, EventsWaitInput, complete_wait_page},
-    journal::EventPage,
-    projection::{SerializedSnapshotCapture, SnapshotCapture},
-};
-use quantick_control_schema::scene::CONTROLS_SCOPE_ID as SCENE_CONTROLS_SCOPE_ID;
-use quantick_control_schema::{
+use crate::wire::scene::CONTROLS_SCOPE_ID as SCENE_CONTROLS_SCOPE_ID;
+use crate::wire::{
     chart::ChartWindowPage,
     evidence::{
         EvidenceCapture, EvidenceCaptureInput, EvidenceChunkPage, EvidenceManifest,
         EvidenceReadInput, source_scopes,
     },
+};
+use quantick_control_host::{
+    admission::known_error,
+    events::{EventsReadInput, EventsWaitInput, complete_wait_page},
+    journal::EventPage,
+    projection::{SerializedSnapshotCapture, SnapshotCapture},
 };
 
 fn serialization_failed(what: &str) -> ControlError {
@@ -413,7 +413,7 @@ pub(super) fn prepare_scene(
     _scopes: ScopeCatalogue<'_>,
     payload: &Value,
 ) -> Result<PreparedCapability, ControlError> {
-    let input: quantick_control_schema::scene::SceneReadInput = decode_payload(payload)?;
+    let input: crate::wire::scene::SceneReadInput = decode_payload(payload)?;
     Ok(PreparedCapability {
         dispatch: PreparedDispatch::Ui(Box::new(SnapshotInvocation {
             window_id: input.window_id,
@@ -451,10 +451,9 @@ pub(super) fn bindings() -> [(CapabilityDescriptor, PrepareHandler); 9] {
             prepare_diagnostics,
         ),
         (
-            read_descriptor::<
-                quantick_control_schema::scene::SceneReadInput,
-                SerializedSnapshotCapture,
-            >(&SCENE),
+            read_descriptor::<crate::wire::scene::SceneReadInput, SerializedSnapshotCapture>(
+                &SCENE,
+            ),
             prepare_scene,
         ),
         (

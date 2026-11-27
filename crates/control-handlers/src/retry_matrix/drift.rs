@@ -1,16 +1,16 @@
 //! What keeps the written rows honest against the registry they describe.
 //!
-//! [`quantick_control_schema::retry_matrix`] states which half of the matrix is derived and
+//! [`crate::wire::retry_matrix`] states which half of the matrix is derived and
 //! which is written. This module is the comparison between them: the
 //! generator refuses to render while any [`Drift`] stands.
 
+use crate::wire::readback::Readback;
+use crate::wire::retry_matrix::{Holder, holder};
 use quantick_control::id::PermissionId;
 use quantick_control::registry::{CapabilityDescriptor, IdempotencyPolicy};
 use quantick_control_host::authority::SNAPSHOT_CAPABILITY_ID;
 use quantick_control_host::contract::CapabilityContract;
 use quantick_control_host::events::READ_CAPABILITY_ID as EVENTS_READ_CAPABILITY_ID;
-use quantick_control_schema::readback::Readback;
-use quantick_control_schema::retry_matrix::{Holder, holder};
 
 use serde_json::Value;
 
@@ -127,7 +127,7 @@ impl fmt::Display for Drift {
 /// Every disagreement between `rows` and the registry `contract` serves.
 ///
 /// Takes the rows as a parameter rather than reading
-/// [`quantick_control_schema::retry_matrix::READBACKS`] so a test
+/// [`crate::wire::retry_matrix::READBACKS`] so a test
 /// can hand it a mutated table and watch each check bite.
 pub fn drift<P>(rows: &[Readback], contract: &CapabilityContract<P>) -> Vec<Drift> {
     let registry = contract.registry();

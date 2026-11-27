@@ -1,10 +1,10 @@
 //! The retry matrix's judgement over the registry: [`drift`] compares the rows
-//! `quantick_control_schema::retry_matrix` declares with the registry a
+//! `crate::wire::retry_matrix` declares with the registry a
 //! contract serves, and [`render`] turns the two into
 //! `docs/control-plane/retry-matrix.md` once they agree.
 //!
 //! The rows, the reach a grant has and the generated marker are the wire
-//! vocabulary and stay in `quantick-control-schema`; what this module adds is
+//! vocabulary and stay in `crate::wire`; what this module adds is
 //! the check and the document, run only from `main`'s dump path and from
 //! tests.
 

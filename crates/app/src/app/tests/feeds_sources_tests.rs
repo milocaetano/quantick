@@ -2720,7 +2720,7 @@ fn a_day_reference_reaches_the_tabs_scene_until_the_feed_is_replaced() {
     app.active_tab_mut().drain_feed(tab_id);
     run_frame(&mut app, &ctx);
     let told = |app: &QuantickApp| {
-        let id = quantick_control_schema::scene::tab_control_id(tab_id);
+        let id = quantick_control_handlers::wire::scene::tab_control_id(tab_id);
         let scene = crate::control::scene_snapshot(app);
         let tab = scene.controls.into_iter().find(|c| c.control_id == id);
         tab.and_then(|tab| tab.description).expect("the drawn tab")

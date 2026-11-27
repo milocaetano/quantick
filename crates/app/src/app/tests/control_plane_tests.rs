@@ -5906,7 +5906,7 @@ fn every_refused_agent_sound_is_reported_and_the_alarm_state_is_untouched() {
 /// float, dock, park, pop out and return.
 #[test]
 fn canvas_actions_drive_through_the_control_plane() {
-    use quantick_control_schema::canvas as wire;
+    use quantick_control_handlers::wire::canvas as wire;
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
     let size = TEST_WINDOW;

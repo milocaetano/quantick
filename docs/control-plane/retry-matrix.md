@@ -9,7 +9,7 @@ capabilities change nothing and need no reconciling.
 
 This file is generated; a hand edit is a guard failure, not a correction.
 Each row lives beside the capability it reconciles, in that family's own
-module under `crates/control-schema/src/` — the drawings in `analysis.rs`,
+module under `crates/control-handlers/src/wire/` — the drawings in `analysis.rs`,
 the ticket in `trade.rs` — and `retry_matrix::rows::FAMILIES` is the list
 that joins them. The generator refuses to render while any row disagrees
 with the registry. To change a row, change it in its family module, or

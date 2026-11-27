@@ -1,6 +1,6 @@
 //! Pane ownership exercised through the same settings operation as the editor.
 use super::*;
-use quantick_control_schema::chart_settings::ChartSettingsInput;
+use quantick_control_handlers::wire::chart_settings::ChartSettingsInput;
 use serde_json::{Value, json};
 
 fn dispatch(
@@ -299,7 +299,7 @@ fn local_candles_first_frame_hook_pins_only_the_opened_chart_and_captures_its_st
                 .editor
                 .target
                 .map(|target| {
-                    quantick_control_schema::chart_settings::ChartSettingsTarget {
+                    quantick_control_handlers::wire::chart_settings::ChartSettingsTarget {
                         tab_id: quantick_control::wire::WireU64(target.tab_id),
                         pane_id: quantick_control::wire::WireU64(target.pane_id),
                     }

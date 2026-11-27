@@ -39,7 +39,7 @@ fn asset_read(app: &mut QuantickApp, client: &mut LocalClient) -> Value {
 #[test]
 fn save_changes_is_the_assets_permission_checked_retry_safe_and_read_back() {
     assert_eq!(
-        quantick_control_schema::bubble_save::descriptor().persistence,
+        quantick_control_handlers::wire::bubble_save::descriptor().persistence,
         quantick_control::registry::EffectPersistence::Durable,
         "the switch is stored for the asset"
     );

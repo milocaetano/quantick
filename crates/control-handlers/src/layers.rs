@@ -7,6 +7,10 @@
 //! which are switched on. What the scope bounds, which address a call names
 //! and the refusal when it names nothing, what is refused, what changed and
 //! what the journal keeps are decided here.
+use crate::wire::layers::{
+    EVENT_KIND, LayersSnapshot, MAX_SNAPSHOT_PANES, MODULE_ID, PaneLayersSnapshot, SCOPE_ID,
+    SetVisibilityInput, VisibilityResult, set_visibility_descriptor,
+};
 use quantick_control::{
     error::{ControlError, codes},
     id::{ErrorCode, ModuleId, SnapshotScopeId},
@@ -16,10 +20,6 @@ use quantick_control::{
 use quantick_control_host::{
     journal::NewEvent,
     projection::{CaptureContext, ProjectionRegistryError},
-};
-use quantick_control_schema::layers::{
-    EVENT_KIND, LayersSnapshot, MAX_SNAPSHOT_PANES, MODULE_ID, PaneLayersSnapshot, SCOPE_ID,
-    SetVisibilityInput, VisibilityResult, set_visibility_descriptor,
 };
 use serde_json::{Value, json};
 

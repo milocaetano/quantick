@@ -44,7 +44,7 @@ impl PaneMenus {
         slot: PaneSlot,
         state: &CanvasState,
     ) {
-        use quantick_control_schema::canvas::{FLOAT_CAPABILITY_ID, POP_OUT_CAPABILITY_ID};
+        use quantick_control_handlers::wire::canvas::{FLOAT_CAPABILITY_ID, POP_OUT_CAPABILITY_ID};
         use quantick_workspace::canvas::{PaneMode, RESIZE_GRIP_PX};
         let windowed = state.mode(slot) == Some(PaneMode::OsWindow);
         let hit = if state.mode(slot) == Some(PaneMode::Floating) {

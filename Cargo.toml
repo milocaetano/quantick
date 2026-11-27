@@ -13,7 +13,6 @@ members = [
     "crates/control-local",
     "crates/control-host",
     "crates/control-handlers",
-    "crates/control-schema",
     "crates/mcp",
     "crates/operability",
     "crates/engine",

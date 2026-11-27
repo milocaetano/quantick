@@ -1,5 +1,5 @@
 //! Cached window-menu projection and interaction policy.
-use quantick_control_schema::window_menu::{self as menu, Item, LiveRows, RowId, SubmenuId};
+use quantick_control_handlers::wire::window_menu::{self as menu, Item, LiveRows, RowId, SubmenuId};
 use quantick_session::workspace_menu::WorkspaceCommand;
 use quantick_workspace::layout_document::LayoutId;
 use std::path::PathBuf;

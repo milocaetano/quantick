@@ -18,15 +18,19 @@ quantick-chart-interaction = { path = "../chart-interaction" }
 quantick-civil = { path = "../civil" }
 quantick-control = { path = "../control" }
 quantick-control-host = { path = "../control-host" }
-quantick-control-schema = { path = "../control-schema" }
 # The marks an annotation folds into, through the same update a click makes.
 quantick-drawings = { path = "../drawings" }
 quantick-engine = { path = "../engine" }
+quantick-indicators = { path = "../indicators" }
+quantick-layers = { path = "../layers" }
+quantick-operability = { path = "../operability" }
+quantick-orderbook = { path = "../orderbook" }
 # The published book, health and heatmap setup the order-flow scopes read.
 quantick-orderflow = { path = "../orderflow" }
 # The trades journal's sessions: the listing, the filter and the edits the
 # ledger makes, so the capability and the gesture share one path.
 quantick-paper = { path = "../paper" }
+quantick-pine = { path = "../pine" }
 # The recorded session the replay scope describes.
 quantick-replay = { path = "../replay" }
 # The tab session the History press and its cancel are acts of: the handler
@@ -39,7 +43,11 @@ quantick-sources = { path = "../sources" }
 # The footprint setup the footprint scope reports.
 quantick-stores = { path = "../stores" }
 # The canvas model a canvas act runs against and a canvas view reads.
+quantick-trading = { path = "../trading" }
 quantick-workspace = { path = "../workspace" }
+# PNG encoding for the evidence screenshot: a raster no viewer accepts would
+# make an evidence image useless to the human reading the bundle.
+png = { workspace = true }
 rust_decimal = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }

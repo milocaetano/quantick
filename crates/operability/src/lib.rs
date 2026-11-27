@@ -13,7 +13,7 @@
 //! "what can the mouse do that a script cannot?" had to read the interface.
 //!
 //! This module is that enumeration.
-//! `quantick_control_schema::ui_behaviours::UI_BEHAVIOURS` holds one row
+//! `quantick_control_handlers::wire::ui_behaviours::UI_BEHAVIOURS` holds one row
 //! per behaviour: what the trader does, where it is reachable, and either the
 //! capability identifiers that perform it or a classified exclusion with its
 //! reason. `docs/control-plane/ui-behaviour-matrix.md` is that table rendered,

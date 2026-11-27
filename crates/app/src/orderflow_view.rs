@@ -213,8 +213,8 @@ impl OrderflowView {
     /// Snapshot only published tape state; capturing never wakes the worker.
     pub(crate) fn bubbles_snapshot(
         &self,
-    ) -> quantick_control_schema::orderflow::BubblesStateSnapshot {
-        quantick_control_schema::bubble_preset::snapshot(
+    ) -> quantick_control_handlers::wire::orderflow::BubblesStateSnapshot {
+        quantick_control_handlers::wire::bubble_preset::snapshot(
             self.cached_config(),
             self.cached_health().floored_quantity,
             self.dot_scale(),

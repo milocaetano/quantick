@@ -1,7 +1,7 @@
 //! Admitted alert operations over one persistent owner; no delivery on mutation.
+use crate::wire::alerts as schema;
 use quantick_alerts::{AlertCommand, AlertError, AlertSpec, AlertView, CommandResult};
 use quantick_control::{error::ControlError, wire::ActorContext};
-use quantick_control_schema::alerts as schema;
 use serde_json::{Value, json};
 
 pub trait AlertDefinitionsPort {

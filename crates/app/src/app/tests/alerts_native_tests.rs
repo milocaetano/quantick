@@ -164,7 +164,7 @@ fn alert_target_binding_end_to_end() {
         .durable_identity
         .clone()
         .unwrap();
-    let selector = quantick_control_schema::alerts::DrawingSelector {
+    let selector = quantick_control_handlers::wire::alerts::DrawingSelector {
         tab_id: app.runtime.tabs.active_id(),
         pane_id: app.active_tab().drawing_pane().id,
         drawing_id: app.active_tab().drawing_pane().drawings.items()[index].id.0,

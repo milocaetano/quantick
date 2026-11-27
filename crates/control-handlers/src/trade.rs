@@ -37,8 +37,8 @@
 //! `quantick_session::paper`; what is here is decoding, refusals and the
 //! journal.
 
+pub use crate::wire::trade::*;
 pub use quantick_control_host::authority::CAPABILITY_VERSION;
-pub use quantick_control_schema::trade::*;
 
 use quantick_civil::TzOffset;
 use quantick_control::{
@@ -130,9 +130,7 @@ pub trait PaperOwner {
     }
     /// Where orders go and the account list, as the Trading panel shows
     /// them; `None` where the host keeps no route.
-    fn account_route(
-        &mut self,
-    ) -> Option<quantick_control_schema::trade_account::AccountRouteResult> {
+    fn account_route(&mut self) -> Option<crate::wire::trade_account::AccountRouteResult> {
         let read = self.route_call()?.read();
         Some(crate::trade_account::route_result(&read))
     }
@@ -239,7 +237,7 @@ fn paused_error(gate: &quantick_sources::sync::Desync) -> ControlError {
     }));
     error.context.next_steps = vec![format!(
         "retry once the chart catches up, or call {} first",
-        quantick_control_schema::recovery::RECONNECT_CAPABILITY_ID
+        crate::wire::recovery::RECONNECT_CAPABILITY_ID
     )];
     error
 }

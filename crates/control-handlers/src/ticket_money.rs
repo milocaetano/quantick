@@ -6,8 +6,8 @@
 //! `quantick_paper`, so the capability and the ticket's fields share one
 //! validation.
 
+use crate::wire::trade::{SetInstrumentMoneyInput, SetRiskInput};
 use quantick_control::error::ControlError;
-use quantick_control_schema::trade::{SetInstrumentMoneyInput, SetRiskInput};
 use quantick_paper::account::{PaperAccount, RiskEdit, RiskEditText};
 
 /// The risk change a `trade.set_risk` input asks for, refused before any

@@ -12,13 +12,13 @@
 //! and this is the highest headless crate that sees both the session's
 //! commands and the control plane's words and scene.
 
-use quantick_control_host::wire::{available, unavailable};
-use quantick_control_schema::scene::{
+use crate::wire::scene::{
     SceneBoundsSnapshot, SceneControlSnapshot, SceneOwnerKindDto, SceneOwnerSnapshot, SceneRoleDto,
 };
-use quantick_control_schema::window_menu::{RowId, row_of};
-use quantick_control_schema::workspace_book as calls;
-use quantick_control_schema::workspace_colour::WORKSPACE_COLOUR_POPOVER_CAPABILITY_ID;
+use crate::wire::window_menu::{RowId, row_of};
+use crate::wire::workspace_book as calls;
+use crate::wire::workspace_colour::WORKSPACE_COLOUR_POPOVER_CAPABILITY_ID;
+use quantick_control_host::wire::{available, unavailable};
 use quantick_session::colour_popover::ColourIntent;
 use quantick_session::workspace_menu::{CHIP_MENU_FILTER_FROM, WorkspaceCommand, filter_matches};
 use quantick_stores::workspaces::palette::said;

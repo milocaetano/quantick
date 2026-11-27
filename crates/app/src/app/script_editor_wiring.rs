@@ -6,7 +6,7 @@ use crate::{
     surfaces::Surfaces,
 };
 use quantick_control_handlers::indicator_host::{IndicatorRefusal, NumericInputGate, ScriptView};
-use quantick_control_schema::script_editor::{
+use quantick_control_handlers::wire::script_editor::{
     NumericValue, capture_numeric_inputs, update_numeric_input,
 };
 use quantick_stores::script_library::{ScriptDocument, ScriptEditorAction, ScriptLibraryPort};
@@ -91,8 +91,8 @@ pub(super) fn inspect(
     store: &crate::workspace_store::LayoutStore,
     offset: usize,
     limit: usize,
-) -> quantick_control_schema::script_editor::EditorResult {
-    let mut result = quantick_control_schema::script_editor::capture(
+) -> quantick_control_handlers::wire::script_editor::EditorResult {
+    let mut result = quantick_control_handlers::wire::script_editor::capture(
         surfaces.script_editor.model_state.editor(),
         indicators.script_library.entries(),
         offset,

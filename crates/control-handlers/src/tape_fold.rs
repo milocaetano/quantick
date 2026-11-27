@@ -3,8 +3,8 @@
 //! repeating one changes nothing.
 use crate::addressed_pane::AddressedPanePort;
 use crate::dock::ActionDock;
+use crate::wire::tape_fold::{TapeFold, TapeFoldInput, descriptor};
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::tape_fold::{TapeFold, TapeFoldInput, descriptor};
 use serde_json::Value;
 
 /// The fold capability's narrow port on the pane.

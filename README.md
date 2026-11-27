@@ -279,7 +279,7 @@ A Cargo workspace of one-way-dependent crates. The domain below the app is headl
 | Chart, drawings and layout | `chart`, `chart-interaction`, `drawings`, `layers`, `workspace`, `appearance` |
 | Trading, paper and backtest | `trading`, `sim`, `paper`, `strategy`, `backtest` |
 | Feeds and replay | `feed`, `feed-binance`, `feed-hyperliquid`, `feed-mt5`, `replay`, `sources` |
-| Agent control plane | `control`, `control-schema`, `control-host`, `control-handlers`, `control-local`, `mcp` |
+| Agent control plane | `control`, `control-host`, `control-handlers`, `control-local`, `mcp` |
 | Desktop app | `app`, `platform` |
 | Shared support | `session`, `stores`, `civil`, `backpressure`, `operability`, `anchored-studies`, `guards` |
 

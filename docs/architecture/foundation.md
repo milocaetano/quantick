@@ -104,7 +104,7 @@ paper accounts and differing aggregation specs must remain distinct.
 
 Inventory IDs before creating more: live tab/pane IDs, positional `PaneSide`,
 `TabSlot`, layout IDs and persisted drawing addresses have different lifetimes.
-The current [script detach input](../../crates/control-schema/src/script.rs)
+The current [script detach input](../../crates/control-handlers/src/wire/script.rs)
 contains a numeric slot while slots are allocated per pane. Owner-qualified
 addressing must be tested with collisions before multiwindow support. Do not
 silently reinterpret v1 inputs to implement a new identity scheme.

@@ -1,8 +1,8 @@
 use super::*;
 use crate::test_support::{FakeAccess, FakeWindow};
+use crate::wire::chart_settings::{ChartSettingsInput, ChartSettingsResult};
 use quantick_chart::style::ChartStyle;
 use quantick_control_host::actions::ActionRegistry;
-use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
 use quantick_stores::{
     candle_presets::PresetError,
     market_settings::{DrawingKey, MarketSettings, MarketSettingsStore},

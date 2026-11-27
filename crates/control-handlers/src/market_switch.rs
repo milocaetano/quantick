@@ -129,7 +129,7 @@ fn keeps_edits(host: &mut dyn WorkspaceOwner, tab: u64, name: &str) -> Result<()
     }
     let asked = ask_unjournaled(host, tab, name).map_err(|error| error.message)?;
     asked.map_or(Ok(()), |asked| {
-        let text = quantick_control_schema::window_menu::switch_keeps_edits;
+        let text = crate::wire::window_menu::switch_keeps_edits;
         Err(text(&asked.workspace, &asked.target))
     })
 }

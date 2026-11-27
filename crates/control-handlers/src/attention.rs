@@ -13,10 +13,11 @@
 //! trader is looking at, through [`MarkTab`]; the resolved target, the note
 //! and the journal line are decided here.
 
-pub use quantick_control_schema::attention::*;
+pub use crate::wire::attention::*;
 
 use std::collections::BTreeSet;
 
+use crate::wire::interaction::CursorSnapshot;
 use quantick_control::{
     error::ControlError,
     id::{CapabilityId, CostClassId, ModuleId, RiskFlagId},
@@ -29,7 +30,6 @@ use quantick_control::{
     wire::{ActorContext, ActorKind, WireU64},
 };
 use quantick_control_host::journal::{EventActor, NewEvent};
-use quantick_control_schema::interaction::CursorSnapshot;
 use quantick_stores::config::AppConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

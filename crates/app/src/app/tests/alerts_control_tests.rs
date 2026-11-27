@@ -1,8 +1,8 @@
 //! Actual loopback admission, persistence and retry/readback proofs.
 use super::*;
 use quantick_control::error::codes;
+use quantick_control_handlers::wire::alerts as schema;
 use quantick_control_local::client::{LocalClient, discover_in};
-use quantick_control_schema::alerts as schema;
 use serde_json::{Value, json};
 
 fn connect_alerts(directory: &std::path::Path, cockpit: bool) -> LocalClient {

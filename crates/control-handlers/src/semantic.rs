@@ -9,6 +9,7 @@
 //! which the control plane's event journal already is; the frame hands the
 //! time in, nothing here reads a clock.
 
+use crate::wire::interaction::SelectionSnapshot;
 use quantick_chart::indicator_views::IndicatorView;
 use quantick_chart_interaction::pane::PaneSide;
 use quantick_control::id::{EventKind, ModuleId};
@@ -16,7 +17,6 @@ use quantick_control_host::{
     journal::{EventJournal, NewEvent},
     wire::PaneSideDto,
 };
-use quantick_control_schema::interaction::SelectionSnapshot;
 use quantick_drawings::{Drawing, DrawingId, DrawingTool};
 use serde_json::{Value, json};
 

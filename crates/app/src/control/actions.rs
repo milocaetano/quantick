@@ -9,7 +9,7 @@
 //! unavailable to remote observer clients: an action's permissions are not in
 //! the observer ceiling, so a remote invocation is refused before dispatch.
 
-pub(crate) use quantick_control_schema::attention::*;
+pub(crate) use quantick_control_handlers::wire::attention::*;
 
 use quantick_control::registry::RegistryError;
 
