@@ -1,0 +1,5 @@
+# control-schema folded into control-handlers as its `wire` module: the
+# struct moved crates with the same 31 fields. A rename, not growth.
+control-schema::OrderflowHealthSnapshot -31
+control-handlers::OrderflowHealthSnapshot +31
+!budget +0

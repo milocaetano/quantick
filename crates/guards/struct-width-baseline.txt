@@ -19,12 +19,11 @@
 # Raised by one Tab field for the right pane's independent collapse state;
 # the existing context flag still controls the left rail and old workspaces.
 # Moved, not grown: #542 took `OrderflowHealthSnapshot` from `app` into
-# `control-schema` with the same 31 fields; the budget is unchanged. That
-# crate folded into `control-handlers` as its `wire` module, fields unchanged.
+# `control-schema` with the same 31 fields; the budget is unchanged.
 !budget 244
 app::ChartPane 23
 app::Tab 22
-control-handlers::OrderflowHealthSnapshot 31
+control-schema::OrderflowHealthSnapshot 31
 orderflow::BookEngine 31
 orderflow::BubbleStyle 32
 orderflow::HeatmapConfig 35
