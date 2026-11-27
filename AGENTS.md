@@ -12,8 +12,7 @@ and `.agents/skills/`.
 
 ## The map
 
-`crates/` workspace. Edges: `crates/guards/src/graph.rs`.
-`app`, `backtest`, `mcp` and `guards` are leaves.
+`crates/` workspace. Ranks: `RANK` in `crates/guards/src/graph.rs`; edges point lower.
 
 | Crate | What it owns |
 | --- | --- |
