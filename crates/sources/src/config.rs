@@ -122,7 +122,6 @@ impl ProviderKind {
                 liquidations: false,
                 open_interest: false,
                 funding: false,
-                spot_perp_pair: false,
                 order_routing: false,
             },
             // `recentTrades` is a short recovery window, not a pageable
@@ -148,7 +147,6 @@ impl ProviderKind {
                 liquidations: false,
                 open_interest: false,
                 funding: false,
-                spot_perp_pair: false,
                 order_routing: false,
             },
             // The bridge streams the terminal's Depth of Market. Whether a
@@ -178,7 +176,6 @@ impl ProviderKind {
                 liquidations: false,
                 open_interest: false,
                 funding: false,
-                spot_perp_pair: false,
                 order_routing: true,
             },
         }
@@ -304,9 +301,6 @@ pub struct FeedCapabilities {
     /// Publishes the perpetual's funding rate and settlement time. No
     /// provider does yet.
     pub funding: bool,
-    /// Streams the same asset's spot and perpetual tapes side by side, for
-    /// the Spot vs Perp CVD pane. No provider does yet.
-    pub spot_perp_pair: bool,
     /// Orders placed on this chart can route to the broker account the
     /// source's own terminal is logged into. Only a live MetaTrader feed:
     /// a recording has no broker behind it, and a crypto venue's prints are
@@ -423,7 +417,6 @@ impl FeedCapabilities {
             liquidations: false,
             open_interest: false,
             funding: false,
-            spot_perp_pair: false,
             order_routing: false,
         }
     }
@@ -699,9 +692,8 @@ mod tests {
                 caps.liquidations,
                 caps.open_interest,
                 caps.funding,
-                caps.spot_perp_pair,
             ];
-            assert_eq!(bits, [false; 4], "{caps:?}");
+            assert_eq!(bits, [false; 3], "{caps:?}");
         }
     }
 

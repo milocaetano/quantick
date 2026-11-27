@@ -6,7 +6,6 @@ use super::depth::{DEPTH_EMPTY, depth_rows_per_side, depth_view};
 use super::liquidations::{LIQUIDATIONS_NOT_PROVIDED, liquidations_view};
 use super::open_interest::{OPEN_INTEREST_NOT_PROVIDED, READING_NOTE, open_interest_view};
 use super::scene::{ROW_PX, ScenePrim, WidgetScene};
-use super::spot_perp_cvd::{SPOT_PERP_NOT_PROVIDED, spot_perp_cvd_view};
 use super::{big_trades_tests, depth_tests, derivatives_tests};
 
 const SIZE: (f32, f32) = (400.0, 300.0);
@@ -134,27 +133,18 @@ fn derivative_panes_paint_their_data_inside_the_body() {
         .find(|text| text.contains(" = "))
         .expect("the reading rule is painted");
     assert!(reading.ends_with(READING_NOTE), "{reading}");
-    let cvd = spot_perp_cvd_view(
-        Some(&derivatives_tests::cvd_model()),
-        &derivatives_tests::cvd_layout(),
-    )
-    .paint(SIZE.0, SIZE.1);
-    assert!(cvd.rows > 0);
-    assert!(texts(&cvd).iter().any(|text| text.contains("perp")));
 }
 
 #[test]
 fn a_feed_without_derivatives_paints_the_not_provided_state() {
     let liquidations = liquidations_view(None, &derivatives_tests::liquidations_layout());
     let oi = open_interest_view(None, &derivatives_tests::oi_layout());
-    let cvd = spot_perp_cvd_view(None, &derivatives_tests::cvd_layout());
     let scenes = [
         (
             liquidations.paint(SIZE.0, SIZE.1),
             LIQUIDATIONS_NOT_PROVIDED,
         ),
         (oi.paint(SIZE.0, SIZE.1), OPEN_INTEREST_NOT_PROVIDED),
-        (cvd.paint(SIZE.0, SIZE.1), SPOT_PERP_NOT_PROVIDED),
     ];
     for (scene, text) in scenes {
         assert_eq!(scene.empty.as_deref(), Some(text));

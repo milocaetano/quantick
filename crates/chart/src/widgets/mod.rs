@@ -14,7 +14,6 @@ pub mod depth;
 pub mod liquidations;
 pub mod open_interest;
 pub mod scene;
-pub mod spot_perp_cvd;
 
 #[cfg(test)]
 mod big_trades_tests;

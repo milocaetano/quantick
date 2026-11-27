@@ -47,7 +47,6 @@
 pub mod fmath;
 pub mod golden;
 pub mod native;
-pub mod spot_perp_cvd;
 pub mod ta;
 
 mod bar;
@@ -74,5 +73,3 @@ pub use output::{
 
 #[cfg(test)]
 mod library_fixtures;
-#[cfg(test)]
-mod spot_perp_cvd_tests;

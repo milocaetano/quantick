@@ -724,7 +724,6 @@ fn a_quote_driven_feed_says_so_where_the_side_note_goes() {
                 liquidations: false,
                 open_interest: false,
                 funding: false,
-                spot_perp_pair: false,
                 order_routing: false,
             }),
             latency: feed::unsplit_latency(),
