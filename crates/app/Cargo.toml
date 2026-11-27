@@ -17,7 +17,11 @@ drawing-harness = ["quantick-drawings/drawing-harness"]
 control-harness = []
 # Launch scenarios, scripted menus and pointers, demo stagers, store isolation
 # for captures, and the feed's fault injection.
-scenario-harness = ["quantick-feed/harness", "quantick-ui-model/scenario-harness"]
+scenario-harness = [
+    "quantick-feed/harness",
+    "quantick-ui-model/scenario-harness",
+    "dep:quantick-broker-mt5",
+]
 
 [dependencies]
 quantick-ui-model = { path = "../ui-model" }
@@ -45,8 +49,6 @@ quantick-control-host = { path = "../control-host" }
 quantick-control-handlers = { path = "../control-handlers" }
 # What the control plane says: every projection and action shape.
 quantick-control-schema = { path = "../control-schema" }
-# The operability contract: the behaviour table, the matrix, the drift comparison.
-quantick-operability = { path = "../operability" }
 quantick-engine = { path = "../engine" }
 quantick-indicator-session = { path = "../indicator-session" }
 # The feed host: the FeedEvent/FeedCommand port, the venue adapters that run
@@ -54,16 +56,13 @@ quantick-indicator-session = { path = "../indicator-session" }
 quantick-feed = { path = "../feed" }
 quantick-indicators = { path = "../indicators" }
 quantick-pine = { path = "../pine" }
-quantick-feed-binance = { path = "../feed-binance" }
-quantick-feed-hyperliquid = { path = "../feed-hyperliquid" }
-quantick-feed-mt5 = { path = "../feed-mt5" }
 quantick-orderbook = { path = "../orderbook" }
 quantick-orderflow = { path = "../orderflow" }
 # The paper account: orders, sizing, the journal and the report numbers. This
 # crate keeps the ticket that draws it and the host wiring around it.
 quantick-paper = { path = "../paper" }
-# The MetaTrader broker venue: only the window may build it.
-quantick-broker-mt5 = { path = "../broker-mt5" }
+# The MetaTrader broker venue's staged fake, for the account-route scenarios.
+quantick-broker-mt5 = { path = "../broker-mt5", optional = true }
 # The OS-window exception: the DPI adapter, the hidden-root paint pump and
 # the exposed-window lookup, behind safe calls; no-ops off Windows.
 quantick-platform = { path = "../platform" }
@@ -122,6 +121,13 @@ rodio = { workspace = true }
 windows-sys = { workspace = true }
 
 [dev-dependencies]
+# Test-only reach: the operability drift tests, the venue types the feed and
+# status-bar tests build, and the staged broker the account-route tests use.
+quantick-operability = { path = "../operability" }
+quantick-feed-binance = { path = "../feed-binance" }
+quantick-feed-hyperliquid = { path = "../feed-hyperliquid" }
+quantick-feed-mt5 = { path = "../feed-mt5" }
+quantick-broker-mt5 = { path = "../broker-mt5" }
 quantick-paper = { path = "../paper", features = ["test-support"] }
 quantick-ui-model = { path = "../ui-model", features = ["test-support", "scenario-harness"] }
 # The gate clock the worker tests park a real worker on, and the ledger
