@@ -146,7 +146,7 @@ pub fn acting_author(actor: &ActorContext) -> AnnotationAuthor {
 /// coordinate is not finite or a market slot carries no time.
 pub fn chart_resolved_anchor(
     slot: Option<usize>,
-    time_unix_ms: Option<i64>,
+    (time_unix_ms, time_projected): (Option<i64>, bool),
     bar_position: f32,
     price: f64,
 ) -> Option<ChartResolvedAnchor> {
@@ -160,6 +160,8 @@ pub fn chart_resolved_anchor(
         None => ChartResolvedAnchor::Future {
             bar_position: canonical_bar_position(bar_position)?,
             price,
+            time_unix_ms,
+            time_projected,
         },
     })
 }

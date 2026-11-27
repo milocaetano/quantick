@@ -66,6 +66,9 @@ impl AnnotatedPane for ChartPane {
     fn anchor_time(&self, bar: f32) -> Option<i64> {
         self.series_read().anchor_time(bar)
     }
+    fn stamp(&self, point: &mut drawings::ChartPoint) {
+        self.series_read().stamp(point);
+    }
     fn drawings(&self) -> &Drawings {
         &self.drawings
     }
