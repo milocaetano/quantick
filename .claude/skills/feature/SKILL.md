@@ -12,7 +12,7 @@ Ask once when the outcome or parent is ambiguous.
 
 ## Plan
 
-An outcome with no trader-visible behaviour (refactor, tests, CI, guards, tooling, moves) opens no `feature/<slug>`: it becomes `/implement` lines on `main`, one at a time per shared file, so a move or split campaign never has two PRs open on one hub file.
+An outcome with no trader-visible behaviour (refactor, tests, CI, guards, tooling, moves) opens no `feature/<slug>`: hand the user `/implement` lines on `main`, each planned once the last PR on a shared file is open, so its `After:` names it and a move or split campaign never has two PRs open on one hub file.
 
 1. Search paths, symbols and existing issues/PRs; do not read code bodies here (hand that to one `haiku` retrieval agent that returns paths).
    Reuse matching work.
