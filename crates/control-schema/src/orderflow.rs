@@ -383,8 +383,8 @@ pub struct BubblesStateSnapshot {
     /// the forming dot rides the right edge. Nearby recent prints may merge;
     /// once they leave the live aggregation region, their membership stays
     /// fixed while time and price axes transform their coordinates. The
-    /// default area scale follows the largest visible dot, with a common
-    /// radius cap to keep neighbours readable. Grouping changes start a
+    /// default area scale follows the largest visible dot, drawn at the full
+    /// radius; neighbours may overlap. Grouping changes start a
     /// new grouping; final-radius gains preserve it. The bubble setting `overlap_merge` is
     /// switched by `layers.visibility.set` as layer `bubble_overlap_merge`.
     #[serde(default)]

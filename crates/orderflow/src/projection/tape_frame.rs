@@ -182,14 +182,7 @@ pub fn project_retained_tape_frame(
 ) -> Option<TapeDotFrame> {
     let sizing = style.dot_sizing?;
     let (view, opening_bursts) = frame_view(time?, prices?, geometry, style, facts, overlay);
-    Some(memory.draw_retained(
-        marks,
-        view,
-        sizing,
-        &style.bubbles,
-        &style.live_lane,
-        opening_bursts,
-    ))
+    Some(memory.draw_retained(marks, view, sizing, &style.bubbles, opening_bursts))
 }
 
 /// One frame's tape as a painter hands it over: the frame's projection, the

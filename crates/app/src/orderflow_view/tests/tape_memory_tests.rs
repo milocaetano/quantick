@@ -254,11 +254,11 @@ fn tape_history_is_cleared_by_source_replay_mode_and_explicit_visual_changes() {
 }
 
 /// #11: the lane's width is a view parameter, like the window it shows: a
-/// width change keeps the painted past as it was, while an explicit zoom of
-/// the tape's window starts a fresh display epoch.
+/// width change and an explicit zoom of the native tape's window keep the
+/// painted past, which the new view only reshapes.
 #[test]
-fn a_lane_width_change_keeps_tape_history_and_a_zoom_starts_it_over() {
-    for (change, kept) in [("width", true), ("zoom", false)] {
+fn a_lane_width_change_or_a_zoom_keeps_native_tape_history() {
+    for change in ["width", "zoom"] {
         let (mut view, hold) = memory_view();
         let _ = seed_closed_history(&mut view);
         let groups = view.tape_dots.borrow().retained_group_count();
@@ -274,7 +274,7 @@ fn a_lane_width_change_keeps_tape_history_and_a_zoom_starts_it_over() {
         let after = view.tape_dots.borrow().retained_group_count();
         hold.release();
         assert!(groups > 0, "fixture has painted history before {change}");
-        assert_eq!(after, if kept { groups } else { 0 }, "{change}");
+        assert_eq!(after, groups, "{change}");
     }
 }
 
@@ -297,7 +297,7 @@ fn retained_weighted_prices_participate_in_fit_after_an_old_member_expires() {
 }
 
 #[test]
-fn a_clearance_radius_change_never_moves_the_tape_time_inset() {
+fn an_axis_change_moves_neither_the_tape_time_inset_nor_the_radius() {
     let (mut view, hold) = memory_view();
     let prints = [
         print(1, 1_011, 100, 1, Side::Buy),
@@ -315,14 +315,9 @@ fn a_clearance_radius_change_never_moves_the_tape_time_inset() {
     assert_eq!(before.len(), 3);
     assert_eq!(after.len(), 3, "axis changes cannot regroup closed dots");
     let shift = 40.0 / WINDOW_MS as f32 * horizontal.span_px;
-    let radius_ratio = after[2].1 / before[2].1;
-    assert!(
-        radius_ratio < 1.0,
-        "the compressed axis needs a uniform smaller cap"
-    );
     for (old, new) in before.iter().zip(&after) {
         assert!((old.0.x - new.0.x - shift).abs() < 0.001);
-        assert!((new.1 / old.1 - radius_ratio).abs() < 0.0001);
+        assert_eq!(new.1, old.1, "a compressed axis shrinks no disc");
     }
 }
 
