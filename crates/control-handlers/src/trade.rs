@@ -46,6 +46,7 @@ use quantick_control::{
     registry::{CapabilityDescriptor, RegistryError},
     wire::ActorContext,
 };
+use quantick_control_host::actions::ReplayTrace;
 use quantick_control_host::journal::NewEvent;
 use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{
@@ -62,7 +63,6 @@ use serde_json::{Value, json};
 
 use crate::JournalAccess;
 use crate::call::{Call, CallCx, CallSpec, dock_call};
-use quantick_control_host::actions::ReplayTrace;
 use crate::dock::ActionDock;
 
 pub use quantick_control_host::authority::{TRADE_MODULE_ID, TRADE_PERMISSION_ID};
