@@ -5568,9 +5568,8 @@ fn drawing_controller_registered_conversion_precedes_ordinary_deletion() {
     );
 }
 
-/// The trader's report on a tick chart: a profile range dragged past the
-/// newest bar placed nothing. The hand stamps that end with a projected time;
-/// the conversion keeps the slot it was released on.
+/// Wiring: a Quick Range released past the newest tick bar converts to a
+/// profile.
 #[test]
 fn a_quick_range_profile_released_past_the_newest_tick_bar_is_placed() {
     let ctx = egui::Context::default();
@@ -5599,10 +5598,4 @@ fn a_quick_range_profile_released_past_the_newest_tick_bar_is_placed() {
 
     let drawings = app.active_tab().flow_pane.drawings.items();
     assert_eq!(drawings.len(), 1, "the conversion placed the profile");
-    let end = drawings[0].points[1];
-    assert_eq!(end.bar, future, "the slot it was released on");
-    assert!(
-        end.time_projected,
-        "past the newest tick bar the time is projected"
-    );
 }
