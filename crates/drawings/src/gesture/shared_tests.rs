@@ -39,6 +39,11 @@ fn rectangle(from_ms: i64, to_ms: i64) -> Mark {
 }
 
 fn reprojected(state: &ChartState, drawing: &Mark) -> (Vec<f32>, bool) {
+    let (anchors, clamped) = reprojected_points(state, drawing);
+    (anchors.iter().map(|anchor| anchor.bar).collect(), clamped)
+}
+
+fn reprojected_points(state: &ChartState, drawing: &Mark) -> (Vec<ChartPoint>, bool) {
     let spec = SpecSelector::new(BarSpec::Tick(2));
     let viewport = Viewport::new();
     let indicators = IndicatorViews::new();
@@ -52,7 +57,7 @@ fn reprojected(state: &ChartState, drawing: &Mark) -> (Vec<f32>, bool) {
         indicators: &indicators,
     };
     let (anchors, clamped) = projection.reproject(drawing).expect("the series has bars");
-    (anchors.iter().map(|anchor| anchor.bar).collect(), clamped)
+    (anchors.to_vec(), clamped)
 }
 
 /// The trader's report: a rectangle shown on all charts arrived on the
@@ -282,6 +287,7 @@ fn an_anchor_moved_on_another_pane_lands_on_this_panes_own_bar() {
             anchor: 0,
             time_ms: 1_011_000,
             price: 101.5,
+            time_projected: false,
         },
     );
     let point = drawings.items()[0].points[0];
@@ -301,6 +307,7 @@ fn a_body_drag_on_another_pane_moves_every_anchor_by_the_same_time() {
             index: 0,
             delta_ms: 3_000,
             delta_price: 2.0,
+            time_projected: false,
         },
     );
     let point = drawings.items()[0].points[0];
@@ -322,6 +329,7 @@ fn a_locked_mark_or_an_unplaceable_drag_moves_nothing() {
             index: 0,
             delta_ms: 3_000,
             delta_price: 2.0,
+            time_projected: false,
         },
     );
     apply(
@@ -331,6 +339,7 @@ fn a_locked_mark_or_an_unplaceable_drag_moves_nothing() {
             anchor: 0,
             time_ms: 1_011_000,
             price: 101.5,
+            time_projected: false,
         },
     );
     assert_eq!(locked.items()[0].points, before, "the lock holds");
@@ -342,7 +351,219 @@ fn a_locked_mark_or_an_unplaceable_drag_moves_nothing() {
             index: 0,
             delta_ms: -600_000,
             delta_price: 0.0,
+            time_projected: false,
         },
     );
     assert_eq!(free.items()[0].points, before, "no slot, no move");
+}
+
+/// A time the other chart projected stays projected here: an anchor moved
+/// to it, an anchor a projected delta moves, and a projected anchor any
+/// drag moves. Only a drag that moves no time keeps an exact anchor exact.
+#[test]
+fn a_projected_time_from_another_pane_is_never_saved_as_exact() {
+    let translate = |delta_ms, time_projected| SharedEdit::Translate {
+        index: 0,
+        delta_ms,
+        delta_price: 0.0,
+        time_projected,
+    };
+    let move_to = SharedEdit::MoveAnchor {
+        index: 0,
+        anchor: 0,
+        time_ms: 1_011_000,
+        price: 101.5,
+        time_projected: true,
+    };
+    for (projected, edit, expected, what) in [
+        (false, move_to, true, "moved onto a projected instant"),
+        (
+            false,
+            translate(3_000, true),
+            true,
+            "moved by a projected delta",
+        ),
+        (
+            true,
+            translate(3_000, false),
+            true,
+            "a projected anchor moved",
+        ),
+        (false, translate(0, true), false, "no time moved"),
+        (false, translate(3_000, false), false, "exact throughout"),
+    ] {
+        let mut drawings = line_on_bar_four();
+        drawings.items_mut()[0].points[0].time_projected = projected;
+        apply(&mut drawings, edit);
+        let point = drawings.items()[0].points[0];
+        assert_eq!(point.time_projected, expected, "{what}");
+    }
+}
+
+/// The mirror's side: a drag onto a projected instant says so in the edit
+/// it sends, for a handle and for a body measured from or to one.
+#[test]
+fn a_drag_on_a_mirror_sends_the_projected_flag_with_its_instant() {
+    let at = |time_ms, time_projected| ChartPoint {
+        time_projected,
+        ..ChartPoint::at_time(4.5, 100.0, Some(time_ms))
+    };
+    let mut gestures = PaneGestures {
+        shared_drag: SharedDrag::Anchor {
+            index: 0,
+            anchor: 0,
+        },
+        shared_drag_owner: Some(1),
+        ..Default::default()
+    };
+    let mut outcome = PointerOutcome::default();
+    gestures.advance_shared_drag(at(1_030_000, true), &mut outcome);
+    assert!(
+        matches!(
+            outcome.shared.edit,
+            Some(SharedEdit::MoveAnchor {
+                time_projected: true,
+                ..
+            })
+        ),
+        "{:?}",
+        outcome.shared.edit
+    );
+
+    for (from, to, expected) in [
+        (false, true, true),
+        (true, false, true),
+        (false, false, false),
+    ] {
+        gestures.shared_drag = SharedDrag::Body { index: 0 };
+        gestures.shared_pointer_mark = Some(at(1_020_000, from));
+        let mut outcome = PointerOutcome::default();
+        gestures.advance_shared_drag(at(1_030_000, to), &mut outcome);
+        let Some(SharedEdit::Translate {
+            delta_ms,
+            time_projected,
+            ..
+        }) = outcome.shared.edit
+        else {
+            panic!("no translate: {:?}", outcome.shared.edit);
+        };
+        assert_eq!(
+            (delta_ms, time_projected),
+            (10_000, expected),
+            "{from} to {to}"
+        );
+    }
+}
+
+/// A mirror runs a projected anchor on past its newest bar at its own pace,
+/// unfaded, where the owner draws it; an exact time there still clamps.
+#[test]
+fn a_projected_corner_runs_on_past_the_mirrors_newest_bar() {
+    let state = tape(&PRINTS_MS);
+    for (projected, expected, what) in [
+        (
+            true,
+            (vec![0.5, 4.5], false),
+            "two slots on at 300 ms a slot",
+        ),
+        (
+            false,
+            (vec![0.5, 2.5], true),
+            "an exact instant past the end",
+        ),
+    ] {
+        let mut drawing = rectangle(1_000, 2_200);
+        drawing.points[1].time_projected = projected;
+        assert_eq!(reprojected(&state, &drawing), expected, "{what}");
+        let (anchors, _) = reprojected_points(&state, &drawing);
+        assert_eq!(
+            anchors[1].time_projected, projected,
+            "{what}: the copy keeps its label"
+        );
+    }
+}
+
+/// A mark whose edge was timed at an estimate settles on this pane: exact
+/// where a bar holds it, projected past the newest bar.
+#[test]
+fn restamping_settles_an_estimated_edge_on_this_panes_bars() {
+    let state = seconds(20);
+    let spec = SpecSelector::new(BarSpec::Tick(1));
+    let viewport = Viewport::new();
+    let indicators = IndicatorViews::new();
+    for (bar, time, projected, what) in [
+        (11.5, 1_011_000, false, "a bar holds it: exact"),
+        (21.5, 1_021_000, true, "past the newest bar: projected"),
+    ] {
+        let mut drawings = line_on_bar_four();
+        let estimate = ChartPoint {
+            time_projected: true,
+            ..ChartPoint::at_time(bar, 100.0, Some(1_000))
+        };
+        drawings.items_mut()[0].points[0] = estimate;
+        SharedMarksMut {
+            projection: DrawingProjection {
+                series: PaneSeriesRead {
+                    history_prefix: &[],
+                    state: &state,
+                    spec: &spec,
+                },
+                viewport: &viewport,
+                indicators: &indicators,
+            },
+            drawings: &mut drawings,
+        }
+        .restamp(0);
+        let point = drawings.items()[0].points[0];
+        assert_eq!(
+            (point.time_ms, point.time_projected),
+            (Some(time), projected),
+            "{what}"
+        );
+    }
+}
+
+/// A pick holds what its gesture needs of the mark from the press: the
+/// owning pane, where it was taken, and the mark's lock, magnet and snap.
+#[test]
+fn a_pick_holds_the_marks_lock_magnet_and_snap() {
+    let line = DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == "horizontal-line")
+        .expect("registered test tool");
+    let mut marks = Marks::default();
+    for price in [40.0, 60.0] {
+        assert!(marks.place(line, ChartPoint::at_time(1.0, price, Some(1_000))));
+    }
+    let mark = &mut marks.items_mut()[1];
+    (mark.locked, mark.magnet) = (true, true);
+    let expected = SharedPick {
+        owner: 2,
+        index: 1,
+        anchor: Some(0),
+        locked: true,
+        magnet: marks.items()[1].own_magnet(),
+        snap: line.anchor_snap(),
+    };
+    assert_eq!(SharedPick::of(2, &marks, (1, Some(0))), expected);
+    let body = SharedPick::of(2, &marks, (0, None));
+    assert!(
+        !body.locked && !body.magnet,
+        "the other mark's own: {body:?}"
+    );
+}
+
+/// The selection follows the object: the focused side while it holds one,
+/// else the first other side that does, else the focused side.
+#[test]
+fn the_selection_side_is_the_focused_one_unless_another_holds_it() {
+    let sides = [0, 1, 2];
+    let held = |selected: &'static [u8]| move |side: u8| selected.contains(&side);
+    assert_eq!(selection_side(1, sides, held(&[1, 2])), 1, "focused first");
+    assert_eq!(
+        selection_side(1, sides, held(&[2, 0])),
+        0,
+        "then side order"
+    );
+    assert_eq!(selection_side(1, sides, held(&[])), 1, "none holds one");
 }

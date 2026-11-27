@@ -20,14 +20,5 @@ second: `[] []` for a shipped surface; a test-only fixture takes
 `crates/app/src/surfaces/tests/fixtures/second.rs`) is the minimal copy, and
 `new_surface_uses_only_catalog_registration` drives it through a real app frame.
 
-The manifest below is checked by `python tools/headless_ui/measure.py --check-recipe`
-against a shipped surface:
-
-```json
-{
-  "model": "crates/ui-model/src/toast.rs",
-  "view": "crates/app/src/surfaces/toast.rs",
-  "catalog": "crates/ui-model/src/catalog.rs",
-  "registration": "                toast: Toast => toast = \"toast.rs\", toast = \"toast.rs\", toast::effects, Overlay, Local;"
-}
-```
+`toast` (`crates/ui-model/src/toast.rs`, `crates/app/src/surfaces/toast.rs`)
+is the shipped example.

@@ -78,7 +78,7 @@
     "DrawingSnapshot": {
       "properties": {
         "all_windows": {
-          "description": "Whether every chart window of the same market, workspace and named\nlayout shows it (\"All windows\"). Legacy unscoped entries retain their\nprior flag. Written only when true for compatibility with v1 readers.",
+          "description": "Whether every chart of the same market and workspace shows it,\nwhatever layout it shows (\"All windows\"). Legacy unscoped entries\nretain their prior flag. Written only when true for compatibility with\nv1 readers.",
           "type": "boolean"
         },
         "anchor_count": {
@@ -166,6 +166,10 @@
         "scope": {
           "description": "`all_charts` when every chart of its market, workspace and named\nlayout shows it at any timeframe; `this_chart` pins it to its bars.",
           "type": "string"
+        },
+        "time_projected": {
+          "description": "An anchor's market time is projected past the newest bar of a tick,\nvolume or renko chart from the recent bars' pace, not read off a bar:\nan estimate, which the inspector labels. Written only when true.",
+          "type": "boolean"
         },
         "tool_id": {
           "type": "string"

@@ -68,6 +68,9 @@ impl PaneMarks for ChartPane {
             .drawings_spec
             .unwrap_or(*self.series.state.spec())
     }
+    fn restamp_mark(&mut self, index: usize) {
+        self.shared_marks_mut().restamp(index);
+    }
 }
 
 impl NativeTape for OrderflowView {

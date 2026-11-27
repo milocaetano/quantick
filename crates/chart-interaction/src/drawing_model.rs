@@ -14,14 +14,19 @@
 /// (`docs/ux/drawing-tools-2026-08.md` §D7).
 ///
 /// It is an `Option` because a pane cannot always name the time: an anchor
-/// dropped past the newest bar, or on a pane with no bars yet, has no instant
-/// behind it. A drawing whose anchors have no time simply cannot be shared —
-/// it is never guessed.
+/// on a pane with no bars yet has no instant behind it, and a drawing whose
+/// anchors have no time cannot be shared. Past the newest bar of a chart
+/// that does not cut by time (tick, volume, renko) the trader's hand gets a
+/// time projected from the bars before it, and [`Self::time_projected`]
+/// says so wherever the drawing is described.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChartPoint {
     pub bar: f32,
     pub price: f64,
     pub time_ms: Option<i64>,
+    /// `time_ms` was projected past the newest bar from the mean duration of
+    /// the bars before it, not read off a bar: an estimate, labelled as one.
+    pub time_projected: bool,
 }
 
 impl ChartPoint {
@@ -36,6 +41,7 @@ impl ChartPoint {
             bar,
             price,
             time_ms: None,
+            time_projected: false,
         }
     }
 
@@ -45,6 +51,7 @@ impl ChartPoint {
             bar,
             price,
             time_ms,
+            time_projected: false,
         }
     }
 }

@@ -234,11 +234,17 @@ pub struct DrawingSnapshot {
     /// `all_charts` when every chart of its market, workspace and named
     /// layout shows it at any timeframe; `this_chart` pins it to its bars.
     pub scope: String,
-    /// Whether every chart window of the same market, workspace and named
-    /// layout shows it ("All windows"). Legacy unscoped entries retain their
-    /// prior flag. Written only when true for compatibility with v1 readers.
+    /// Whether every chart of the same market and workspace shows it,
+    /// whatever layout it shows ("All windows"). Legacy unscoped entries
+    /// retain their prior flag. Written only when true for compatibility with
+    /// v1 readers.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub all_windows: bool,
+    /// An anchor's market time is projected past the newest bar of a tick,
+    /// volume or renko chart from the recent bars' pace, not read off a bar:
+    /// an estimate, which the inspector labels. Written only when true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub time_projected: bool,
     /// The strip layout it belongs to, the `layout_id` the layout-tab calls
     /// name; absent for one saved before drawings recorded their layout.
     #[serde(default, skip_serializing_if = "Option::is_none")]

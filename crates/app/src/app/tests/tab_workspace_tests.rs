@@ -1816,11 +1816,7 @@ fn a_flow_bar_size_change_never_counts_as_a_drawing_edit() {
     let time = flow.slot_open_time(slot).expect("bars to anchor on");
     let tool = crate::drawings::DrawingTool::by_id("horizontal-line").expect("the tool");
     #[allow(clippy::cast_precision_loss)]
-    let point = crate::drawings::ChartPoint {
-        bar: slot as f32,
-        price: 100.0,
-        time_ms: Some(time),
-    };
+    let point = crate::drawings::ChartPoint::at_time(slot as f32, 100.0, Some(time));
     let flow = app.active_tab_mut().pane_mut(PaneSide::Flow);
     assert!(flow.drawings.place(tool, point), "a level places");
     frames(&mut app, 2);

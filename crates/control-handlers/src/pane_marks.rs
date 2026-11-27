@@ -14,4 +14,7 @@ pub trait PaneMarks {
     fn marks(&mut self) -> &mut Drawings<DrawingTool>;
     /// The bar rule the pane's marks are cut to.
     fn marks_bars(&self) -> BarConfiguration;
+    /// Re-name the mark at `index`'s market times on this pane's series
+    /// (`quantick_drawings::gesture::SharedMarksMut::restamp`).
+    fn restamp_mark(&mut self, index: usize);
 }

@@ -29,10 +29,11 @@ fn source_drain_reset_retains_empty_anchor_debt_then_settles_populated_series() 
     let pane = &mut app.active_tab_mut().flow_pane;
     pane.drawings.place(tool, ChartPoint::at(1.5, 100.0));
     pane.drawings.place(tool, ChartPoint::at(2.5, 110.0));
-    pane.drawings.set_times(
-        0,
-        &[Some(trade(175).timestamp_ms), Some(trade(225).timestamp_ms)],
-    );
+    let mut times = [trade(175), trade(225)]
+        .map(|trade| trade.timestamp_ms)
+        .into_iter();
+    pane.drawings
+        .restamp(0, |point| point.time_ms = times.next());
     let before = anchor(&app);
     assert_eq!(before, (1.5, Some(trade(175).timestamp_ms), false));
     events.try_send(FeedEvent::Reset).unwrap();
@@ -186,10 +187,11 @@ fn source_drain_same_interpreter_early_reanchor_leaves_real_coordinates_stale() 
         let pane = &mut app.active_tab_mut().flow_pane;
         pane.drawings.place(tool, ChartPoint::at(1.5, 100.0));
         pane.drawings.place(tool, ChartPoint::at(2.5, 110.0));
-        pane.drawings.set_times(
-            0,
-            &[Some(trade(175).timestamp_ms), Some(trade(225).timestamp_ms)],
-        );
+        let mut times = [trade(175), trade(225)]
+            .map(|trade| trade.timestamp_ms)
+            .into_iter();
+        pane.drawings
+            .restamp(0, |point| point.time_ms = times.next());
         events.try_send(FeedEvent::Reset).unwrap();
         app.active_tab_mut().drain_feed(tab_id);
         app.active_tab_mut().drain_feed(tab_id);

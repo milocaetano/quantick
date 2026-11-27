@@ -226,6 +226,7 @@ fn a_re_derived_bar_offset_or_id_is_no_drawing_change() {
         let mut mark = level(Some(4), 70.0);
         mark.points[0] = SavedPoint {
             time_ms: None,
+            time_projected: false,
             price: 70.0,
             bar,
         };

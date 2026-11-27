@@ -1,9 +1,10 @@
 //! The Pine scripts a tab arms on its panes — ringing, or placing paper
 //! orders — in plain words and numbers.
 //!
-//! The kernel types live in `quantick-strategy`, `script` module included,
-//! which the control crates may not reach (`guards/src/graph.rs`); a call arms, lists and disarms through here, as
-//! [`crate::strategy_reading`] reads the drawn instances. Each instance rides
+//! The kernel types live in `quantick-strategy`, including its `script`
+//! module; this module owns the instances a tab arms, so a call
+//! arms, lists and disarms through here, as [`crate::strategy_reading`] reads
+//! the drawn instances. Each instance rides
 //! one pane — the bars it judges are that pane's closes — and is evaluated
 //! with the pane's other strategies ([`TabStrategies::evaluate`]).
 
