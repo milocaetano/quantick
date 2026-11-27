@@ -3025,7 +3025,6 @@ dependencies = [
  "quantick-paper",
  "quantick-pine",
  "quantick-replay",
- "quantick-script-trigger",
  "quantick-sim",
  "quantick-strategy",
  "quantick-trading",
@@ -3363,18 +3362,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "quantick-script-trigger"
-version = "0.1.0"
-dependencies = [
- "quantick-engine",
- "quantick-indicators",
- "quantick-pine",
- "quantick-sim",
- "quantick-strategy",
- "rust_decimal",
-]
-
-[[package]]
 name = "quantick-session"
 version = "0.1.0"
 dependencies = [
@@ -3383,7 +3370,6 @@ dependencies = [
  "quantick-civil",
  "quantick-engine",
  "quantick-paper",
- "quantick-script-trigger",
  "quantick-sim",
  "quantick-sources",
  "quantick-strategy",
@@ -3421,7 +3407,6 @@ dependencies = [
  "quantick-alerts",
  "quantick-appearance",
  "quantick-chart",
- "quantick-drawings",
  "quantick-engine",
  "quantick-indicators",
  "quantick-orderbook",
@@ -3442,6 +3427,8 @@ version = "0.1.0"
 dependencies = [
  "quantick-alerts",
  "quantick-engine",
+ "quantick-indicators",
+ "quantick-pine",
  "quantick-sim",
  "quantick-workspace",
  "rust_decimal",

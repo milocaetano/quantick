@@ -2160,41 +2160,81 @@ fn the_status_bar_follows_the_focused_pane() {
     assert_eq!(flow_status.venue, time_status.venue);
 }
 
-/// The inspector's All windows switch keeps layout ownership; a pane picks
-/// up the shared mark only after its layout switch has settled.
+/// The inspector's All windows switch puts a mark on the flow pane showing
+/// another layout at once, lent by its own pane and never copied into the
+/// other layout's set; with no pane on its layout left, the store lends it
+/// to every pane; switched off, it leaves at once.
 #[test]
-fn all_windows_keeps_a_mark_within_its_named_layout() {
+fn all_windows_shows_a_mark_on_a_pane_of_another_layout() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     let time = PaneSide::Time(0);
     let point = pane_point(&app, time);
     click_chart(&mut app, &ctx, point);
+    let first = app
+        .active_tab()
+        .pane(time)
+        .layout
+        .layout_id()
+        .expect("a layout");
     let levels = app
         .layout_adapter()
         .create_layout(Some("levels"))
         .expect("second");
+    run_frame(&mut app, &ctx);
     place_level(&mut app, time, 100.0);
     set_scope_on(&mut app, time, DrawingScope::AllCharts);
     run_frame(&mut app, &ctx);
-    let shown = |app: &QuantickApp| app.active_tab().pane(PaneSide::Flow).drawings.shown_count();
-    assert_eq!(shown(&app), 0, "the flow pane shows another layout");
-
-    app.active_tab_mut().pane_mut(time).drawings.select(Some(0));
-    let ask = crate::surfaces::drawing_chrome::DrawingChromeAsk {
-        toggle_selected: quantick_ui_model::drawing_chrome::SelectionToggles {
-            all_windows: true,
-            ..Default::default()
-        },
-        ..Default::default()
+    let painted_on = |app: &QuantickApp, side: PaneSide| {
+        let tab = app.active_tab();
+        let viewer = tab.pane(side).drawings.layout();
+        let lent = tab.mirror_owners(side.index()).map(|owner| {
+            let owner = tab.pane_at(owner).expect("owner");
+            owner.drawings.lent_to(viewer).count()
+        });
+        let stored = tab.lent_marks.source().drawings.lent_to(viewer).count();
+        tab.pane(side).drawings.shown_count() + lent.sum::<usize>() + stored
     };
-    app.resolve_drawing_response(ask, std::time::Instant::now());
+    let painted = |app: &QuantickApp| painted_on(app, PaneSide::Flow);
+    let own = |app: &QuantickApp| app.active_tab().pane(time).drawings.shown_count();
+    assert_eq!(own(&app), 1, "its own pane shows it");
+    assert_eq!(painted(&app), 0, "the flow pane shows another layout");
+
+    let toggle = |app: &mut QuantickApp| {
+        app.active_tab_mut().pane_mut(time).drawings.select(Some(0));
+        let ask = crate::surfaces::drawing_chrome::DrawingChromeAsk {
+            toggle_selected: quantick_ui_model::drawing_chrome::SelectionToggles {
+                all_windows: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        app.resolve_drawing_response(ask, std::time::Instant::now());
+    };
+    toggle(&mut app);
     run_frame(&mut app, &ctx);
-    assert_eq!(shown(&app), 0, "All windows retains the layout boundary");
+    assert_eq!(painted(&app), 1, "All windows reaches the other layout");
+    let flow = &app.active_tab().pane(PaneSide::Flow).drawings;
+    assert_eq!(flow.shown_count(), 0, "lent, never copied");
+
     let tab = app.runtime.tabs.active_id();
-    app.layout_adapter()
-        .switch_pane_layout(tab, PaneSide::Flow, levels)
-        .unwrap();
-    assert_eq!(shown(&app), 1, "the pane now shows the owning layout");
+    let switch = |app: &mut QuantickApp, to| {
+        let switched = app.layout_adapter().switch_pane_layout(tab, time, to);
+        switched.expect("switched");
+    };
+    switch(&mut app, first);
+    run_frame(&mut app, &ctx);
+    for side in [PaneSide::Flow, time] {
+        assert_eq!(painted_on(&app, side), 1, "no pane holds levels: {side:?}");
+        let own = app.active_tab().pane(side).drawings.shown_count();
+        assert_eq!(own, 0, "lent, never copied: {side:?}");
+    }
+    switch(&mut app, levels);
+    run_frame(&mut app, &ctx);
+
+    toggle(&mut app);
+    run_frame(&mut app, &ctx);
+    assert_eq!(painted(&app), 0, "switched off, it leaves at once");
 }
 
 /// Deleting a layout settles the pane onto its neighbour without carrying

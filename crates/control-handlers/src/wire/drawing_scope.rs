@@ -53,8 +53,9 @@ pub struct DrawingScopeInput {
     pub drawing_id: WireU64,
     /// Where it should show.
     pub scope: ScopeName,
-    /// Whether every chart window in the same market, workspace and named
-    /// layout shows it; only with `all_charts`. Absent leaves it unchanged.
+    /// Whether every chart of the same market and workspace shows it,
+    /// whatever layout it shows; only with `all_charts`. Absent leaves it
+    /// unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub all_windows: Option<bool>,
 }
@@ -169,7 +170,7 @@ pub fn descriptor() -> CapabilityDescriptor {
         DRAWING_SCOPE_CAPABILITY_ID,
         ANNOTATE_MODULE_ID,
         "Set where one drawing shows",
-        "Sets one drawing's scope, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists (a drawing id is unique only within its pane, and a pane lists only what its layout shows): `all_charts` shows it at any timeframe on every chart of its market (feed and asset), workspace and named layout, placed by market time and price; `this_chart`, a new drawing's default, keeps it to its chart, pinned to the bars that chart is cut to now. Optional `all_windows` also shows an `all_charts` drawing in every chart window of the same market, workspace and named layout, never across those boundaries; absent leaves it as it stands. The inspector's \"Show on all timeframes\" and \"All windows\"; saved with the market's drawings and read back as `scope`, `all_windows` and `layout_id`. Refused with control.invalid_request: `all_charts` on a drawing with an anchor past the newest bar (`reason` `anchor_without_market_time`), `all_windows: true` beside `this_chart` (`reason` `all_windows_needs_all_charts`), and an id the named pane does not show.",
+        "Sets one drawing's scope, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists (a drawing id is unique only within its pane, and a pane lists only what its layout shows): `all_charts` shows it at any timeframe on every chart of its market (feed and asset), workspace and named layout, placed by market time and price; `this_chart`, a new drawing's default, keeps it to its chart, pinned to the bars that chart is cut to now. Optional `all_windows` also shows an `all_charts` drawing on every chart of the same market and workspace, whatever layout it shows; absent leaves it as it stands. The inspector's \"Show on all timeframes\" and \"All windows\"; saved with the market's drawings and read back as `scope`, `all_windows` and `layout_id`. Refused with control.invalid_request: `all_charts` on a drawing with an anchor that names no market time, past the newest bar of a chart with too few bars to project one (`reason` `anchor_without_market_time`; an anchor past the newest bar of a tick, volume or renko chart takes a projected time, read back as `time_projected`), `all_windows: true` beside `this_chart` (`reason` `all_windows_needs_all_charts`), and an id the named pane does not show.",
         "The call names the scope it wants rather than flipping it; repeating it is harmless and the result reads the scope back.",
     );
     descriptor.persistence = EffectPersistence::Durable;

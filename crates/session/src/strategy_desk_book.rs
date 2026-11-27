@@ -5,9 +5,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use quantick_script_trigger::Script;
 use quantick_strategy::ArmedState;
 use quantick_strategy::anchors::AnchoredInstance;
+use quantick_strategy::script::Script;
 
 /// The span of one "today", in milliseconds: a UTC day.
 pub const DAY_MS: u64 = 86_400_000;

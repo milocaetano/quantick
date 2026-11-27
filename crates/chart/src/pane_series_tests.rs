@@ -326,3 +326,138 @@ fn footprint_bars_carry_the_poc_only_while_ladders_are_folded() {
     );
     assert_eq!(read(&prefix, &state, &spec).footprint_bar(0).poc, None);
 }
+
+/// Past the newest bar of a chart that does not cut by time, the hand's
+/// anchor takes a time projected at the mean bar duration and says so; the
+/// inverse puts that time back on the same slot. Inside the tape, on a time
+/// chart, and with too few bars to measure, the time is exact or absent.
+#[test]
+fn an_anchor_past_a_tick_charts_newest_bar_takes_a_projected_time() {
+    let stamped = |series: &PaneSeriesRead<'_>, bar: f32| {
+        let mut point = ChartPoint::at_time(bar, 100.0, None);
+        series.stamp(&mut point);
+        (point.time_ms, point.time_projected)
+    };
+    // Ten prints a second apart, four to a bar: bars open at 0 s, 4 s, 8 s.
+    let state = tape(10, 4);
+    let spec = SpecSelector::new(BarSpec::Tick(4));
+    let series = read(&[], &state, &spec);
+    assert_eq!(series.projected_bar_ms(), Some(4_000));
+    let projected = TAPE_START_MS + 16_000;
+    for (bar, stamp, what) in [
+        (1.5, (Some(TAPE_START_MS + 4_000), false), "on a bar: exact"),
+        (4.5, (Some(projected), true), "two bars past the newest"),
+    ] {
+        assert_eq!(stamped(&series, bar), stamp, "{what}");
+    }
+    assert_eq!(series.anchor_time(4.5), None, "the exact lookup names none");
+    assert_eq!(series.projected_slot_at_time(projected), Some(4.0));
+    assert_eq!(
+        series.future_slot_at_time(projected),
+        None,
+        "no exact clock"
+    );
+    assert_eq!(
+        series.slot_of_anchor(projected, true),
+        Some(4.5),
+        "the inverse"
+    );
+
+    let short = tape(3, 4);
+    let series = read(&[], &short, &spec);
+    assert_eq!(
+        stamped(&series, 2.5),
+        (None, false),
+        "one bar measures none"
+    );
+
+    let mut timed = ChartState::new(BarSpec::Time(1_000));
+    timed.ingest_backfill(&(0..10).map(print_at).collect::<Vec<_>>());
+    let spec = SpecSelector::new(BarSpec::Time(1_000));
+    let series = read(&[], &timed, &spec);
+    let exact = (Some(TAPE_START_MS + 12_000), false);
+    assert_eq!(
+        stamped(&series, 12.5),
+        exact,
+        "a time chart keeps its clock"
+    );
+}
+
+/// The projection averages the newest [`PROJECTION_WINDOW_BARS`] only: a
+/// slow start of the session does not stretch today's pace.
+#[test]
+fn the_projection_follows_the_newest_bars_pace() {
+    let slow = (0..10).map(|index| TAPE_START_MS + index * 10_000);
+    let fast = (1..=30).map(|index| TAPE_START_MS + 90_000 + index * 1_000);
+    let trades: Vec<Trade> = slow
+        .chain(fast)
+        .zip(0..)
+        .map(|(timestamp_ms, index)| Trade {
+            timestamp_ms,
+            ..print_at(index)
+        })
+        .collect();
+    let mut state = ChartState::new(BarSpec::Tick(1));
+    state.ingest_backfill(&trades);
+    let spec = SpecSelector::new(BarSpec::Tick(1));
+    assert!(read(&[], &state, &spec).slots() > PROJECTION_WINDOW_BARS + 10);
+    assert_eq!(read(&[], &state, &spec).projected_bar_ms(), Some(1_000));
+}
+
+/// A forming bar that has run longer than the pace: an exact time inside it
+/// is that bar, a projected time runs on at the pace from its latest print
+/// (never timed before it), and a re-cut looks a projected time up only
+/// once the newest bar has opened past it.
+#[test]
+fn only_a_projected_time_runs_on_past_a_long_forming_bar() {
+    let at = [0, 1, 2, 3, 4, 5, 6, 7, 8, 30].map(|second| TAPE_START_MS + second * 1_000);
+    let trades: Vec<Trade> = at
+        .into_iter()
+        .zip(0..)
+        .map(|(timestamp_ms, index)| Trade {
+            timestamp_ms,
+            ..print_at(index)
+        })
+        .collect();
+    let mut state = ChartState::new(BarSpec::Tick(4));
+    state.ingest_backfill(&trades);
+    let spec = SpecSelector::new(BarSpec::Tick(4));
+    let series = read(&[], &state, &spec);
+    assert_eq!(series.projected_bar_ms(), Some(4_000));
+    for (time, projected, slot, what) in [
+        (
+            TAPE_START_MS + 30_000,
+            false,
+            2.5,
+            "an exact time stays on the forming bar",
+        ),
+        (
+            TAPE_START_MS + 34_000,
+            true,
+            4.5,
+            "a projected time runs on at the pace",
+        ),
+        (
+            TAPE_START_MS + 4_000,
+            true,
+            1.5,
+            "one inside the tape is looked up",
+        ),
+    ] {
+        assert_eq!(series.slot_of_anchor(time, projected), Some(slot), "{what}");
+    }
+    for (bar, time, what) in [
+        (
+            3.5,
+            30_000,
+            "the first slot past is the latest print, not before it",
+        ),
+        (4.5, 34_000, "the next a step on"),
+    ] {
+        let mut point = ChartPoint::at_time(bar, 100.0, None);
+        series.stamp(&mut point);
+        let stamped = (point.time_ms, point.time_projected);
+        assert_eq!(stamped, (Some(TAPE_START_MS + time), true), "{what}");
+    }
+    assert_eq!(series.projected_dated_until(), TAPE_START_MS + 8_000);
+}

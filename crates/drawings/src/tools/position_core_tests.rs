@@ -911,3 +911,21 @@ fn every_side_resizes_and_the_cursor_names_the_axis() {
     let right = drag_line(&points, RIGHT_SIDE_HANDLE, pos2(400.0, 0.0), 10.0).unwrap();
     assert_eq!(right.as_slice(), &[points[0], pos2(400.0, points[1].y)]);
 }
+
+/// A width set in bars times the moved edge at the anchors' mean pace: an
+/// estimate, flagged so; a width that moves nothing keeps the edge as it was.
+#[test]
+fn a_width_set_in_bars_flags_the_moved_edge_projected() {
+    for (bars, projected, what) in [
+        (40.0, true, "moved: an estimate"),
+        (20.0, false, "the same width moves nothing"),
+    ] {
+        let mut anchors = [
+            ChartPoint::at_time(10.0, 100.0, Some(600_000)),
+            ChartPoint::at_time(30.0, 90.0, Some(1_800_000)),
+        ];
+        crate::set_position_width(&mut anchors, bars).unwrap();
+        assert_eq!(anchors[1].time_projected, projected, "{what}");
+        assert!(!anchors[0].time_projected, "the left edge stays: {what}");
+    }
+}

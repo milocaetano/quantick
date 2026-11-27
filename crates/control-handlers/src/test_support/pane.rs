@@ -143,6 +143,7 @@ impl PaneMarks for FakePane {
     fn marks_bars(&self) -> BarConfiguration {
         self.bars
     }
+    fn restamp_mark(&mut self, _index: usize) {}
 }
 
 impl NativeTape for FakeTape {

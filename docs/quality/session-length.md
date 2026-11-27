@@ -274,15 +274,13 @@ run. Three earlier sets agreed on no regression — `dcea6d77`, 1.669 against
 > this page's long variant, the tape-growth stall probe, Q3's envelope
 > harness and the dense-replay frame timing — were re-run on release builds
 > of `0c0860db` on a clean tree, and each passed its condition on an idle
-> host. [gate6-0c0860db/](gate6-0c0860db/README.md) has the table, the host
-> and the raw outputs; it supersedes the `3013f342` files cited below as the
+> host. That gate-6 record (the table, the host and the raw outputs) lives
+> in git history; it supersedes the `3013f342` files cited below as the
 > evidence at the assessed revision. Absolute frame times stay inside the
 > same-host A/B's noise band (no condition compares them across revisions);
-> the README states both. The earlier runs stay as history:
-> [gate6-1baef443/](gate6-1baef443/README.md) (synced tip),
-> [gate6-ebe462f6/](gate6-ebe462f6/README.md) (phase-2 tip),
-> [gate6-950a6440/](gate6-950a6440/README.md) (after #445) and
-> [gate6-124cdf0d/](gate6-124cdf0d/README.md) (after #437). The table below is
+> the record states both. The earlier runs at `1baef443` (synced tip),
+> `ebe462f6` (phase-2 tip), `950a6440` (after #445) and `124cdf0d` (after
+> #437) live in git history too. The table below is
 > the record of what answered the interim assessment's findings.
 
 Gate 6: *scalability claims for supported live workloads have current

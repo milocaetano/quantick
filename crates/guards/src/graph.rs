@@ -66,7 +66,6 @@ pub const RANK: &[(&str, u8)] = &[
     ("backtest", 5),
     ("session", 5),
     ("drawings", 4),
-    ("script-trigger", 4),
     ("stores", 4),
     ("chart", 3),
     ("feed", 3),
@@ -108,8 +107,7 @@ pub const RANK: &[(&str, u8)] = &[
 /// Shrink-only: an entry whose edge is gone, or whose edge the ranks already
 /// allow, is a finding, and the seed test refuses a new one. Removing an edge
 /// here is how the graph gets flatter; adding one is how it would get a cycle.
-pub const RANK_EXCEPTIONS: &[(&str, &str)] =
-    &[("indicator-session", "pine"), ("stores", "drawings")];
+pub const RANK_EXCEPTIONS: &[(&str, &str)] = &[("indicator-session", "pine")];
 
 /// The crate whose shipped sibling dependencies are capped.
 const TOP_OF_THE_GRAPH: &str = "app";
@@ -1283,7 +1281,7 @@ mod tests {
     /// this test, which a review sees.
     #[test]
     fn the_exceptions_and_the_ceiling_only_shrink() {
-        const SEEDED: &[(&str, &str)] = &[("indicator-session", "pine"), ("stores", "drawings")];
+        const SEEDED: &[(&str, &str)] = &[("indicator-session", "pine")];
         assert!(
             RANK_EXCEPTIONS.iter().all(|entry| SEEDED.contains(entry)),
             "RANK_EXCEPTIONS only loses entries: {RANK_EXCEPTIONS:?}"

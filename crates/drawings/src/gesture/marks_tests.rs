@@ -102,3 +102,42 @@ fn older_bars_shift_the_drag_and_resettle_an_off_series_mark() {
     assert_eq!(drawings.items()[0].points[0].bar, 5.5);
     assert_eq!(dragged_bar(&gestures), before + 10.0);
 }
+
+/// A projected anchor past the newest bar of a tick chart, re-cut: it keeps
+/// its two bars past the end, the drag's copy too, whatever the new cut's
+/// pace would make of its instant — never parked on the newest bar. Once
+/// the tape has reached its time, or on a time chart's clock, it is put on
+/// its instant.
+#[test]
+fn a_recut_keeps_a_projected_anchor_past_the_end_of_a_tick_chart() {
+    let projected = |time_ms| ChartPoint {
+        time_projected: true,
+        ..ChartPoint::at_time(21.5, 50.0, Some(time_ms))
+    };
+    for (spec, time_ms, what) in [
+        (BarSpec::Tick(2), 19_500, "inside the newest bar's step"),
+        (BarSpec::Tick(2), 21_000, "a step past it at the new pace"),
+        (BarSpec::Tick(2), 13_000, "a time the tape has reached"),
+        (BarSpec::Time(2_000), 21_000, "a time chart's clock"),
+    ] {
+        let state = tape(spec, 0, 20);
+        let spec = SpecSelector::new(spec);
+        let (mut drawings, mut gestures) = grabbed_line(projected(time_ms));
+        let series = PaneSeriesRead {
+            history_prefix: &[],
+            state: &state,
+            spec: &spec,
+        };
+        let bar = if time_ms <= series.projected_dated_until() {
+            series.slot_of_time(time_ms).expect("the series reaches it")
+        } else {
+            11.5
+        };
+
+        marks(&mut drawings, &mut gestures, &state, &spec).reanchor(20);
+
+        assert_eq!(drawings.items()[0].points[0].bar, bar, "{what}");
+        assert_eq!(dragged_bar(&gestures), bar, "{what}");
+        assert_eq!(drawings.items()[0].points[0].time_ms, Some(time_ms));
+    }
+}

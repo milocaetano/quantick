@@ -711,7 +711,7 @@ unexpected overrun is telemetry and a performance-test failure, not permission
 to return a mixed-revision response.
 
 PR 2 calibrated the default against the shared-host method and core-scope
-capture benchmark in [PR 2 observer performance evidence](history/pr2-performance.md).
+capture benchmark; its evidence record lives in git history.
 
 ## 11. Replay determinism decision
 

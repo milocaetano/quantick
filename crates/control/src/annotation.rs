@@ -207,6 +207,17 @@ pub enum ChartResolvedAnchor {
     Future {
         bar_position: CanonicalDecimal,
         price: CanonicalDecimal,
+        /// The market time the chart names there, as the trader's hand gets
+        /// it: a time chart's clock, or past the newest bar of a tick, volume
+        /// or renko chart one projected from the recent bars' pace
+        /// (`time_projected`). Absent where none can be named: too few bars.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("x-unit" = "unix_milliseconds"))]
+        time_unix_ms: Option<i64>,
+        /// `time_unix_ms` is projected, an estimate, not read off a bar or a
+        /// clock. Written only when true.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        time_projected: bool,
     },
 }
 

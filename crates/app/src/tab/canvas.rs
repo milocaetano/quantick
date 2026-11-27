@@ -14,6 +14,7 @@ use quantick_engine::bar_selection::BarInputAvailability;
 use quantick_workspace::canvas::{
     Hand, PANE_MENU_BUTTON_PX, RailHolds, RailLook, rail_marks, seat_slot,
 };
+use quantick_workspace::market_settings_store::MarketSettingsStore;
 use smallvec::SmallVec;
 
 use super::{FOCUS_FRAME_PX, SharedPicks, Tab};
@@ -908,10 +909,7 @@ impl Tab {
         };
 
         for viewer in 0..count {
-            if self.canvas.pane_collapsed(PaneSide::from_index(viewer)) {
-                continue;
-            }
-            let Some(pane) = self.pane_at(viewer) else {
+            let Some(pane) = self.shared_viewer(viewer) else {
                 continue;
             };
             // Only the pane the pointer is actually over is asked. Besides
@@ -933,17 +931,8 @@ impl Tab {
                 let Some(source) = self.pane_at(owner) else {
                     continue;
                 };
-                if let Some((index, anchor)) =
-                    pane.hit_test().shared_pick(&source.drawings, position)
-                {
-                    picks.by_pane[viewer] = Some(SharedPick {
-                        owner,
-                        index,
-                        anchor,
-                        locked: source.drawings.items()[index].locked,
-                        magnet: source.drawings.items()[index].own_magnet(),
-                        snap: source.drawings.items()[index].tool.anchor_snap(),
-                    });
+                if let Some(hit) = pane.hit_test().shared_pick(&source.drawings, position) {
+                    picks.by_pane[viewer] = Some(SharedPick::of(owner, &source.drawings, hit));
                     break;
                 }
             }
@@ -951,21 +940,28 @@ impl Tab {
         picks
     }
 
-    /// The panes whose shared marks `viewer` shows. Every pane of a market holds
-    /// its all-timeframes marks itself: a pane holding the viewer's market adds
-    /// nothing, and of two holding another only the first does, or a shared mark
-    /// would paint twice and its fill read darker than it is.
+    /// The pane at `viewer` while it shows other panes' marks: on screen,
+    /// its own marks not hidden. Paint and pick both ask it, so a mark is
+    /// never taken where it is not drawn.
+    pub(crate) fn shared_viewer(&self, viewer: PaneIndex) -> Option<&crate::pane::ChartPane> {
+        let shown = !self.canvas.pane_collapsed(PaneSide::from_index(viewer));
+        let pane = self.pane_at(viewer).filter(|_| shown)?;
+        (!pane.drawings.all_hidden()).then_some(pane)
+    }
+
+    /// The panes whose shared marks `viewer` shows: `quantick_drawings::mirror_owners`.
     pub(crate) fn mirror_owners(&self, viewer: PaneIndex) -> impl Iterator<Item = PaneIndex> + '_ {
-        let key = move |pane: PaneIndex| {
-            let key = self.pane_at(pane)?.layout.drawings_key.as_ref();
-            key.map(|key| &key.market)
-        };
-        (0..self.pane_count()).filter(move |&owner| {
-            let same_set = |other: PaneIndex| key(owner).is_some() && key(other) == key(owner);
-            owner != viewer
-                && !same_set(viewer)
-                && !(0..owner).any(|earlier| earlier != viewer && same_set(earlier))
-        })
+        let key = move |pane| self.pane_at(pane)?.layout.drawings_key.as_ref();
+        quantick_drawings::mirror_owners(self.pane_count(), viewer, key)
+    }
+
+    /// Bring the marks lent by layouts no pane of this tab holds up to
+    /// `store` (`quantick_drawings::LentMarks`).
+    pub(crate) fn follow_lent_marks(&mut self, store: &MarketSettingsStore) {
+        let panes = std::iter::once(&self.flow_pane).chain(&self.time_panes);
+        let keys = panes.filter_map(|pane| pane.layout.drawings_key.as_ref());
+        self.lent_marks
+            .follow(store, keys, &self.flow_pane.drawings);
     }
 
     /// Land what each pane did to the other's marks on the store that holds
@@ -1016,23 +1012,14 @@ impl Tab {
         }
     }
 
-    /// Cross-pane drawings: each pane paints the shared marks of the other.
-    ///
-    /// Nothing happens on an unsplit tab — one pane has no other pane to
-    /// borrow marks from, and the drawing is already on the only chart there
-    /// is. Scope stops here, at the tab: the panes below hold one symbol on
-    /// one feed, which is what makes a price level mean the same thing on
-    /// both (`docs/ux/drawing-tools-2026-08.md` §D7).
+    /// Cross-pane drawings: each pane paints the shared marks of the other,
+    /// and those lent by layouts no pane of the tab holds. Scope stops here,
+    /// at the tab: the panes below hold one symbol on one feed, which is what
+    /// makes a price level mean the same thing on both
+    /// (`docs/ux/drawing-tools-2026-08.md` §D7).
     fn paint_shared_drawings(&self, painter: &egui::Painter) {
-        let count = self.pane_count();
-        if count < 2 {
-            return;
-        }
-        for viewer in 0..count {
-            if self.canvas.pane_collapsed(PaneSide::from_index(viewer)) {
-                continue;
-            }
-            let Some(pane) = self.pane_at(viewer) else {
+        for viewer in 0..self.pane_count() {
+            let Some(pane) = self.shared_viewer(viewer) else {
                 continue;
             };
             for owner in self.mirror_owners(viewer) {
@@ -1040,6 +1027,10 @@ impl Tab {
                     pane.hit_test()
                         .paint_shared_from(painter, source.shared_source());
                 }
+            }
+            if pane.layout.drawing_scope_ready() {
+                pane.hit_test()
+                    .paint_shared_from(painter, self.lent_marks.source());
             }
         }
     }

@@ -26,6 +26,7 @@ impl<T: ToolCatalog> Drawings<T> {
             // Keeping the source's market instants would snap the offset copy
             // back onto the original after a re-cut, seek, or reconnect.
             point.time_ms = None;
+            point.time_projected = false;
         }
         copy.locked = false;
         // Where it shows is the source's. Without instants a copy of a mark on
