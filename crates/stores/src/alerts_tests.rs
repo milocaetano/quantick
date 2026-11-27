@@ -137,7 +137,6 @@ fn replay_source_ignores_a_live_disconnect() {
             };
         }
         runtime.command(AlertCommand::Create(rule), 1).unwrap();
-        let drawings = quantick_drawings::Drawings::default();
         let mut cache = Cache::default();
         cache.begin();
         cache.source(Source {
@@ -151,8 +150,8 @@ fn replay_source_ignores_a_live_disconnect() {
         let facts = PaneFacts {
             id: 1,
             series: &series,
-            drawings: &drawings,
-            drawing_key: None,
+            drawing_revision: 0,
+            drawings: std::iter::empty(),
             prefix_slots: 0,
             hydrating: false,
         };

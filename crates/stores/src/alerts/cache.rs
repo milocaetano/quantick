@@ -19,13 +19,14 @@ pub struct Source<'a> {
     pub replay: Option<(&'a std::path::Path, bool)>,
 }
 
-/// Read-only facts at the exact close/trade boundary. Geometry remains borrowed
-/// from the drawing owner until the native adapter projects `DrawingFact`s.
-pub struct PaneFacts<'a> {
+/// Read-only facts at the exact close/trade boundary. `drawings` is the pane's
+/// alert facts as the drawing owner projects them
+/// (`Drawings::alert_facts`), still borrowed, never collected.
+pub struct PaneFacts<'a, D> {
     pub id: u64,
     pub series: &'a quantick_chart::state::ChartState,
-    pub drawings: &'a quantick_drawings::Drawings<quantick_drawings::DrawingTool>,
-    pub drawing_key: Option<&'a quantick_workspace::market_settings::DrawingKey>,
+    pub drawing_revision: u64,
+    pub drawings: D,
     pub prefix_slots: usize,
     pub hydrating: bool,
 }
@@ -74,10 +75,10 @@ impl Cache {
     }
     /// `lifecycle_utc_ms` is read only for a lifecycle refresh; a print carries
     /// its own arrival time, so the trade path never asks for a clock.
-    pub fn pane(
+    pub fn pane<'d>(
         &mut self,
         core: &mut AlertRuntime,
-        facts: PaneFacts<'_>,
+        facts: PaneFacts<'d, impl Iterator<Item = observer::Drawing<'d>>>,
         observation: Option<Observation<'_>>,
         lifecycle_utc_ms: impl FnOnce() -> i64,
         session_ms: u64,
@@ -121,7 +122,7 @@ impl Cache {
             observer::Pane {
                 id: facts.id,
                 spec: facts.series.spec(),
-                drawing_revision: facts.drawings.revision(),
+                drawing_revision: facts.drawing_revision,
                 hydrating: facts.hydrating,
             },
             observer::Observation {
@@ -135,11 +136,7 @@ impl Cache {
                 session_ms,
             },
             || facts.series.spec().to_config_string(),
-            facts
-                .drawings
-                .items()
-                .iter()
-                .filter_map(|drawing| quantick_drawings::alerts::fact(drawing, facts.drawing_key)),
+            facts.drawings,
         );
     }
 }

@@ -2,9 +2,9 @@
 //! orders — in plain words and numbers.
 //!
 //! The kernel types live in `quantick-script-trigger` and
-//! `quantick-strategy`, which the control crates may not reach
-//! (`guards/src/graph.rs`); a call arms, lists and disarms through here, as
-//! [`crate::strategy_reading`] reads the drawn instances. Each instance rides
+//! `quantick-strategy`; this module owns the instances a tab arms, so a call
+//! arms, lists and disarms through here, as [`crate::strategy_reading`] reads
+//! the drawn instances. Each instance rides
 //! one pane — the bars it judges are that pane's closes — and is evaluated
 //! with the pane's other strategies ([`TabStrategies::evaluate`]).
 

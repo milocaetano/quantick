@@ -3439,7 +3439,6 @@ dependencies = [
  "quantick-alerts",
  "quantick-appearance",
  "quantick-chart",
- "quantick-drawings",
  "quantick-engine",
  "quantick-indicators",
  "quantick-orderbook",
