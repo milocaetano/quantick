@@ -33,10 +33,13 @@ fn frames(stdout: &[u8]) -> Vec<Value> {
 
 #[test]
 fn startup_errors_and_shutdown_emit_only_mcp_frames_on_stdout() {
-    let directory = scratch_directory("smoke");
+    // A child of the scratch folder, because the shared scratch folder is
+    // created and the state under test is a missing instances directory.
+    let scratch = scratch_directory("smoke");
+    let directory = scratch.join("instances");
     let mut child = Command::new(env!("CARGO_BIN_EXE_quantick-mcp"))
         .arg("--instances-dir")
-        .arg(directory.path())
+        .arg(&directory)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
