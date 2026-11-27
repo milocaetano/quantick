@@ -264,11 +264,20 @@ impl<T: ToolCatalog> Drawings<T> {
     /// its shared twin standing where it used to be. Only the pane knows how
     /// to name the instant under a slot, so it hands the answers back here.
     pub fn set_times(&mut self, index: usize, times: &[Option<i64>]) {
-        let Some(drawing) = self.items.get_mut(index) else {
-            return;
-        };
-        for (point, time) in drawing.points.iter_mut().zip(times) {
-            point.time_ms = *time;
+        let mut times = times.iter();
+        self.restamp(index, |point| {
+            if let Some(time) = times.next() {
+                point.time_ms = *time;
+                point.time_projected = false;
+            }
+        });
+    }
+
+    /// [`Self::set_times`] with the pane naming each anchor's instant itself,
+    /// a projected one included (`PaneSeriesRead::stamp`).
+    pub fn restamp(&mut self, index: usize, stamp: impl FnMut(&mut ChartPoint)) {
+        if let Some(drawing) = self.items.get_mut(index) {
+            drawing.points.iter_mut().for_each(stamp);
         }
     }
 

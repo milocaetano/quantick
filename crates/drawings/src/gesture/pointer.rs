@@ -634,7 +634,7 @@ fn translate_body(
         for point in &mut from.free {
             point.bar += delta_bar;
             point.price += delta_value;
-            point.time_ms = projection.series.anchor_time(point.bar);
+            projection.series.stamp(point);
         }
         let mut moved = from.free.clone();
         match tool.anchor_snap() {

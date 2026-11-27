@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn an_object_s_notes_name_its_author_then_its_lock_then_its_eye() {
+fn an_object_s_notes_name_its_author_then_its_lock_then_its_eye_then_its_projected_time() {
     use quantick_drawings::{ChartPoint, DRAWING_TOOLS, DrawingAuthor, DrawingBand, Drawings};
     let mut store = Drawings::default();
     let note = DRAWING_TOOLS
@@ -23,14 +23,17 @@ fn an_object_s_notes_name_its_author_then_its_lock_then_its_eye() {
         client_name: "assistant".to_owned(),
     });
     (drawing.locked, drawing.hidden) = (true, true);
+    drawing.points[0].time_projected = true;
     assert_eq!(
         object_notes(&drawing),
         [
             "Placed by assistant (agent) - not by you.",
             LOCKED_NOTE,
-            HIDDEN_NOTE
+            HIDDEN_NOTE,
+            PROJECTED_NOTE
         ]
     );
+    assert!(PROJECTED_NOTE.contains("projected"));
 }
 /// Automatic placement is not a preference, so it is not written down.
 /// Only a hand — or the hook standing in for one — makes a position the

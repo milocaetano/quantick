@@ -169,10 +169,10 @@ fn sharing_sits_beside_hide_and_names_both_states() {
     let cells = slots(PLAIN);
     let hide = cells.iter().position(|slot| *slot == Slot::Hide).unwrap();
     assert_eq!(cells[hide + 1], Slot::Sharing);
-    assert_eq!(sharing_control(false).1, "Show on all timeframes");
-    assert_eq!(sharing_control(true).1, "Show only on this chart");
-    assert_eq!(sharing_control(false).0, icons::GRID_FOUR);
-    assert_eq!(sharing_control(true).0, icons::GRID_FOUR);
+    assert_eq!(
+        SHARING_HOVER,
+        ["Show on all timeframes", "Show only on this chart"]
+    );
 }
 
 #[test]
@@ -193,12 +193,12 @@ fn the_magnet_sits_beside_lock_and_only_where_it_snaps() {
 }
 
 #[test]
-fn an_unshareable_drawing_has_no_dead_sharing_control() {
+fn an_unshareable_drawing_keeps_its_sharing_slot_so_the_gear_stays_put() {
     let cells = slots(Capabilities {
         sharing: false,
         ..PLAIN
     });
-    assert!(!cells.contains(&Slot::Sharing));
+    assert_eq!(cells, slots(PLAIN), "the slot stays, disabled");
 }
 
 #[test]

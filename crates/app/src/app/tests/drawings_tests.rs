@@ -3663,6 +3663,38 @@ fn the_context_bar_shares_a_drawing_across_charts_in_one_click() {
     );
 }
 
+/// A drawing that cannot be shared keeps its sharing button, disabled: a
+/// click changes nothing, and the gear beside it stays where the hand knows.
+#[test]
+fn an_unshareable_drawing_keeps_a_disabled_sharing_button_and_its_gear() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    app.surfaces
+        .toolrail
+        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+    run_frame(&mut app, &ctx);
+    let bar = |app: &QuantickApp| {
+        let bar = app.surfaces.drawing_chrome.context_bar();
+        (bar.sharing_rect(), bar.gear_rect())
+    };
+    let (_, gear) = bar(&app);
+
+    app.active_tab_mut().flow_pane.drawings.items_mut()[0].points[0].time_ms = None;
+    run_frame(&mut app, &ctx);
+    let (sharing, kept) = bar(&app);
+    let sharing = sharing.expect("the sharing button stays");
+    assert_eq!(kept, gear, "the gear does not shift");
+    click_chart(&mut app, &ctx, sharing.center());
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items()[0].scope,
+        DrawingScope::ThisChart,
+        "a disabled button shares nothing"
+    );
+}
+
 #[test]
 fn rectangle_anchor_resizes_while_the_settings_window_stays_non_modal() {
     let (mut app, _commands) = app_with_history(200);

@@ -38,7 +38,9 @@ pub enum Slot {
 /// What the selected object can actually be asked for. The bar is built from
 /// this and nothing else — an unsupported property is absent, never a grey
 /// button, which is the rule [`crate::MarkTool`] already states for
-/// the inspector.
+/// the inspector. Sharing is the one exception: every drawing supports it, so
+/// its slot stays, disabled with [`UNSHAREABLE_REASON`], and the gear beside
+/// it never shifts under the hand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capabilities {
     pub stroke_width: bool,
@@ -49,7 +51,7 @@ pub struct Capabilities {
     /// pinned: its destination is already on screen.
     pub settings: bool,
     /// Whether this drawing has enough market-time information to be shown
-    /// on the tab's other charts.
+    /// on the tab's other charts: the sharing slot is enabled.
     pub sharing: bool,
     /// Whether the OHLC magnet moves this object's anchors: a tool that
     /// snaps by its own rule has no magnet to switch.
@@ -62,6 +64,12 @@ pub struct Capabilities {
     /// a freehand stroke — so the bar offers to arm it again.
     pub draw_again: bool,
 }
+
+/// Why a drawing cannot show on other charts, wherever its sharing control
+/// is disabled: an anchor names no market time, the one coordinate two charts
+/// agree on (a pasted copy until it is dragged, a chart with no bars yet).
+pub const UNSHAREABLE_REASON: &str =
+    "An anchor has no market time yet, so it cannot show on other charts";
 
 /// The cells of a bar for an object with these capabilities.
 ///
@@ -100,9 +108,7 @@ pub fn slots(caps: Capabilities) -> SmallVec<[Slot; 14]> {
         slots.push(Slot::Magnet);
     }
     slots.push(Slot::Hide);
-    if caps.sharing {
-        slots.push(Slot::Sharing);
-    }
+    slots.push(Slot::Sharing);
     if caps.settings && !caps.position {
         slots.push(Slot::Settings);
     }

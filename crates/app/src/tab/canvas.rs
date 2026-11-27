@@ -951,14 +951,14 @@ impl Tab {
         picks
     }
 
-    /// The panes whose shared marks `viewer` shows. Every pane of a market holds
-    /// its all-timeframes marks itself: a pane holding the viewer's market adds
-    /// nothing, and of two holding another only the first does, or a shared mark
-    /// would paint twice and its fill read darker than it is.
+    /// The panes whose shared marks `viewer` shows. Every pane of a market and
+    /// layout scope holds its set itself: one holding the viewer's adds nothing
+    /// (another layout's lends its "All windows" marks), and of two holding
+    /// another only the first does, or a shared mark would paint twice.
     pub(crate) fn mirror_owners(&self, viewer: PaneIndex) -> impl Iterator<Item = PaneIndex> + '_ {
         let key = move |pane: PaneIndex| {
             let key = self.pane_at(pane)?.layout.drawings_key.as_ref();
-            key.map(|key| &key.market)
+            key.map(|key| (&key.market, key.scope))
         };
         (0..self.pane_count()).filter(move |&owner| {
             let same_set = |other: PaneIndex| key(owner).is_some() && key(other) == key(owner);

@@ -277,3 +277,20 @@ fn a_mark_s_look_provenance_round_trips_and_a_legacy_mark_is_explicit() {
         Inheritance::Explicit
     );
 }
+
+/// A projected anchor time survives the file as projected, and a mark read
+/// back is still shareable and still labelled; an exact one writes no flag.
+#[test]
+fn a_projected_anchor_time_round_trips_and_an_exact_one_writes_no_flag() {
+    let mut pane = drawn(100.0);
+    let exact = toml::to_string(&SavedDrawing::from_drawing(&pane.items()[0])).unwrap();
+    assert!(!exact.contains("time_projected"), "{exact}");
+
+    pane.items_mut()[0].points[0].time_projected = true;
+    let text = toml::to_string(&SavedDrawing::from_drawing(&pane.items()[0])).unwrap();
+    assert!(text.contains("time_projected = true"), "{text}");
+    let read: SavedDrawing = toml::from_str(&text).unwrap();
+    let mark = read.to_drawing(DrawingId(1)).unwrap();
+    assert!(mark.time_projected() && mark.shareable());
+    assert!(mark.all_timeframes(), "it still shows on every cut");
+}

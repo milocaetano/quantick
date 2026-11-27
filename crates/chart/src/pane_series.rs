@@ -1,7 +1,14 @@
 //! Composed venue-prefix and trade-series coordinates, shared by pane readers.
 use crate::state::{ChartState, SpecSelector};
 use crate::viewport::Viewport;
+use quantick_chart_interaction::drawing_model::ChartPoint;
 use quantick_indicators::FootprintBar;
+
+/// How many of the newest bars a tick, volume or renko chart averages, open
+/// to next open, to project a time for an anchor dropped past its newest bar.
+/// Enough to ride out one burst of prints, few enough to follow today's pace.
+pub const PROJECTION_WINDOW_BARS: usize = 20;
+
 #[derive(Clone, Copy)]
 pub struct PaneSeriesRead<'a> {
     pub history_prefix: &'a [quantick_engine::Bar],
@@ -225,7 +232,10 @@ impl<'a> PaneSeriesRead<'a> {
         // Past the newest bar first: on a time chart that space has an exact
         // clock, and asking `slot_at_time` there would clamp a future anchor
         // onto the right edge instead of letting it run on.
-        if let Some(future) = self.future_slot_at_time(time) {
+        // A projected time past the newest bar of a tick, volume or renko
+        // chart goes back where `stamp` named it, not onto the newest bar.
+        let future = self.future_slot_at_time(time);
+        if let Some(future) = future.or_else(|| self.projected_slot_at_time(time)) {
             return Some(future + 0.5);
         }
         // Before the first bar this pane holds. `slot_at_time` answers slot 0
@@ -244,7 +254,7 @@ impl<'a> PaneSeriesRead<'a> {
     /// Where an instant later than this pane's newest bar falls, as a
     /// fractional slot past the end. `None` unless the pane's bars run on a
     /// fixed interval — see [`Self::anchor_time`] for why a tick chart has no
-    /// answer here.
+    /// exact answer here, and [`Self::projected_slot_at_time`] for its estimate.
     pub fn future_slot_at_time(&self, time: i64) -> Option<f32> {
         let interval = self.spec.spec().time_interval_ms()?;
         let last = self.slots().checked_sub(1)?;
@@ -274,10 +284,10 @@ impl<'a> PaneSeriesRead<'a> {
     /// The market time behind a fractional bar slot, for anchors that may have
     /// to be re-expressed on another pane (§D7 of the drawing-tools design).
     ///
-    /// Only a slot that actually holds a bar has an instant behind it: the
-    /// empty space past the newest bar is future the tape has not written, and
-    /// naming a time there would be an invention. `None` is the honest answer
-    /// there, and it is what keeps such an anchor out of a shared drawing.
+    /// Exact or nothing: a slot holding a bar, or the fixed clock of a time
+    /// chart past its newest bar. Past the newest bar of a tick, volume or
+    /// renko chart there is no clock and this answers `None`; the trader's
+    /// hand takes a projected time there instead ([`Self::stamp`]), labelled.
     pub fn anchor_time(&self, bar: f32) -> Option<i64> {
         let slot = Viewport::slot_of(bar)?;
         let slots = self.slots();
@@ -295,10 +305,9 @@ impl<'a> PaneSeriesRead<'a> {
         // Monday weeks, months — steps by the engine's bucket law instead:
         // the slot after February is 1 March, not February plus a mean month.
         //
-        // On a tick or volume chart it does not: the next bar happens when
-        // enough trades happen, and no elapsed time can be named for it. That
-        // stays `None` — an invented timestamp is worse than a control that
-        // says why it is off.
+        // On a tick, volume or renko chart it does not: the next bar happens
+        // when enough trades happen, and no elapsed time can be named for it
+        // exactly. That stays `None` here; `stamp` projects one and marks it.
         let interval = self.spec.spec().time_interval_ms()?;
         let last = slots.checked_sub(1)?;
         let ahead = i64::try_from(slot - last).ok()?;
@@ -307,6 +316,59 @@ impl<'a> PaneSeriesRead<'a> {
             return Some(law.step(last_open, ahead));
         }
         last_open.checked_add(ahead.checked_mul(interval)?)
+    }
+
+    /// Name the market time behind `point`'s slot, the trader's hand placing
+    /// or moving it: [`Self::anchor_time`] where it is exact, and past the
+    /// newest bar of a chart that does not cut by time a time projected at
+    /// [`Self::projected_bar_ms`] per slot, marked
+    /// [`ChartPoint::time_projected`] so the drawing can say so and still
+    /// show on the market's other charts.
+    pub fn stamp(&self, point: &mut ChartPoint) {
+        point.time_ms = self.anchor_time(point.bar);
+        point.time_projected = false;
+        if point.time_ms.is_some() || self.spec.spec().time_interval_ms().is_some() {
+            return;
+        }
+        let projected = Viewport::slot_of(point.bar).and_then(|slot| {
+            let last = self.slots().checked_sub(1)?;
+            let ahead = i64::try_from(slot.checked_sub(last)?).ok()?;
+            let step = self.projected_bar_ms()?;
+            self.slot_open_time(last)?
+                .checked_add(ahead.checked_mul(step)?)
+        });
+        point.time_projected = projected.is_some();
+        point.time_ms = projected;
+    }
+
+    /// The inverse of [`Self::stamp`]'s projection: where an instant later
+    /// than the newest bar of a chart that does not cut by time falls, at
+    /// [`Self::projected_bar_ms`] per slot. `None` on a time chart, inside
+    /// the newest bar, and while the pane has too few bars to project. Only
+    /// the pane's own anchors take it: a mirror still fades such an instant.
+    pub fn projected_slot_at_time(&self, time: i64) -> Option<f32> {
+        if self.spec.spec().time_interval_ms().is_some() {
+            return None;
+        }
+        let last = self.slots().checked_sub(1)?;
+        let step = self.projected_bar_ms()?;
+        let ahead = time.checked_sub(self.slot_open_time(last)?)?;
+        #[allow(clippy::cast_precision_loss)]
+        (ahead >= step).then(|| last as f32 + ahead as f32 / step as f32)
+    }
+
+    /// The mean time one bar of the trade-built series took over the newest
+    /// [`PROJECTION_WINDOW_BARS`], open to next open, in milliseconds: the
+    /// step a projected time past the newest bar takes. `None` with fewer
+    /// than two bars, or with no time between them.
+    pub fn projected_bar_ms(&self) -> Option<i64> {
+        let last = self.slots().checked_sub(1)?;
+        let first = last
+            .saturating_sub(PROJECTION_WINDOW_BARS)
+            .max(self.seam_slot());
+        let bars = i64::try_from(last.checked_sub(first)?).ok()?;
+        let span = self.slot_open_time(last)? - self.slot_open_time(first)?;
+        (bars > 0 && span > 0).then(|| (span / bars).max(1))
     }
 
     /// The candle behind a slot, the forming bar included — the one lookup

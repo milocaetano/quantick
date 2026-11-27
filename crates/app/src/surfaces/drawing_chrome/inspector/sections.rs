@@ -128,7 +128,7 @@ impl ScopeToggle<'_> {
         let sharing_hint = if shareable {
             "Every chart of this market showing this layout draws it, at any timeframe, at the same moment"
         } else {
-            "This drawing has an anchor past the newest bar, so there is no market time to place          it by on another chart"
+            quantick_drawings::context_bar::UNSHAREABLE_REASON
         };
         sharing.on_hover_text(sharing_hint);
         if !shareable {
@@ -145,8 +145,8 @@ impl ScopeToggle<'_> {
         );
         actions.toggle_all_windows = windows.changed();
         windows
-            .on_hover_text("Charts of this market share it within this workspace and named layout")
-            .on_disabled_hover_text("Turn on Show on all timeframes to show it on charts in this workspace and named layout");
+            .on_hover_text("Every chart of this market draws it, whatever layout it shows")
+            .on_disabled_hover_text("Turn on Show on all timeframes to show it on charts of every layout");
         actions
     }
 }

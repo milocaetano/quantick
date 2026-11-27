@@ -105,6 +105,11 @@ pub struct SavedPoint {
     /// placed past the end of the series, which only the bar offset locates.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_ms: Option<i64>,
+    /// `time_ms` was projected past the newest bar of a chart that does not
+    /// cut by time, from the mean duration of the bars before it: written
+    /// only when set, so a file from before the flag saves back unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub time_projected: bool,
     pub price: f64,
     /// The bar offset the anchor had when it was saved. Re-derived from the
     /// time on load whenever the series reaches it; kept for the case above.
@@ -181,8 +186,8 @@ pub struct SavedDrawing {
     /// and on such a mark written back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<LayoutId>,
-    /// "All windows": every window holding the same ownership scope may show
-    /// it. Retained on legacy entries without widening scoped ownership.
+    /// "All windows": every chart of its market shows it, whatever layout it
+    /// shows. Lent by its own layout's charts, never copied into another's.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub all_windows: bool,
     /// The tool's own state, as its preset export writes it.
@@ -229,6 +234,7 @@ impl SavedDrawing {
             author: None,
             points: vec![SavedPoint {
                 time_ms: Some(1_000),
+                time_projected: false,
                 price,
                 bar: 3.0,
             }],
