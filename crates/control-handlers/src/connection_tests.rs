@@ -23,6 +23,7 @@ fn a_late_link_that_is_up_offers_reconnect_on_the_wire() {
         link: LinkState::Up,
         latency_ms: Some(900),
         latency_hop: Some("MT5"),
+        latency_at_source: false,
         tape_age_ms: None,
         limits: SyncLimits::default(),
         notice: None,

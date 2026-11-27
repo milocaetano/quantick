@@ -56,6 +56,10 @@ class FakeTerminal:
         # The venue's session deal counter, as `symbol_info` reports it.
         # `None` is a terminal that has no such field.
         self.session_deals: int | None = None
+        # How many ticks one range answer may hold, oldest first. MetaTrader
+        # cuts a large answer short this way and reports success, which is
+        # how a reconnect block came to end minutes before the live edge.
+        self.range_cap: int | None = None
         # Whether the terminal process is up. A closed one answers every call
         # with `None`, as the real package does once its IPC link is gone.
         self.running = True
@@ -79,7 +83,7 @@ class FakeTerminal:
             for tick in self.ticks
             if lo <= tick["time_msc"] <= hi
             and (flags != COPY_TICKS_TRADE or tick.get("is_trade", True))
-        ]
+        ][: self.range_cap]
 
     def copy_ticks_from(self, _symbol, from_s, count, flags):
         """The oldest tick held, and the live pump's own request."""

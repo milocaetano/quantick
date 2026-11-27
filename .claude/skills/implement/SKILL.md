@@ -22,7 +22,7 @@ Search paths/symbols before reading files; stop when sufficient.
 Ask only blocking decisions, at most three short questions per round; never repeat answers available in the request/repo.
 
 # Generate
-1. Read repo root, status, PR target, its tip as base SHA and relevant paths.
+1. Read repo root, status, PR target, its tip as base SHA, open PRs and relevant paths.
    Do not assume pending changes belong to this task.
 2. Resolve `references/execute.md` from this installed skill's directory.
    Verify existence without reading it; record its absolute path.
@@ -36,6 +36,7 @@ Repo: <root>; base: <SHA>; PR: <remote/target>.
 Rules: <absolute-path>/references/execute.md
 Do: <change and essential contract>.
 Touch: <paths/symbols: headless crate outside `crates/app` for logic first; `crates/app` only for the field, calls and painting>.
+After: <#N of each open PR touching a Touch path>.
 Done: <verifiable acceptance>.
 Size: <crate.lines.app (<=0, or why) and .total deltas>.
 Check: <known checks or discovery location; performance if relevant>.
@@ -43,11 +44,8 @@ Review: <requested low|medium|high; only when the request starts with small|medi
 No: <essential exclusion; optional>.
 ```
 
-Be unambiguous.
-Omit empty optional fields.
 Never invent commands.
 Set `Review:` only from a leading `small` (low), `medium` or `high`; otherwise omit it.
-Execution applies the risk floor in `execute.md`.
 
 # Output
 Recheck and compact the saved plan.

@@ -52,7 +52,7 @@ fn no_preset_falls_back_on_the_open_tab_or_the_capsule_in_either_theme() {
         for colour in presets() {
             let painted = colour.rgb(theme.dark);
             let name = format!("{} {}", theme.name, colour.name());
-            assert_eq!(symbol_ink(colour, &theme), Some(painted), "{name}");
+            assert_eq!(symbol_ink(colour, &theme), painted, "{name}");
             let ratio = contrast_ratio(rgb(painted), sheet);
             assert!(ratio >= 3.0, "{name} symbol and border: {ratio}");
             let tint = PremultipliedRgba::from_premultiplied(capsule_fill(colour, &theme, false));
@@ -63,13 +63,29 @@ fn no_preset_falls_back_on_the_open_tab_or_the_capsule_in_either_theme() {
 }
 
 /// Only a custom colour can fall short on the open tab: below 3:1 its symbol
-/// keeps the tab's normal ink.
+/// still wears it, walked darker on a light sheet (lighter on a dark one)
+/// until it reads, its strongest channel still the strongest; one that reads
+/// is painted as it is.
 #[test]
-fn a_custom_colour_below_the_floor_falls_back_to_the_tabs_ink() {
-    let pale = WorkspaceColour::Custom([0xEE, 0xEE, 0xEE]);
+fn a_custom_colour_below_the_floor_is_shifted_until_it_reads() {
     let [dark, light] = themes();
-    assert_eq!(symbol_ink(pale, &dark), Some([0xEE; 3]));
-    assert_eq!(symbol_ink(pale, &light), None);
+    for (row, colour, theme, shifted) in [
+        ("pale on dark", [0xEE; 3], &dark, false),
+        ("pale on light", [0xEE; 3], &light, true),
+        ("lime on light", [0x7A, 0xCA, 0x27], &light, true),
+        ("navy on dark", [0x10, 0x20, 0x40], &dark, true),
+    ] {
+        let ink = symbol_ink(WorkspaceColour::Custom(colour), theme);
+        let ratio = contrast_ratio(rgb(ink), theme.color(Token::ToolbarSheet));
+        assert!(ratio >= 3.0, "{row}: {ink:?} at {ratio}");
+        assert_eq!(ink != colour, shifted, "{row}: {ink:?}");
+        let strongest = |c: Rgb| (0..3).max_by_key(|&at| c[at]);
+        if shifted && colour.iter().any(|&c| c != colour[0]) {
+            assert_eq!(strongest(ink), strongest(colour), "{row}: hue kept");
+        }
+        let darker = ink.iter().zip(colour).all(|(&i, c)| i <= c);
+        assert_eq!(darker, !theme.dark || !shifted, "{row}: direction");
+    }
 }
 
 /// Every workspace row, in menu B and in Manage, is tinted toward its own

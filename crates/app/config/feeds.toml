@@ -155,7 +155,7 @@ symbol_bubble_presets = { "BTCUSDT" = "Crypto default", "ETHUSDT" = "Crypto defa
 # Spot BTC keeps "BTCUSDT", the key its saved look has always used.
 symbol_asset_modes = { "BTCUSDT" = { quantity_unit = "BTC", look_key = "BTCUSDT" }, "ETHUSDT" = { quantity_unit = "ETH" } }
 symbol_widgets = { "BTCUSDT" = { tick = "0.50", notional_unit = "usd", big_trade_min = 250000 } }
-symbol_icons = { "BTCUSDT" = { glyph = "B", colour = "#F7931A" }, "ETHUSDT" = { glyph = "Ξ", colour = "#627EEA" } }
+symbol_icons = { "BTC*" = { glyph = "B", colour = "#F7931A" }, "ETHUSDT" = { glyph = "Ξ", colour = "#627EEA" } }
 # The default open: timeframe context beside the flow chart, side by side
 # (user decision 2026-08-06). Remove the key to open on the flow pane alone.
 default_layout = "time+flow"
@@ -178,7 +178,7 @@ symbols = ["BTCUSDT.p"]
 symbol_bubble_presets = { "BTCUSDT.p" = "Crypto default" }
 symbol_asset_modes = { "BTCUSDT.p" = { quantity_unit = "BTC" } }
 symbol_widgets = { "BTCUSDT.p" = { tick = "0.50", notional_unit = "usd", big_trade_min = 250000 } }
-symbol_icons = { "BTCUSDT.p" = { glyph = "B", colour = "#F7931A" } }
+symbol_icons = { "BTC*" = { glyph = "B", colour = "#F7931A" } }
 default_layout = "time+flow"
 default_bars = "tick:50"
 

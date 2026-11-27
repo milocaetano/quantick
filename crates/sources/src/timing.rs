@@ -65,6 +65,15 @@ impl FeedLatency {
         let split = self.source_lag_ms.is_some() && self.transport_lag_ms.is_some();
         (split && self.arrival_lag_ms >= 0).then_some(self.arrival_lag_ms)
     }
+
+    /// Whether the source, not the wire, owns most of the delay: the prints
+    /// were already late when they were handed over. `false` without a split.
+    #[must_use]
+    pub fn late_at_source(&self) -> bool {
+        self.source_lag_ms
+            .zip(self.transport_lag_ms)
+            .is_some_and(|(source, transport)| source > transport)
+    }
 }
 
 #[cfg(test)]
@@ -75,5 +84,30 @@ mod tests {
         assert_eq!(stamp_offset_label(-920), "clock -920 ms");
         assert_eq!(stamp_offset_label(120), "clock 120 ms");
         assert_eq!(stamp_offset_label(0), "clock 0 ms");
+    }
+
+    #[test]
+    fn late_at_source_needs_both_halves_and_the_source_ahead() {
+        let split = |source, transport| FeedLatency {
+            arrival_lag_ms: 900,
+            source_lag_ms: source,
+            source_lag_peak_ms: None,
+            transport_lag_ms: transport,
+            hop: None,
+            prints: 4,
+        };
+        for (source, transport, want) in [
+            (Some(820), Some(80), true),
+            (Some(80), Some(820), false),
+            (Some(450), Some(450), false),
+            (Some(820), None, false),
+            (None, Some(80), false),
+        ] {
+            assert_eq!(
+                split(source, transport).late_at_source(),
+                want,
+                "source {source:?}, transport {transport:?}"
+            );
+        }
     }
 }

@@ -1,9 +1,10 @@
 //! Compile-time bindings, resolved by consumers in their own crates.
 //!
 //! A family docks by adding its files and one row. Support modules also have
-//! rows so module declarations have no second list. Empty bindings opt out;
+//! rows so module declarations have no second list. `wire: none` declares no
+//! `wire::<family>` module; `wire: [..]` declares it and names the facets it
+//! publishes, `catalog` then `readbacks`. Empty bindings opt out;
 //! runtime-argument actions such as strategy_describe are registered by the host.
-//! A `readbacks` binding is a module path below the handlers crate's root.
 
 /// Pass the complete table and optional arguments to a local consumer macro.
 /// Bindings are tokens, never dependencies from control into a higher crate.
@@ -12,103 +13,103 @@ macro_rules! control_families {
     ($($consumer:ident)::+ $(, $argument:expr)* $(,)?) => {
         $($consumer)::+! {
             [$($argument),*]
-            addressed_pane { schemas: [], catalog: [], readbacks: [], handlers: [pub addressed_pane], actions: [] }
-            alerts { schemas: [alerts], catalog: [alerts], readbacks: [wire::alerts], handlers: [pub alerts], actions: [register] }
-            analysis { schemas: [analysis], catalog: [], readbacks: [wire::analysis], handlers: [pub analysis], actions: [] }
-            annotate { schemas: [], catalog: [], readbacks: [], handlers: [pub annotate], actions: [register] }
-            appearance { schemas: [appearance], catalog: [appearance], readbacks: [wire::appearance], handlers: [pub appearance], actions: [register_actions] }
-            attention { schemas: [attention], catalog: [], readbacks: [wire::attention], handlers: [pub attention], actions: [register] }
-            axis_pane { schemas: [], catalog: [], readbacks: [], handlers: [pub axis_pane], actions: [] }
-            bubble_pane { schemas: [], catalog: [], readbacks: [], handlers: [pub bubble_pane], actions: [] }
-            bubble_preset { schemas: [bubble_preset], catalog: [bubble_preset], readbacks: [wire::bubble_preset], handlers: [pub bubble_preset], actions: [register_tick, register] }
-            bubble_save { schemas: [bubble_save], catalog: [], readbacks: [wire::bubble_save], handlers: [pub bubble_save], actions: [register] }
-            bubble_scale { schemas: [bubble_scale], catalog: [bubble_scale], readbacks: [wire::bubble_scale], handlers: [pub bubble_scale], actions: [register] }
-            calls { schemas: [calls], catalog: [], readbacks: [], handlers: [], actions: [] }
-            canvas { schemas: [canvas], catalog: [canvas], readbacks: [wire::canvas], handlers: [pub canvas], actions: [register] }
-            catalog { schemas: [catalog], catalog: [], readbacks: [], handlers: [], actions: [] }
-            chart { schemas: [chart], catalog: [], readbacks: [], handlers: [pub chart], actions: [] }
-            chart_context { schemas: [chart_context], catalog: [chart_context], readbacks: [], handlers: [pub chart_context], actions: [register] }
-            chart_layer { schemas: [], catalog: [], readbacks: [], handlers: [pub chart_layer], actions: [] }
-            chart_settings { schemas: [chart_settings], catalog: [chart_settings], readbacks: [wire::chart_settings], handlers: [pub chart_settings], actions: [register] }
-            connection { schemas: [], catalog: [], readbacks: [], handlers: [pub connection], actions: [] }
-            contract_roll { schemas: [contract_roll], catalog: [contract_roll], readbacks: [], handlers: [pub contract_roll], actions: [register] }
-            deal_recorder { schemas: [], catalog: [], readbacks: [], handlers: [pub deal_recorder], actions: [] }
-            deal_recording { schemas: [deal_recording], catalog: [], readbacks: [], handlers: [pub deal_recording], actions: [register] }
-            desk { schemas: [desk], catalog: [desk], readbacks: [wire::desk], handlers: [pub desk], actions: [register] }
-            dock { schemas: [], catalog: [], readbacks: [], handlers: [pub dock], actions: [] }
-            drawing_autosave { schemas: [drawing_autosave], catalog: [drawing_autosave], readbacks: [wire::drawing_autosave], handlers: [pub drawing_autosave], actions: [register] }
-            drawing_magnet { schemas: [drawing_magnet], catalog: [], readbacks: [wire::drawing_magnet], handlers: [pub drawing_magnet], actions: [register] }
-            drawing_position { schemas: [drawing_position], catalog: [], readbacks: [wire::drawing_position], handlers: [pub drawing_position], actions: [register] }
-            drawing_scope { schemas: [drawing_scope], catalog: [], readbacks: [wire::drawing_scope], handlers: [pub drawing_scope], actions: [] }
-            drawing_text { schemas: [drawing_text], catalog: [], readbacks: [wire::drawing_text], handlers: [pub drawing_text], actions: [register] }
-            evidence { schemas: [evidence], catalog: [], readbacks: [], handlers: [], actions: [] }
-            families { schemas: [], catalog: [], readbacks: [], handlers: [families], actions: [] }
-            feed { schemas: [feed], catalog: [], readbacks: [wire::feed], handlers: [], actions: [] }
-            feed_source { schemas: [feed_source], catalog: [feed_source], readbacks: [], handlers: [pub feed_source], actions: [register] }
-            feed_status { schemas: [], catalog: [], readbacks: [], handlers: [pub feed_status], actions: [] }
-            health { schemas: [health], catalog: [], readbacks: [], handlers: [pub health], actions: [] }
-            history { schemas: [history], catalog: [history], readbacks: [wire::history], handlers: [pub history], actions: [register] }
-            home_tab { schemas: [home_tab], catalog: [home_tab], readbacks: [wire::home_tab], handlers: [pub home_tab], actions: [register] }
-            indicator_guide { schemas: [indicator_guide], catalog: [], readbacks: [wire::indicator_guide], handlers: [pub indicator_guide], actions: [register] }
-            indicator_host { schemas: [], catalog: [], readbacks: [], handlers: [pub indicator_host], actions: [] }
-            indicator_picker { schemas: [indicator_picker], catalog: [indicator_picker], readbacks: [wire::indicator_picker], handlers: [pub indicator_picker], actions: [register] }
-            interaction { schemas: [interaction], catalog: [], readbacks: [], handlers: [], actions: [] }
-            journal_sessions { schemas: [journal_sessions], catalog: [journal_sessions], readbacks: [wire::journal_sessions], handlers: [pub journal_sessions], actions: [register] }
-            launch_calls { schemas: [launch_calls], catalog: [], readbacks: [], handlers: [], actions: [] }
-            launch_values { schemas: [launch_values], catalog: [], readbacks: [], handlers: [], actions: [] }
-            layers { schemas: [layers], catalog: [], readbacks: [wire::layers], handlers: [pub layers], actions: [register] }
-            layout { schemas: [layout], catalog: [], readbacks: [wire::layout], handlers: [pub layout], actions: [register] }
-            layout_v2 { schemas: [layout_v2], catalog: [], readbacks: [], handlers: [], actions: [] }
-            market_palette { schemas: [market_palette], catalog: [market_palette], readbacks: [wire::market_palette], handlers: [pub market_palette], actions: [register] }
-            market_switch { schemas: [], catalog: [], readbacks: [], handlers: [pub market_switch], actions: [] }
-            market_tab { schemas: [], catalog: [], readbacks: [], handlers: [pub market_tab], actions: [] }
-            market_windows { schemas: [market_windows], catalog: [market_windows], readbacks: [wire::market_windows], handlers: [pub market_windows], actions: [register] }
-            native_indicator { schemas: [native_indicator], catalog: [native_indicator], readbacks: [wire::native_indicator], handlers: [pub native_indicator], actions: [register] }
-            native_window { schemas: [native_window], catalog: [native_window], readbacks: [wire::native_window], handlers: [pub native_window], actions: [register] }
-            notify { schemas: [notify], catalog: [], readbacks: [wire::notify], handlers: [pub notify], actions: [register] }
-            observer { schemas: [], catalog: [], readbacks: [], handlers: [pub observer], actions: [] }
-            opening_scale { schemas: [opening_scale], catalog: [opening_scale], readbacks: [wire::opening_scale], handlers: [pub opening_scale], actions: [register] }
-            orderflow { schemas: [orderflow], catalog: [], readbacks: [], handlers: [pub orderflow], actions: [] }
-            orderflow_settings { schemas: [orderflow_settings], catalog: [], readbacks: [wire::orderflow_settings], handlers: [pub orderflow_settings], actions: [register] }
-            pane_marks { schemas: [], catalog: [], readbacks: [], handlers: [pub pane_marks], actions: [] }
-            pnl_display { schemas: [pnl_display], catalog: [], readbacks: [wire::pnl_display], handlers: [pub pnl_display], actions: [register] }
-            price_axis { schemas: [price_axis], catalog: [price_axis], readbacks: [wire::price_axis], handlers: [pub price_axis], actions: [register] }
-            price_tag_progress { schemas: [price_tag_progress], catalog: [price_tag_progress], readbacks: [wire::price_tag_progress], handlers: [pub price_tag_progress], actions: [register] }
-            readback { schemas: [readback], catalog: [], readbacks: [], handlers: [], actions: [] }
-            recovery { schemas: [recovery], catalog: [], readbacks: [], handlers: [pub recovery], actions: [register] }
-            retry_matrix { schemas: [retry_matrix], catalog: [], readbacks: [], handlers: [pub retry_matrix], actions: [] }
-            scene { schemas: [scene], catalog: [scene], readbacks: [], handlers: [], actions: [] }
-            schema_documents { schemas: [], catalog: [], readbacks: [], handlers: [pub schema_documents], actions: [] }
-            script { schemas: [script], catalog: [], readbacks: [wire::script], handlers: [pub script], actions: [register] }
-            script_alarms { schemas: [script_alarms], catalog: [script_alarms], readbacks: [], handlers: [pub script_alarms], actions: [register] }
-            script_editor { schemas: [script_editor], catalog: [script_editor], readbacks: [wire::script_editor], handlers: [pub script_editor], actions: [register] }
-            script_strategy { schemas: [script_strategy], catalog: [script_strategy], readbacks: [wire::script_strategy], handlers: [pub script_strategy], actions: [register] }
-            semantic { schemas: [], catalog: [], readbacks: [], handlers: [pub semantic], actions: [] }
-            session { schemas: [session], catalog: [session], readbacks: [], handlers: [pub session], actions: [] }
-            session_reports { schemas: [session_reports], catalog: [session_reports], readbacks: [wire::session_reports], handlers: [pub session_reports], actions: [register] }
-            settings { schemas: [], catalog: [], readbacks: [], handlers: [pub settings], actions: [] }
-            settings_sections { schemas: [settings_sections], catalog: [], readbacks: [], handlers: [], actions: [] }
-            strategy_describe { schemas: [strategy_describe], catalog: [strategy_describe], readbacks: [wire::strategy_describe], handlers: [], actions: [] }
-            strategy_desk { schemas: [strategy_desk], catalog: [strategy_desk], readbacks: [wire::strategy_desk], handlers: [pub strategy_desk], actions: [register] }
-            tabs { schemas: [], catalog: [], readbacks: [], handlers: [tabs], actions: [] }
-            tape_fold { schemas: [tape_fold], catalog: [], readbacks: [wire::tape_fold], handlers: [pub tape_fold], actions: [register] }
-            tape_market_fold { schemas: [tape_market_fold], catalog: [], readbacks: [wire::tape_market_fold], handlers: [pub tape_market_fold], actions: [] }
-            tape_view { schemas: [tape_view], catalog: [tape_view], readbacks: [wire::tape_view], handlers: [], actions: [] }
-            tape_view_set { schemas: [tape_view_set], catalog: [], readbacks: [wire::tape_view_set], handlers: [pub tape_view_set], actions: [register] }
-            tick_bubbles { schemas: [tick_bubbles], catalog: [], readbacks: [wire::tick_bubbles], handlers: [], actions: [] }
-            ticket_money { schemas: [], catalog: [], readbacks: [], handlers: [pub ticket_money], actions: [] }
-            time_axis { schemas: [time_axis], catalog: [time_axis], readbacks: [wire::time_axis], handlers: [pub time_axis], actions: [register] }
-            trace_replay { schemas: [trace_replay], catalog: [], readbacks: [], handlers: [], actions: [] }
-            trade { schemas: [], catalog: [], readbacks: [trade], handlers: [pub trade], actions: [register] }
-            trade_account { schemas: [], catalog: [], readbacks: [trade_account], handlers: [pub trade_account], actions: [] }
-            ui_behaviours { schemas: [ui_behaviours], catalog: [], readbacks: [], handlers: [], actions: [] }
-            widget { schemas: [widget], catalog: [widget], readbacks: [wire::widget], handlers: [], actions: [] }
-            widgets { schemas: [], catalog: [], readbacks: [], handlers: [pub widgets], actions: [register] }
-            window_menu { schemas: [window_menu], catalog: [], readbacks: [], handlers: [], actions: [] }
-            workspace { schemas: [workspace], catalog: [], readbacks: [], handlers: [], actions: [] }
-            workspace_book { schemas: [workspace_book], catalog: [workspace_book], readbacks: [wire::workspace_book], handlers: [pub workspace_book], actions: [register] }
-            workspace_colour { schemas: [workspace_colour], catalog: [workspace_colour], readbacks: [wire::workspace_colour], handlers: [], actions: [] }
-            workspace_manage { schemas: [workspace_manage], catalog: [workspace_manage], readbacks: [wire::workspace_manage], handlers: [], actions: [] }
+            addressed_pane { wire: none, handlers: [pub addressed_pane], actions: [] }
+            alerts { wire: [catalog, readbacks], handlers: [pub alerts], actions: [register] }
+            analysis { wire: [readbacks], handlers: [pub analysis], actions: [] }
+            annotate { wire: none, handlers: [pub annotate], actions: [register] }
+            appearance { wire: [catalog, readbacks], handlers: [pub appearance], actions: [register_actions] }
+            attention { wire: [readbacks], handlers: [pub attention], actions: [register] }
+            axis_pane { wire: none, handlers: [pub axis_pane], actions: [] }
+            bubble_pane { wire: none, handlers: [pub bubble_pane], actions: [] }
+            bubble_preset { wire: [catalog, readbacks], handlers: [pub bubble_preset], actions: [register_tick, register] }
+            bubble_save { wire: [readbacks], handlers: [pub bubble_save], actions: [register] }
+            bubble_scale { wire: [catalog, readbacks], handlers: [pub bubble_scale], actions: [register] }
+            calls { wire: [], handlers: [], actions: [] }
+            canvas { wire: [catalog, readbacks], handlers: [pub canvas], actions: [register] }
+            catalog { wire: [], handlers: [], actions: [] }
+            chart { wire: [], handlers: [pub chart], actions: [] }
+            chart_context { wire: [catalog], handlers: [pub chart_context], actions: [register] }
+            chart_layer { wire: none, handlers: [pub chart_layer], actions: [] }
+            chart_settings { wire: [catalog, readbacks], handlers: [pub chart_settings], actions: [register] }
+            connection { wire: none, handlers: [pub connection], actions: [] }
+            contract_roll { wire: [catalog], handlers: [pub contract_roll], actions: [register] }
+            deal_recorder { wire: none, handlers: [pub deal_recorder], actions: [] }
+            deal_recording { wire: [], handlers: [pub deal_recording], actions: [register] }
+            desk { wire: [catalog, readbacks], handlers: [pub desk], actions: [register] }
+            dock { wire: none, handlers: [pub dock], actions: [] }
+            drawing_autosave { wire: [catalog, readbacks], handlers: [pub drawing_autosave], actions: [register] }
+            drawing_magnet { wire: [readbacks], handlers: [pub drawing_magnet], actions: [register] }
+            drawing_position { wire: [readbacks], handlers: [pub drawing_position], actions: [register] }
+            drawing_scope { wire: [readbacks], handlers: [pub drawing_scope], actions: [] }
+            drawing_text { wire: [readbacks], handlers: [pub drawing_text], actions: [register] }
+            evidence { wire: [], handlers: [], actions: [] }
+            families { wire: none, handlers: [families], actions: [] }
+            feed { wire: [readbacks], handlers: [], actions: [] }
+            feed_source { wire: [catalog], handlers: [pub feed_source], actions: [register] }
+            feed_status { wire: none, handlers: [pub feed_status], actions: [] }
+            health { wire: [], handlers: [pub health], actions: [] }
+            history { wire: [catalog, readbacks], handlers: [pub history], actions: [register] }
+            home_tab { wire: [catalog, readbacks], handlers: [pub home_tab], actions: [register] }
+            indicator_guide { wire: [readbacks], handlers: [pub indicator_guide], actions: [register] }
+            indicator_host { wire: none, handlers: [pub indicator_host], actions: [] }
+            indicator_picker { wire: [catalog, readbacks], handlers: [pub indicator_picker], actions: [register] }
+            interaction { wire: [], handlers: [], actions: [] }
+            journal_sessions { wire: [catalog, readbacks], handlers: [pub journal_sessions], actions: [register] }
+            launch_calls { wire: [], handlers: [], actions: [] }
+            launch_values { wire: [], handlers: [], actions: [] }
+            layers { wire: [readbacks], handlers: [pub layers], actions: [register] }
+            layout { wire: [readbacks], handlers: [pub layout], actions: [register] }
+            layout_v2 { wire: [], handlers: [], actions: [] }
+            market_palette { wire: [catalog, readbacks], handlers: [pub market_palette], actions: [register] }
+            market_switch { wire: none, handlers: [pub market_switch], actions: [] }
+            market_tab { wire: none, handlers: [pub market_tab], actions: [] }
+            market_windows { wire: [catalog, readbacks], handlers: [pub market_windows], actions: [register] }
+            native_indicator { wire: [catalog, readbacks], handlers: [pub native_indicator], actions: [register] }
+            native_window { wire: [catalog, readbacks], handlers: [pub native_window], actions: [register] }
+            notify { wire: [readbacks], handlers: [pub notify], actions: [register] }
+            observer { wire: none, handlers: [pub observer], actions: [] }
+            opening_scale { wire: [catalog, readbacks], handlers: [pub opening_scale], actions: [register] }
+            orderflow { wire: [], handlers: [pub orderflow], actions: [] }
+            orderflow_settings { wire: [readbacks], handlers: [pub orderflow_settings], actions: [register] }
+            pane_marks { wire: none, handlers: [pub pane_marks], actions: [] }
+            pnl_display { wire: [readbacks], handlers: [pub pnl_display], actions: [register] }
+            price_axis { wire: [catalog, readbacks], handlers: [pub price_axis], actions: [register] }
+            price_tag_progress { wire: [catalog, readbacks], handlers: [pub price_tag_progress], actions: [register] }
+            readback { wire: [], handlers: [], actions: [] }
+            recovery { wire: [], handlers: [pub recovery], actions: [register] }
+            retry_matrix { wire: [], handlers: [pub retry_matrix], actions: [] }
+            scene { wire: [catalog], handlers: [], actions: [] }
+            schema_documents { wire: none, handlers: [pub schema_documents], actions: [] }
+            script { wire: [readbacks], handlers: [pub script], actions: [register] }
+            script_alarms { wire: [catalog], handlers: [pub script_alarms], actions: [register] }
+            script_editor { wire: [catalog, readbacks], handlers: [pub script_editor], actions: [register] }
+            script_strategy { wire: [catalog, readbacks], handlers: [pub script_strategy], actions: [register] }
+            semantic { wire: none, handlers: [pub semantic], actions: [] }
+            session { wire: [catalog], handlers: [pub session], actions: [] }
+            session_reports { wire: [catalog, readbacks], handlers: [pub session_reports], actions: [register] }
+            settings { wire: none, handlers: [pub settings], actions: [] }
+            settings_sections { wire: [], handlers: [], actions: [] }
+            strategy_describe { wire: [catalog, readbacks], handlers: [], actions: [] }
+            strategy_desk { wire: [catalog, readbacks], handlers: [pub strategy_desk], actions: [register] }
+            tabs { wire: none, handlers: [tabs], actions: [] }
+            tape_fold { wire: [readbacks], handlers: [pub tape_fold], actions: [register] }
+            tape_market_fold { wire: [readbacks], handlers: [pub tape_market_fold], actions: [] }
+            tape_view { wire: [catalog, readbacks], handlers: [], actions: [] }
+            tape_view_set { wire: [readbacks], handlers: [pub tape_view_set], actions: [register] }
+            tick_bubbles { wire: [readbacks], handlers: [], actions: [] }
+            ticket_money { wire: none, handlers: [pub ticket_money], actions: [] }
+            time_axis { wire: [catalog, readbacks], handlers: [pub time_axis], actions: [register] }
+            trace_replay { wire: [], handlers: [], actions: [] }
+            trade { wire: [handler_readbacks: trade], handlers: [pub trade], actions: [register] }
+            trade_account { wire: [handler_readbacks: trade_account], handlers: [pub trade_account], actions: [] }
+            ui_behaviours { wire: [], handlers: [], actions: [] }
+            widget { wire: [catalog, readbacks], handlers: [], actions: [] }
+            widgets { wire: none, handlers: [pub widgets], actions: [register] }
+            window_menu { wire: [], handlers: [], actions: [] }
+            workspace { wire: [], handlers: [], actions: [] }
+            workspace_book { wire: [catalog, readbacks], handlers: [pub workspace_book], actions: [register] }
+            workspace_colour { wire: [catalog, readbacks], handlers: [], actions: [] }
+            workspace_manage { wire: [catalog, readbacks], handlers: [], actions: [] }
         }
     };
 }

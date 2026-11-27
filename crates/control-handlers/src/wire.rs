@@ -8,11 +8,21 @@
 //! every function is a total function of what it is handed.
 
 macro_rules! schema_modules {
-    ($args:tt $($family:ident {
-        schemas: [$($schema:ident),*], catalog: $catalog:tt, readbacks: $readbacks:tt,
-        handlers: $handlers:tt, actions: $actions:tt
-    })*) => {
-        $($(pub mod $schema;)*)*
+    ($args:tt $($family:ident { wire: $wire:tt, handlers: $handlers:tt, actions: $actions:tt })*) => {
+        $(schema_module!($family $wire);)*
+    };
+}
+
+/// Only the manifest's facets, in its order, pass: a misspelt or reordered
+/// one fails the build instead of dropping out of the catalogue or matrix.
+macro_rules! schema_module {
+    ($family:ident none) => {};
+    ($family:ident [handler_readbacks: $($path:ident)::+]) => {};
+    ($family:ident [$(catalog)?]) => {
+        pub mod $family;
+    };
+    ($family:ident [$(catalog,)? readbacks]) => {
+        pub mod $family;
     };
 }
 

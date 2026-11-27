@@ -678,3 +678,66 @@ async fn a_refill_is_cut_at_its_hard_limit_while_pages_still_arrive() {
         chart.tape.len()
     );
 }
+
+/// Incident 2026-11-27: MetaTrader cut the reconnect block short, so it ended
+/// before the chart's last print. The feed read that as "no hole", and the
+/// bridge's live pump then re-sent everything after the block's end as live:
+/// the chart drew minutes it already held a second time, past the clock.
+#[tokio::test]
+async fn a_reconnect_block_that_ends_before_the_seam_does_not_replay_its_live_tape() {
+    let prints = fixture();
+    let expected = reference(&prints);
+    let mut feed = feed_on(19_269);
+    let mut chart = Chart::default();
+    first_session(&mut feed, 19_269, &mut chart, &prints).await;
+
+    // Session 2: the block stops at print 150, fifty prints short of the
+    // chart, and the live tape picks up where the block stopped.
+    let mut bridge = FakeBridge::dial(19_269).await;
+    bridge.backfill(&prints[..150]).await;
+    bridge.live(&prints[150..260]).await;
+    chart.fill_to(&mut feed, 260).await;
+
+    assert!(chart.gaps.is_empty(), "{:?}", chart.gaps);
+    assert_eq!(chart.refilled, 0, "the block held nothing the chart lacked");
+    assert!(
+        same_prints(&chart.tape, &expected[..260]),
+        "every print once, in order ({} prints)",
+        chart.tape.len()
+    );
+}
+
+/// The same short block reaching a respawned feed: the chart's own seam is
+/// the only record of what it holds, and the live replay is measured against
+/// it even when the session's block brings nothing at all.
+#[tokio::test]
+async fn a_respawned_feed_drops_the_live_replay_of_what_the_chart_holds() {
+    let prints = fixture();
+    let expected = reference(&prints);
+    let mut feed = feed_on(19_270);
+    let Some(FeedEvent::Backfilled(empty)) = feed.events.recv().await else {
+        panic!("expected the immediate empty backfill");
+    };
+    assert!(empty.is_empty());
+    let mut chart = Chart {
+        tape: expected[..200].to_vec(),
+        ..Chart::default()
+    };
+    let held: quantick_engine::trade_tape::TradeTape = chart.tape.iter().cloned().collect();
+    let seam = crate::ResumeSeam::of_tape(&held).expect("a held tape has a seam");
+    feed.commands
+        .send(crate::FeedCommand::ResumeAfter(seam))
+        .await
+        .expect("feed alive");
+
+    let mut bridge = FakeBridge::dial(19_270).await;
+    bridge.backfill(&[]).await;
+    bridge.live(&prints[150..260]).await;
+    chart.fill_to(&mut feed, 260).await;
+
+    assert!(
+        same_prints(&chart.tape, &expected[..260]),
+        "every print once, in order ({} prints)",
+        chart.tape.len()
+    );
+}

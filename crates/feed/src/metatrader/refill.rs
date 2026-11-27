@@ -13,6 +13,7 @@ use tokio::time::Instant;
 use tracing::{info, warn};
 
 use super::gap_fill::{self, FillStep, GapFill, RefillLimits, Release};
+use super::ledger::{LivePrint, LiveReplay};
 use super::{EventFlow, Mt5Feed};
 use crate::config::{BackfillState, BackfillStop};
 use crate::{FeedContinuity, FeedEvent, FeedNotice, ResumeSeam};
@@ -57,6 +58,32 @@ impl RefillDeadline {
 }
 
 impl Mt5Feed {
+    /// One trade out as live, behind any continuity gap a lost session owes.
+    /// A resumed session's replay of prints the chart holds goes nowhere.
+    pub(super) async fn forward_live(&mut self, trade: quantick_engine::Trade) -> EventFlow {
+        match self.tape.screen_live(&trade) {
+            LivePrint::Held => return EventFlow::Skipped,
+            LivePrint::New {
+                replayed: Some(LiveReplay { dropped, last_ms }),
+            } => info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "MT5_RESUME_LIVE_OVERLAP_DROPPED",
+                symbol = %self.symbol,
+                dropped,
+                last_ms,
+                "the resumed session re-sent prints the chart holds; dropped as duplicates"
+            ),
+            LivePrint::New { replayed: None } => {}
+        }
+        if let Some(event) = self.tape.forward(&trade)
+            && self.tx.send(FeedEvent::Continuity(event)).await.is_err()
+        {
+            return EventFlow::UiGone;
+        }
+        self.send(FeedEvent::Live(trade)).await
+    }
+
     /// Reconnect history landed on a chart that holds prints: chart its
     /// unseen tail when it already reaches the chart, else refill the hole
     /// between them.

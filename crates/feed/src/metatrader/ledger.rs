@@ -75,6 +75,62 @@ pub(super) struct TapeLedger {
     /// bridge will ever serve — a session that died holding one, a listener
     /// that never came back. This flag is what lets those be answered here.
     page_outstanding: bool,
+    /// Where a resumed session's live tape may still replay prints the chart
+    /// holds; `None` once a print past it went through.
+    live_seam: Option<LiveSeam>,
+}
+
+/// The part of a [`ResumeSeam`] a resumed session's live tape has not yet
+/// walked past.
+///
+/// A bridge resumes its live pump from the end of its reconnect block. When
+/// that block stops short of the chart — MetaTrader truncates a range answer
+/// without saying so — the pump re-sends, as live, prints the chart already
+/// holds. They are the same venue prints, so dropping them is deduplication,
+/// not repair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LiveSeam {
+    last_ms: i64,
+    /// Prints at `last_ms` the chart holds and this session has not yet sent.
+    skip_at_last: usize,
+    /// Replayed prints dropped so far, said once when the seam is passed.
+    dropped: usize,
+}
+
+impl LiveSeam {
+    /// The live seam after a reconnect block, or `None` when the block
+    /// already carried the session past the chart's last print.
+    fn after_block(seam: ResumeSeam, block: &[Trade]) -> Option<Self> {
+        if block.iter().any(|t| t.timestamp_ms > seam.last_ms) {
+            return None;
+        }
+        let sent_at_last = block
+            .iter()
+            .filter(|t| t.timestamp_ms == seam.last_ms)
+            .count();
+        Some(Self {
+            last_ms: seam.last_ms,
+            skip_at_last: seam.held_at_last.saturating_sub(sent_at_last),
+            dropped: 0,
+        })
+    }
+}
+
+/// What the live seam made of one live print.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum LivePrint {
+    /// The chart already holds it.
+    Held,
+    /// New. `replayed` is the run dropped before it, when it is the print
+    /// that closed a seam that dropped any.
+    New { replayed: Option<LiveReplay> },
+}
+
+/// The replayed run a live seam dropped, reported once.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct LiveReplay {
+    pub(super) dropped: usize,
+    pub(super) last_ms: i64,
 }
 
 /// What became of one history block the bridge pushed.
@@ -120,6 +176,7 @@ impl Default for TapeLedger {
             oldest_forwarded_ms: None,
             paging_floor_ms: None,
             page_outstanding: false,
+            live_seam: None,
         }
     }
 }
@@ -148,6 +205,29 @@ impl TapeLedger {
         crate::continuity::mt5_reconnect_gap(trade, &mut self.pending_gap)
     }
 
+    /// Whether a live print is one the chart already holds: before the live
+    /// seam, or one of the prints at its millisecond the chart has. The
+    /// first print past it disarms the seam for the rest of the session.
+    pub(super) fn screen_live(&mut self, trade: &Trade) -> LivePrint {
+        let Some(seam) = self.live_seam.as_mut() else {
+            return LivePrint::New { replayed: None };
+        };
+        match trade.timestamp_ms.cmp(&seam.last_ms) {
+            std::cmp::Ordering::Less => {}
+            std::cmp::Ordering::Equal if seam.skip_at_last > 0 => seam.skip_at_last -= 1,
+            _ => {
+                let replayed = (seam.dropped > 0).then_some(LiveReplay {
+                    dropped: seam.dropped,
+                    last_ms: seam.last_ms,
+                });
+                self.live_seam = None;
+                return LivePrint::New { replayed };
+            }
+        }
+        seam.dropped += 1;
+        LivePrint::Held
+    }
+
     /// The bridge pushed its recent-history block.
     pub(super) fn history_block(&mut self, batch: Vec<Trade>) -> HistoryBlock {
         if batch.is_empty() {
@@ -160,10 +240,9 @@ impl TapeLedger {
             // holds, so they are refused from now on.
             self.opening_block_resent = true;
             self.pending_gap = None;
-            return HistoryBlock::Resumed {
-                block: batch,
-                seam: self.seam(),
-            };
+            let seam = self.seam();
+            self.live_seam = LiveSeam::after_block(seam, &batch);
+            return HistoryBlock::Resumed { block: batch, seam };
         }
         self.forwarded_any = true;
         self.last_forwarded_ms = batch
@@ -251,6 +330,8 @@ impl TapeLedger {
         self.at_last = seam.held_at_last;
         self.oldest_forwarded_ms = Some(seam.oldest_ms);
         self.paging_floor_ms = Some(seam.oldest_ms);
+        // A session whose block brings nothing goes straight to live.
+        self.live_seam = LiveSeam::after_block(seam, &[]);
     }
 
     /// A *load older* went on the wire; its reply is now owed.
@@ -472,6 +553,107 @@ mod ledger_tests {
             oldest_ms: 1,
         });
         assert_eq!(ledger.seam(), seam);
+    }
+
+    /// Feeds `live` through the seam and returns which prints went through,
+    /// and the replay report the first of them carried.
+    fn screened(ledger: &mut TapeLedger, live: &[(i64, u64)]) -> (Vec<u64>, Option<LiveReplay>) {
+        let mut passed = Vec::new();
+        let mut report = None;
+        for &(ms, id) in live {
+            let trade = Trade {
+                agg_id: id,
+                ..at(ms)
+            };
+            if let LivePrint::New { replayed } = ledger.screen_live(&trade) {
+                passed.push(id);
+                report = report.or(replayed);
+            }
+        }
+        (passed, report)
+    }
+
+    #[test]
+    fn a_short_reconnect_block_drops_the_live_replay_of_what_the_chart_holds() {
+        let mut ledger = TapeLedger::default();
+        let _ = ledger.history_block(vec![at(1_000)]);
+        for ms in [3_000, 5_000, 5_000] {
+            let _ = ledger.forward(&at(ms));
+        }
+        // The block stops at 3_000, short of the chart's 5_000.
+        let _ = ledger.history_block(vec![at(1_000), at(3_000)]);
+        let live = [
+            (3_500, 1),
+            (4_000, 2),
+            (5_000, 3),
+            (5_000, 4),
+            (5_000, 5),
+            (6_000, 6),
+        ];
+        let (passed, report) = screened(&mut ledger, &live);
+        assert_eq!(passed, [5, 6], "the third print at 5_000 is new");
+        assert_eq!(
+            report,
+            Some(LiveReplay {
+                dropped: 4,
+                last_ms: 5_000
+            })
+        );
+        assert_eq!(
+            screened(&mut ledger, &[(100, 7)]).0,
+            [7],
+            "the seam is gone once passed"
+        );
+    }
+
+    #[test]
+    fn a_block_that_reaches_past_the_chart_leaves_the_live_tape_alone() {
+        let mut ledger = TapeLedger::default();
+        let _ = ledger.history_block(vec![at(1_000)]);
+        let _ = ledger.forward(&at(5_000));
+        let _ = ledger.history_block(vec![at(4_000), at(5_000), at(5_500)]);
+        assert_eq!(
+            screened(&mut ledger, &[(5_000, 1), (6_000, 2)]),
+            (vec![1, 2], None)
+        );
+    }
+
+    #[test]
+    fn a_block_ending_on_the_seam_counts_what_it_already_sent_there() {
+        let mut ledger = TapeLedger::default();
+        let _ = ledger.history_block(vec![at(1_000)]);
+        let _ = ledger.forward(&at(5_000));
+        let _ = ledger.forward(&at(5_000));
+        // The block carries both held prints at 5_000: the next one is new.
+        let _ = ledger.history_block(vec![at(5_000), at(5_000)]);
+        assert_eq!(screened(&mut ledger, &[(5_000, 1)]).0, [1]);
+    }
+
+    #[test]
+    fn a_seeded_ledger_drops_the_live_replay_when_no_block_comes() {
+        let mut ledger = TapeLedger::default();
+        ledger.seed(ResumeSeam {
+            last_ms: 500,
+            held_at_last: 1,
+            oldest_ms: 100,
+        });
+        assert_eq!(
+            screened(&mut ledger, &[(400, 1), (500, 2), (500, 3)]),
+            (
+                vec![3],
+                Some(LiveReplay {
+                    dropped: 2,
+                    last_ms: 500
+                })
+            )
+        );
+    }
+
+    #[test]
+    fn a_first_session_screens_nothing() {
+        let mut ledger = TapeLedger::default();
+        let _ = ledger.history_block(vec![at(1_000)]);
+        assert_eq!(screened(&mut ledger, &[(900, 1)]).0, [1]);
     }
 
     #[test]

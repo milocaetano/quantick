@@ -630,16 +630,6 @@ impl Mt5Feed {
         }
     }
 
-    /// One trade out as live, behind any continuity gap a lost session owes.
-    async fn forward_live(&mut self, trade: quantick_engine::Trade) -> EventFlow {
-        if let Some(event) = self.tape.forward(&trade)
-            && self.tx.send(FeedEvent::Continuity(event)).await.is_err()
-        {
-            return EventFlow::UiGone;
-        }
-        self.send(FeedEvent::Live(trade)).await
-    }
-
     /// A new bridge session's price facts: the venue's decimals, and no
     /// settlement until this session reads one — the last one's may be for
     /// another day.

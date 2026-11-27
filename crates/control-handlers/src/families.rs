@@ -6,8 +6,7 @@
 #[macro_export]
 macro_rules! register_family_actions {
     ([$registry:expr] $($family:ident {
-        schemas: $schemas:tt, catalog: $catalog:tt, readbacks: $readbacks:tt,
-        handlers: $handlers:tt, actions: [$($action:ident),*]
+        wire: $wire:tt, handlers: $handlers:tt, actions: [$($action:ident),*]
     })*) => {{
         let registry = $registry;
         $($($crate::$family::$action(registry)?;)*)*

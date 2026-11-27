@@ -359,7 +359,11 @@ def test_a_terminal_that_misreports_its_oldest_tick_is_not_believed():
     term.ticks = b3_day()
     bridge = load_bridge(term)
     bogus_ms = at(19, 30) * 1000
-    bridge.mt5.copy_ticks_from = lambda _symbol, _from, _count, _flags: [tick_at(bogus_ms)]
+    # Only the oldest-tick question is misreported; reading on from a cursor
+    # is answered from what the terminal holds.
+    bridge.mt5.copy_ticks_from = lambda symbol, from_s, count, flags: (
+        [tick_at(bogus_ms)] if from_s == 0 else term.copy_ticks_from(symbol, from_s, count, flags)
+    )
     session = session_at(bridge, term, now_s, backfill_minutes=720)
     session.backfill()
 
@@ -518,6 +522,37 @@ def test_a_session_inside_one_slice_parks_nothing():
         len(block_ticks(session)) == len(term.ticks),
         len(block_ticks(session)),
     )
+
+
+def test_a_range_answer_cut_short_is_read_on_to_the_live_edge():
+    """MetaTrader cuts a large range answer short and calls it success. On
+    2026-11-27 a reconnect block ended 144 s before the live edge, and the live
+    pump re-sent those prints as live: minutes old, and drawn twice by a chart
+    that already held them. The block is read on to the newest print instead."""
+    now_s = at(12, 0)
+    term = FakeTerminal(0, now_s)
+    term.ticks = session_between(at(OPEN_H, OPEN_M), now_s)
+    term.range_cap = 100
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    logged: list[tuple[str, dict]] = []
+    patch_bridge("log", lambda code, **fields: logged.append((code, fields)))
+    session.backfill()
+
+    newest_ms = term.ticks[-1]["time_msc"]
+    stamps = [t["time_ms"] for t in block_ticks(session)]
+    check("the block ends on the newest print", stamps[-1:] == [newest_ms], stamps[-1:])
+    check("every print once, in order", stamps == [t["time_msc"] for t in term.ticks], len(stamps))
+    check("the cursor is the newest print", session.cursor_msc == newest_ms, session.cursor_msc)
+    check(
+        "the short answer is said",
+        any(code == "BRIDGE_BACKFILL_RANGE_SHORT" for code, _ in logged),
+        [code for code, _ in logged],
+    )
+
+    session.sent.clear()
+    session.pump_ticks()
+    check("the live pump re-sends nothing", not block_ticks(session), len(block_ticks(session)))
 
 
 def test_an_empty_block_still_parks_the_live_cursor():
