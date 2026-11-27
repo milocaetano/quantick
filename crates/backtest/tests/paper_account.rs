@@ -9,7 +9,8 @@
 //! fills, closes or prices a trade differently from the harness, the two
 //! lists below stop being equal and this test says which trade moved.
 
-mod common;
+#[path = "../../stores/src/scratch.rs"]
+mod scratch;
 
 use std::path::Path;
 
@@ -23,7 +24,7 @@ use quantick_replay::session::Session;
 use quantick_sim::{Bracket, Command, ExitReason, history};
 use rust_decimal::Decimal;
 
-use common::ScratchDir;
+use scratch::ScratchDir;
 
 /// The 34-print opening auction the replay crate keeps as its own fixture.
 /// Included rather than copied: one recording, one copy of the truth.

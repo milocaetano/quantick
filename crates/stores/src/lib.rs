@@ -41,6 +41,8 @@ pub mod pane_style;
 pub mod paths;
 #[cfg(test)]
 mod scratch;
+#[cfg(test)]
+mod scratch_tests;
 pub mod script_alarms;
 pub mod script_library;
 pub mod symbol_catalog;

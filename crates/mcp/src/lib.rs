@@ -32,6 +32,7 @@ pub mod jsonrpc;
 pub mod link;
 pub mod protocol;
 #[cfg(test)]
+#[path = "../../stores/src/scratch.rs"]
 mod scratch;
 pub mod server;
 pub mod setup;
