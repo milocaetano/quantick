@@ -6,17 +6,17 @@ use std::rc::Rc;
 
 use quantick_engine::{Bar, Side};
 use quantick_sim::Command;
-use quantick_strategy::runner::{self, RunnerInstance, StrategyPort};
-use quantick_strategy::sound::Cue;
-use quantick_strategy::{
+use rust_decimal::Decimal;
+
+use super::compiled::{Script, ScriptFault};
+use super::placement::{ResolvedPlacement, ScriptPlacement};
+use super::trigger::{ScriptRun, ScriptTrigger};
+use crate::runner::{self, RunnerInstance, StrategyPort};
+use crate::sound::Cue;
+use crate::{
     AlarmParams, ArmedState, ArmedStrategy, BreakPolicy, DisarmReason, Execution, OrderQuantity,
     PriceBracket, Rearm, SignalAction, SignalAlarm, StrategyParams,
 };
-use rust_decimal::Decimal;
-
-use crate::placement::{ResolvedPlacement, ScriptPlacement};
-use crate::script::{Script, ScriptFault};
-use crate::trigger::{ScriptRun, ScriptTrigger};
 
 /// Whether an instance is still listening, and if not, why.
 #[derive(Debug, Clone, PartialEq, Eq)]

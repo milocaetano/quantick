@@ -1,7 +1,7 @@
 //! A Pine script as a strategy trigger: its `alertcondition`s pull it, and
 //! the kernel's placements decide where it may ring.
 //!
-//! The division of labour is `quantick-strategy`'s — the trigger answers
+//! The division of labour is the kernel's — the trigger answers
 //! *when*, a placement answers *where*, and the armed state machine joins
 //! them — with the force-bar ruler swapped for a script the trader wrote.
 //! [`ScriptTrigger`] runs one compiled `.pine` over every closed bar; an
@@ -19,15 +19,15 @@
 //! Headless like the kernel it plugs into: no UI, no network, no clock, no
 //! file reads — the caller hands in the source.
 //!
-//! [`Signal`]: quantick_strategy::Signal
-//! [`Execution::AlarmOnly`]: quantick_strategy::Execution::AlarmOnly
+//! [`Signal`]: crate::Signal
+//! [`Execution::AlarmOnly`]: crate::Execution::AlarmOnly
 
+mod compiled;
 mod instance;
 mod placement;
-mod script;
 mod trigger;
 
+pub use compiled::{ArmRefusal, Script, ScriptFault};
 pub use instance::{ScriptInstance, ScriptState};
 pub use placement::{ResolvedPlacement, ScriptPlacement};
-pub use script::{ArmRefusal, Script, ScriptFault};
 pub use trigger::{SCRIPT_FAULT, ScriptTrigger, WARMUP_BARS};

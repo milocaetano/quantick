@@ -67,7 +67,6 @@ pub const RANK: &[(&str, u8)] = &[
     ("control-schema", 5),
     ("session", 5),
     ("drawings", 4),
-    ("script-trigger", 4),
     ("stores", 4),
     ("chart", 3),
     ("feed", 3),

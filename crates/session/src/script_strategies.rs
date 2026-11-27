@@ -1,18 +1,17 @@
 //! The Pine scripts a tab arms on its panes — ringing, or placing paper
 //! orders — in plain words and numbers.
 //!
-//! The kernel types live in `quantick-script-trigger` and
-//! `quantick-strategy`, which the control crates may not reach
-//! (`guards/src/graph.rs`); a call arms, lists and disarms through here, as
+//! The kernel types live in `quantick-strategy`, `script` module included,
+//! which the control crates may not reach (`guards/src/graph.rs`); a call arms, lists and disarms through here, as
 //! [`crate::strategy_reading`] reads the drawn instances. Each instance rides
 //! one pane — the bars it judges are that pane's closes — and is evaluated
 //! with the pane's other strategies ([`TabStrategies::evaluate`]).
 
 use quantick_engine::{Bar, Side};
-pub use quantick_script_trigger::ScriptPlacement;
-use quantick_script_trigger::{Script, ScriptInstance, ScriptState, WARMUP_BARS};
 use quantick_sim::{Command, VenueEvent};
 use quantick_strategy::runner::StrategyPort;
+pub use quantick_strategy::script::ScriptPlacement;
+use quantick_strategy::script::{Script, ScriptInstance, ScriptState, WARMUP_BARS};
 pub use quantick_strategy::{OrderQuantity, SignalAction, SignalOrder};
 use rust_decimal::Decimal;
 

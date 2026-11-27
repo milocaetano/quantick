@@ -4,7 +4,7 @@ use crate::script_strategies::{NoAccount, ScriptReading, SignalAction};
 use crate::strategies::TabStrategies;
 pub use contract::{Diagnostic, DraftInput, HistoricalClose, Marker, PreparedAlarm};
 use quantick_engine::Side;
-use quantick_script_trigger::{ArmRefusal, Script, ScriptFault, ScriptInstance, WARMUP_BARS};
+use quantick_strategy::script::{ArmRefusal, Script, ScriptFault, ScriptInstance, WARMUP_BARS};
 
 fn diagnostic(fault: ScriptFault) -> Diagnostic {
     Diagnostic {
