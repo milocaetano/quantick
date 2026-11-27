@@ -1,14 +1,14 @@
 //! The production view `tools/outside_score/measure.py` takes of a Rust file,
-//! ported function for function so the ratchet and the rubric count the same
-//! thing.
+//! ported function for function so the ratchet and that script count the
+//! same thing.
 //!
-//! The rubric row this guard holds (`crate.<name>.impl_spread`, A3 in
-//! `docs/quality/outside-score-rubric.md`) is defined by that script, so its
+//! The script defines `crate.<name>.impl_spread`, and the read-cost and
+//! edit-loop tools load it as their frozen production lexer, so its
 //! definition is the one to match: a lexer that blanks comments and literal
 //! contents, then blanks every `#[cfg(test)]` item by brace matching. That is
 //! not [`crate::size::production_source`], whose line rule keeps comments and
 //! blank lines and sees only a column-0 `#[cfg(test)]`; reusing it would make
-//! the guard and the score disagree on the same tree, which is the divergence
+//! the guard and the script disagree on the same tree, which is the divergence
 //! this port exists to rule out. Each function names the Python one it
 //! mirrors, and works on `char`s because the script indexes code points.
 

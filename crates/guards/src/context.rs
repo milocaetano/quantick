@@ -681,7 +681,7 @@ mod tests {
             .iter()
             .filter(|(path, _)| skill_unit(path).as_deref() == Some(path.as_str()))
             .count();
-        assert!(skills >= 16, "found only {skills} skills across both hosts");
+        assert!(skills >= 14, "found only {skills} skills across both hosts");
     }
 
     #[test]

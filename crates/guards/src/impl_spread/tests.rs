@@ -5,9 +5,9 @@ use std::path::PathBuf;
 
 // --- The port of `measure.py`, against the shared corpus ---------------------
 //
-// `tools/outside_score/fixtures/expected.tsv` is read here and by
-// `tools/outside_score/test_measure.py`, so the two definitions are pinned to
-// one table rather than each to a hand-copied number.
+// `tools/outside_score/fixtures/expected.tsv` holds the per-file counts
+// `measure.py` gives the corpus, so the port is pinned to one table rather
+// than to a hand-copied number.
 
 fn corpus() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/outside_score/fixtures")
