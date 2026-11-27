@@ -24,7 +24,7 @@
   "additionalProperties": false,
   "properties": {
     "all_windows": {
-      "description": "Whether every chart window in the same market, workspace and named\nlayout shows it; only with `all_charts`. Absent leaves it unchanged.",
+      "description": "Whether every chart of the same market and workspace shows it,\nwhatever layout it shows; only with `all_charts`. Absent leaves it\nunchanged.",
       "type": [
         "boolean",
         "null"

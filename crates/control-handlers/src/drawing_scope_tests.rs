@@ -101,7 +101,7 @@ fn this_chart_on_an_undated_copy_holds_once_it_is_dated() {
     assert_eq!(set.pinned_bars.as_deref(), Some("tick:100"));
 
     let index = drawings.index_of(copy).unwrap();
-    drawings.set_times(index, &[Some(1_700_000_060_000)]);
+    drawings.restamp(index, |point| point.time_ms = Some(1_700_000_060_000));
     assert!(!drawings.items()[index].all_timeframes());
 }
 

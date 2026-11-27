@@ -9,9 +9,9 @@
 //! footprint is kept, so a script reading `poc` reads `na`.
 
 use quantick_engine::{Bar, Side};
-use quantick_script_trigger::{Script, ScriptInstance, ScriptPlacement};
 use quantick_sim::VenueEvent;
 use quantick_strategy::runner;
+use quantick_strategy::script::{Script, ScriptInstance, ScriptPlacement};
 use quantick_strategy::{OrderQuantity, PriceBracket, SignalAction, SignalOrder};
 use rust_decimal::Decimal;
 

@@ -1,0 +1,6 @@
+# The tab holds the "All windows" marks lent by layouts none of its panes
+# holds (quantick_drawings::LentMarks): one headless owner, painted on every
+# pane of the tab and never copied into a set. Signed growth against the
+# merge base.
+app::Tab +1
+!budget +1

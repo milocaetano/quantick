@@ -29,10 +29,10 @@
 use std::collections::BTreeMap;
 
 use quantick_engine::{Bar, Side};
-use quantick_script_trigger::{ScriptInstance, ScriptState, WARMUP_BARS};
 use quantick_strategy::anchors::AnchoredInstance;
 use quantick_strategy::presets::CompiledPreset;
 use quantick_strategy::runner::placement_or_hold;
+use quantick_strategy::script::{ScriptInstance, ScriptState, WARMUP_BARS};
 use quantick_strategy::{ArmedStrategy, ForceTrigger, Region};
 use rust_decimal::Decimal;
 

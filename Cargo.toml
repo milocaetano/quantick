@@ -34,7 +34,6 @@ members = [
     "crates/workspace",
     "crates/trading",
     "crates/strategy",
-    "crates/script-trigger",
     "crates/feed",
     "crates/feed-binance",
     "crates/feed-hyperliquid",

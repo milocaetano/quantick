@@ -46,8 +46,13 @@ where
 {
     registry.register(set_descriptor(), |host, access, actor, input| {
         let input: PositionSetInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-        let marks = host.addressed_pane(input.tab_id, input.pane_id)?.marks();
-        let result = set(marks, &input)?;
+        let pane = host.addressed_pane(input.tab_id, input.pane_id)?;
+        let result = set(pane.marks(), &input)?;
+        // A width moves an edge at an estimated pace; the pane names its time.
+        let id = DrawingId(input.drawing_id.get());
+        if let Some(index) = pane.marks().shown_index_of(id).filter(|_| result.changed) {
+            pane.restamp_mark(index);
+        }
         journal(access, actor, SET_EVENT_KIND, "position", &result)
     })?;
     registry.register(default_descriptor(), |host, access, actor, input| {
