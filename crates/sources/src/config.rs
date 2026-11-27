@@ -688,11 +688,7 @@ mod tests {
             .map(|provider| provider.capabilities())
             .chain([FeedCapabilities::none()]);
         for caps in answers {
-            let bits = [
-                caps.liquidations,
-                caps.open_interest,
-                caps.funding,
-            ];
+            let bits = [caps.liquidations, caps.open_interest, caps.funding];
             assert_eq!(bits, [false; 3], "{caps:?}");
         }
     }
