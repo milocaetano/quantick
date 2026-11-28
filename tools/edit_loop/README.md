@@ -1,7 +1,7 @@
 # Incremental package-test evidence
 
 This tool measures editing cost. It does not assign either Quantick score.
-The frozen [production lexer](../outside_score/measure.py) selects the actual
+The frozen [production lexer](lexer.py) selects the actual
 three largest crates at an exact clean commit, sorting by descending production
 lines and then crate name. Within each crate, the largest production `src/`
 module is the representative touched file (path breaks a tie). Test files and

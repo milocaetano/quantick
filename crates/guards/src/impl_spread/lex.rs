@@ -1,4 +1,4 @@
-//! The production view `tools/outside_score/measure.py` takes of a Rust file,
+//! The production view `tools/edit_loop/lexer.py` takes of a Rust file,
 //! ported function for function so the ratchet and that script count the
 //! same thing.
 //!

@@ -53,7 +53,7 @@ class Fixture(unittest.TestCase):
         self.write("crates/app/config/bubbles.toml", "# Offline tracked configuration.\n")
         self.write("tools/edit_loop/measure.py", "# Offline identity fixture; never executed.\n")
         self.write("tools/edit_loop/budgets.json", '{"schema":1,"status":"uncalibrated"}')
-        self.write("tools/outside_score/measure.py", inputs.FROZEN_LEXER.read_text(encoding="utf-8"))
+        self.write("tools/edit_loop/lexer.py", inputs.FROZEN_LEXER.read_text(encoding="utf-8"))
 
 
 class SelectionTests(Fixture):

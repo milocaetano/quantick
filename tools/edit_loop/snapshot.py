@@ -8,8 +8,7 @@ import tempfile
 
 import inputs
 
-ROOTS = ("crates", "tools/edit_loop", "tools/outside_score/measure.py",
-         "Cargo.toml", "Cargo.lock", "rust-toolchain.toml")
+ROOTS = ("crates", "tools/edit_loop", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml")
 
 
 def relative_path(name):
@@ -61,6 +60,6 @@ def facts(repo, sha):
                 found.add(relative)
         if found != set(expected):
             raise ValueError("Git archive omitted required measurement inputs")
-        if (root / "tools/outside_score/measure.py").read_bytes() != inputs.FROZEN_LEXER.read_bytes():
+        if (root / "tools/edit_loop/lexer.py").read_bytes() != inputs.FROZEN_LEXER.read_bytes():
             raise ValueError("the exact-SHA production lexer differs from the frozen checker")
         return {"input_hashes": inputs.input_hashes(root), "ranking": inputs.ranked_crates(root)}

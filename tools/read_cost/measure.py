@@ -55,8 +55,8 @@ class ReadCostError(RuntimeError):
 
 def load_production_lexer():
     here = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(here, "..", "outside_score", "measure.py")
-    spec = importlib.util.spec_from_file_location("outside_score_measure_frozen", path)
+    path = os.path.join(here, "..", "edit_loop", "lexer.py")
+    spec = importlib.util.spec_from_file_location("edit_loop_lexer_frozen", path)
     if spec is None or spec.loader is None:
         raise ReadCostError(f"cannot load production-line lexer at {path}")
     module = importlib.util.module_from_spec(spec)
@@ -610,9 +610,9 @@ def measure(repo, base_revision, head_revision):
         "merge_base": merge_base,
         "measurement_inputs": {
             "calculator_sha256": file_sha256(os.path.join(here, "measure.py")),
-            "production_lexer": "tools/outside_score/measure.py",
+            "production_lexer": "tools/edit_loop/lexer.py",
             "production_lexer_sha256": file_sha256(
-                os.path.join(here, "..", "outside_score", "measure.py")
+                os.path.join(here, "..", "edit_loop", "lexer.py")
             ),
         },
         "production_change": "measured" if roots else "not_applicable",
