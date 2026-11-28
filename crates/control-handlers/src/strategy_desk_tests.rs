@@ -2,9 +2,9 @@ use super::*;
 use crate::script_strategy::ScriptPane;
 use crate::tabs::TabDirectory;
 use crate::test_support::{FakeAccess, FakeTab, FakeWindow, Handler, docked};
+use quantick_chart::state::{ChartState, SpecSelector};
 use quantick_control_host::actions::ActionRegistry;
 use quantick_control_host::authority::CAPABILITY_VERSION;
-use quantick_chart::state::{ChartState, SpecSelector};
 use quantick_engine::BarSpec;
 use quantick_session::script_strategies::{ScriptArm, ScriptPlacement, SignalAction};
 use quantick_session::strategies::TabStrategies;
@@ -111,13 +111,13 @@ fn call(
 /// Run capability `id` as both families dock it; a command must answer that
 /// `id` is the call that ran.
 fn invoke(
-    docked: &ActionRegistry<Window, FakeAccess>,
+    registry: &ActionRegistry<Window, FakeAccess>,
     id: &str,
     window: &mut Window,
     access: &mut FakeAccess,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    let action = (docked.lookup(id, CAPABILITY_VERSION)).unwrap_or_else(|| panic!("{id} docks"));
+    let action = (registry.lookup(id, CAPABILITY_VERSION)).unwrap_or_else(|| panic!("{id} docks"));
     let answer = (action.handler)(window, access, &FakeWindow::assistant(), input)?;
     if let Some(ran) = answer.get("capability") {
         assert_eq!(ran, id, "{id} ran another call's handler");
@@ -145,16 +145,14 @@ fn every_desk_action_has_a_call() {
     let mut access = FakeAccess::default();
     arm_steady(&mut window, FLOW);
     arm_steady(&mut window, CONTEXT);
-    let mut docked = ActionRegistry::new();
-    register(&mut docked).expect("the desk docks");
-    crate::script_strategy::register(&mut docked).expect("the scripts dock");
+    let mut registry = ActionRegistry::new();
+    register(&mut registry).expect("the desk docks");
+    crate::script_strategy::register(&mut registry).expect("the scripts dock");
     let window = &mut window;
     let access = &mut access;
-    let mut run = |id: &str, input: Value| {
-        invoke(&docked, id, window, access, &input).unwrap_or_else(|error| panic!("{id}: {error:?}"))
-    };
+    let mut run = |id: &str, input: Value| invoke(&registry, id, window, access, &input);
 
-    let listed = run(LIST_CAPABILITY_ID, json!({}));
+    let listed = run(LIST_CAPABILITY_ID, json!({})).expect(LIST_CAPABILITY_ID);
     let groups = listed["groups"].as_array().expect("groups");
     assert_eq!(groups.len(), 2, "one group per bar type: {listed}");
     assert_eq!(groups[0]["symbol"], "WINZ26");
@@ -167,7 +165,7 @@ fn every_desk_action_has_a_call() {
     let flow_bars = groups[0]["bar_type"].clone();
 
     let asked = json!({"tab_id": "31", "instance": script("1")});
-    let read = run(DETAIL_CAPABILITY_ID, asked);
+    let read = run(DETAIL_CAPABILITY_ID, asked).expect(DETAIL_CAPABILITY_ID);
     assert_eq!(read["description"], "Steady rise");
     assert_eq!(read["inputs"], json!([{"name": "Length", "value": "14"}]));
     assert_eq!(read["code"], STEADY);
@@ -176,42 +174,41 @@ fn every_desk_action_has_a_call() {
     assert_eq!(read["history_slots"], json!([]));
 
     let one = json!({"tab_id": "31", "instance": script("1")});
-    let paused = run(PAUSE_CAPABILITY_ID, one.clone());
+    let paused = run(PAUSE_CAPABILITY_ID, one.clone()).expect(PAUSE_CAPABILITY_ID);
     assert_eq!(paused["changed"], 1);
     assert_eq!(paused["tab_id"], "31");
-    let resumed = run(RESUME_CAPABILITY_ID, one.clone());
+    let resumed = run(RESUME_CAPABILITY_ID, one.clone()).expect(RESUME_CAPABILITY_ID);
     assert_eq!(resumed["changed"], 1);
     let asset = json!({"symbol": "WINZ26", "bar_type": flow_bars});
-    let asset_paused = run(ASSET_PAUSE_CAPABILITY_ID, asset.clone());
+    let asset_paused =
+        run(ASSET_PAUSE_CAPABILITY_ID, asset.clone()).expect(ASSET_PAUSE_CAPABILITY_ID);
     assert_eq!(asset_paused["changed"], 1, "only the flow chart's asset");
     assert_eq!(asset_paused["tab_id"], Value::Null);
-    let listed = run(LIST_CAPABILITY_ID, json!({}));
+    let listed = run(LIST_CAPABILITY_ID, json!({})).expect(LIST_CAPABILITY_ID);
     assert_eq!(listed["groups"][0]["paused"], true);
     assert_eq!(listed["groups"][1]["paused"], false);
-    let asset_resumed = run(ASSET_RESUME_CAPABILITY_ID, asset);
+    let asset_resumed = run(ASSET_RESUME_CAPABILITY_ID, asset).expect(ASSET_RESUME_CAPABILITY_ID);
     assert_eq!(asset_resumed["changed"], 1);
 
-    let copy = run(DUPLICATE_CAPABILITY_ID, one.clone());
+    let copy = run(DUPLICATE_CAPABILITY_ID, one.clone()).expect(DUPLICATE_CAPABILITY_ID);
     assert_eq!(copy["created"], script("3"));
     let save = json!({"tab_id": "31", "instance": script("1"), "name": "steady_copy.pine"});
-    let saved = run(SAVE_AS_CAPABILITY_ID, save.clone());
+    let saved = run(SAVE_AS_CAPABILITY_ID, save.clone()).expect(SAVE_AS_CAPABILITY_ID);
     assert_eq!(saved["saved_as"], "steady_copy.pine");
     let written = std::fs::read_to_string(scratch.path().join("steady_copy.pine"));
     assert_eq!(written.ok().as_deref(), Some(STEADY));
-    let refused = invoke(&docked, SAVE_AS_CAPABILITY_ID, window, access, &save);
+    let refused = run(SAVE_AS_CAPABILITY_ID, save);
     assert!(refused.is_err(), "the name is taken");
 
-    let watching = invoke(&docked, ARM_CAPABILITY_ID, window, access, &one);
+    let watching = run(ARM_CAPABILITY_ID, one.clone());
     assert!(watching.is_err(), "a watching strategy is not armed again");
-    let mut run = |id: &str, input: Value| {
-        invoke(&docked, id, window, access, &input).unwrap_or_else(|error| panic!("{id}: {error:?}"))
-    };
     let removed = run(
         REMOVE_CAPABILITY_ID,
         json!({"tab_id": "31", "instance": script("3")}),
-    );
+    )
+    .expect(REMOVE_CAPABILITY_ID);
     assert_eq!(removed["changed"], 1);
-    let listed = run(LIST_CAPABILITY_ID, json!({}));
+    let listed = run(LIST_CAPABILITY_ID, json!({})).expect(LIST_CAPABILITY_ID);
     assert_eq!(listed["groups"][0]["count"], 1, "the copy is gone");
 
     let kinds = access.events.iter().map(|event| event.kind.to_string());
@@ -238,16 +235,28 @@ fn every_desk_action_has_a_call() {
     // The calls left, each with a field only its own handler answers.
     let _ = window.strategies.pane_mut(CONTEXT).scripts[0]
         .halt(quantick_session::strategies::DRAWING_REMOVED);
-    let arm = json!({"script": "steady_copy.pine", "side": "buy", "placement": {"kind": "anywhere"}});
+    let arm =
+        json!({"script": "steady_copy.pine", "side": "buy", "placement": {"kind": "anywhere"}});
     for (id, input, answers) in [
-        (ARM_CAPABILITY_ID, json!({"tab_id": "31", "instance": script("2")}), "/changed"),
-        (ACTION_SET_CAPABILITY_ID, json!({"id": "1", "action": "alarm"}), "/changed"),
+        (
+            ARM_CAPABILITY_ID,
+            json!({"tab_id": "31", "instance": script("2")}),
+            "/changed",
+        ),
+        (
+            ACTION_SET_CAPABILITY_ID,
+            json!({"id": "1", "action": "alarm"}),
+            "/changed",
+        ),
         (scripts::LIST_CAPABILITY_ID, json!({}), "/library"),
         (scripts::ARM_CAPABILITY_ID, arm, "/strategy/script"),
-        (scripts::DISARM_CAPABILITY_ID, json!({"id": "1"}), "/disarmed"),
+        (
+            scripts::DISARM_CAPABILITY_ID,
+            json!({"id": "1"}),
+            "/disarmed",
+        ),
     ] {
-        let answer = invoke(&docked, id, window, access, &input);
-        let answer = answer.unwrap_or_else(|error| panic!("{id}: {error:?}"));
+        let answer = invoke(&registry, id, window, access, &input).expect(id);
         assert!(answer.pointer(answers).is_some(), "{id}: {answer}");
     }
 }
@@ -272,7 +281,12 @@ fn an_ended_script_is_armed_again_through_its_call() {
     );
 
     assert_eq!(armed["changed"], 1);
-    let listed = call(docked::<ListInput, _>(), &mut window, &mut access, json!({}));
+    let listed = call(
+        docked::<ListInput, _>(),
+        &mut window,
+        &mut access,
+        json!({}),
+    );
     assert_eq!(listed["groups"][0]["rows"][0]["state"], "watching");
 }
 

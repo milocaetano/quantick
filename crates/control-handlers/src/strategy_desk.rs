@@ -45,9 +45,8 @@ use crate::dock::ActionDock;
 use crate::invalid;
 use crate::market_tab::MarketTabHost;
 use crate::script_strategy::{
-    DEFAULT_LIBRARY, FireAction, Placement, READ_PERMISSIONS,
-    ScriptPane, ScriptStrategyHost, ScriptTab, action_words, footprint_warmup, placement,
-    script_action, signal_action,
+    DEFAULT_LIBRARY, FireAction, Placement, READ_PERMISSIONS, ScriptPane, ScriptStrategyHost,
+    ScriptTab, action_words, footprint_warmup, placement, script_action, signal_action,
 };
 use crate::session::SessionTab;
 use crate::tabs::{tab_closed, tab_index};
@@ -530,10 +529,6 @@ const fn command(
     }
 }
 
-fn by_instance(spec: &CallSpec) -> CapabilityDescriptor {
-    script_action(spec, BY_INSTANCE)
-}
-
 /// One of the desk's own commands: its spec and what its input sends.
 trait DeskCommand {
     type Input: DeserializeOwned + JsonSchema;
@@ -579,7 +574,7 @@ impl DeskCommand for Pause {
         PAUSE_CAPABILITY_ID,
         "Pause a strategy",
         "Pauses one watching strategy: it rings and places nothing, while its script or ruler keeps reading closes, so a resume judges the next close as a never-paused one would. A resting order or an open position keeps its course. Pausing a paused one changes nothing; an ended one is refused. Journaled as strategy.desk.changed.",
-        by_instance,
+        |spec| script_action(spec, BY_INSTANCE),
     );
     const SEND: fn(InstanceInput) -> Sent = |input| of_instance(input, StrategyDeskCommand::Pause);
 }
@@ -592,7 +587,7 @@ impl DeskCommand for Resume {
         RESUME_CAPABILITY_ID,
         "Resume a strategy",
         "Resumes one paused strategy from the next close. Resuming a watching one changes nothing; an ended one is refused, and so is a drawn strategy that places paper orders: only the trader restarts those. Journaled as strategy.desk.changed.",
-        by_instance,
+        |spec| script_action(spec, BY_INSTANCE),
     );
     const SEND: fn(InstanceInput) -> Sent = |input| of_instance(input, StrategyDeskCommand::Resume);
 }
@@ -650,7 +645,7 @@ impl DeskCommand for Arm {
         ARM_CAPABILITY_ID,
         "Arm an ended strategy",
         "Arms one ended strategy again, warmed on the chart's latest closes and unpaused; a script is recompiled from the source it was armed with. A watching one, one whose drawing no longer passes the arm check, and a drawn one that places paper orders are refused. Journaled as strategy.desk.changed.",
-        by_instance,
+        |spec| script_action(spec, BY_INSTANCE),
     );
     const SEND: fn(InstanceInput) -> Sent = |input| of_instance(input, StrategyDeskCommand::Arm);
 }
@@ -668,7 +663,10 @@ impl DeskCommand for SaveAsInput {
     const SEND: fn(Self) -> Sent = |input| {
         let instance = instance_ref(input.instance);
         let name = input.name;
-        (input.tab_id.get(), StrategyDeskCommand::SaveAs { instance, name })
+        (
+            input.tab_id.get(),
+            StrategyDeskCommand::SaveAs { instance, name },
+        )
     };
 }
 
@@ -684,7 +682,8 @@ impl DeskCommand for Duplicate {
         "Arms a copy beside one strategy — the same script or preset, side and placement on the same chart — paused, and answers its id. A drawing that no longer passes the arm check, and a drawn strategy that places paper orders, are refused. Journaled as strategy.desk.changed.",
         |spec| script_action(spec, EACH_DUPLICATE_ARMS),
     );
-    const SEND: fn(InstanceInput) -> Sent = |input| of_instance(input, StrategyDeskCommand::Duplicate);
+    const SEND: fn(InstanceInput) -> Sent =
+        |input| of_instance(input, StrategyDeskCommand::Duplicate);
 }
 
 /// `strategy.script.action.set`: the trade tier's, because it can make a

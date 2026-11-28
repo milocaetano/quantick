@@ -128,7 +128,13 @@ fn arm_list_and_disarm_a_script_strategy() {
     assert_eq!(second["strategy"]["id"], "2");
     assert_eq!(second["strategy"]["pane_id"], "6");
 
-    let listed = call(docked::<ListInput, _>(), &mut window, &mut access, json!({})).expect("lists");
+    let listed = call(
+        docked::<ListInput, _>(),
+        &mut window,
+        &mut access,
+        json!({}),
+    )
+    .expect("lists");
     assert_eq!(listed["library"]["folder"], BUNDLED);
     let scripts = listed["library"]["scripts"].as_array().expect("names");
     assert!(
@@ -164,7 +170,13 @@ fn arm_list_and_disarm_a_script_strategy() {
     .expect("answers");
     assert_eq!(again["disarmed"], false);
     assert_eq!(again["strategy"], Value::Null);
-    let left = call(docked::<ListInput, _>(), &mut window, &mut access, json!({})).expect("lists");
+    let left = call(
+        docked::<ListInput, _>(),
+        &mut window,
+        &mut access,
+        json!({}),
+    )
+    .expect("lists");
     assert_eq!(left["armed"].as_array().map(Vec::len), Some(1));
 
     let kinds: Vec<_> = access
@@ -250,8 +262,13 @@ fn an_unreadable_folder_lists_its_reason_and_a_missing_script_names_it() {
     let mut window = window();
     window.dir = Some(format!("{BUNDLED}/no-such-folder"));
     let mut access = FakeAccess::default();
-    let listed = call(docked::<ListInput, _>(), &mut window, &mut access, json!({}))
-        .expect("the list still answers");
+    let listed = call(
+        docked::<ListInput, _>(),
+        &mut window,
+        &mut access,
+        json!({}),
+    )
+    .expect("the list still answers");
     assert_eq!(listed["library"]["found"], false);
     let reason = listed["library"]["error"].as_str().expect("labelled");
     assert!(reason.contains("strategy library folder"), "{reason}");
@@ -287,8 +304,13 @@ fn an_unreadable_folder_still_lists_and_arms_the_bundled_scripts() {
     let mut window = window();
     window.dir = Some(format!("{BUNDLED}/no-such-folder"));
     let mut access = FakeAccess::default();
-    let listed = call(docked::<ListInput, _>(), &mut window, &mut access, json!({}))
-        .expect("the list still answers");
+    let listed = call(
+        docked::<ListInput, _>(),
+        &mut window,
+        &mut access,
+        json!({}),
+    )
+    .expect("the list still answers");
     let scripts = listed["library"]["scripts"].as_array().expect("names");
     assert!(
         scripts.contains(&json!("renko_poc_flip.pine")),
