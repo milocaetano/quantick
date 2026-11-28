@@ -135,19 +135,12 @@ impl FeedConfig {
 }
 
 impl AppConfig {
-    /// `symbol`'s widget setup on `feed_id`, and what a quantity on it
-    /// counts (its asset mode's unit; empty without one).
+    /// `symbol`'s widget setup on `feed_id`.
     #[must_use]
-    pub fn widget_setup(&self, feed_id: &str, symbol: &str) -> (WidgetSetup, String) {
-        let feed = self.feed(feed_id);
-        let setup = feed
+    pub fn widget_setup(&self, feed_id: &str, symbol: &str) -> WidgetSetup {
+        self.feed(feed_id)
             .map(|feed| feed.widget_setup(symbol))
-            .unwrap_or_default();
-        let mode = feed.and_then(|feed| feed.bubble_asset(symbol).mode);
-        (
-            setup,
-            mode.map(|mode| mode.quantity_unit).unwrap_or_default(),
-        )
+            .unwrap_or_default()
     }
 }
 

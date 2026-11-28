@@ -1,6 +1,5 @@
 use quantick_chart::widgets::depth::DEPTH_EMPTY;
 use quantick_chart::widgets::liquidations::LIQUIDATIONS_NOT_PROVIDED;
-use quantick_chart::widgets::open_interest::OPEN_INTEREST_NOT_PROVIDED;
 use quantick_engine::{Side, Trade};
 
 use super::*;
@@ -53,7 +52,6 @@ fn feed<'a>(
         fallback_tick: d("0.5"),
         trades,
         setup,
-        base_unit: "BTC",
         tz: TzOffset::new(0),
         prints: None,
     }
@@ -176,16 +174,11 @@ fn depth_needs_a_book_and_says_which_is_missing() {
 }
 
 #[test]
-fn derivative_panes_say_the_feed_does_not_provide_them() {
+fn the_liquidations_pane_says_the_feed_does_not_provide_it() {
     let (trades, setup) = (tape(), usd());
     let feed = feed(&trades, &setup, FeedCapabilities::none());
-    let builders: [(SceneBuilder, &str); 2] = [
-        (liquidations_scene, LIQUIDATIONS_NOT_PROVIDED),
-        (open_interest_scene, OPEN_INTEREST_NOT_PROVIDED),
-    ];
-    for (build, text) in builders {
-        assert_eq!(build(&feed, SIZE.0, SIZE.1).empty.as_deref(), Some(text));
-    }
+    let scene = liquidations_scene(&feed, SIZE.0, SIZE.1);
+    assert_eq!(scene.empty.as_deref(), Some(LIQUIDATIONS_NOT_PROVIDED));
 }
 
 #[test]

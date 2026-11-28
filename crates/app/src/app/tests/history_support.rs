@@ -167,8 +167,6 @@ pub(super) fn app_backfilled_with(
                 ohlcv_aggressor_split: false,
                 native_candle_intervals: false,
                 liquidations: false,
-                open_interest: false,
-                funding: false,
                 order_routing: false,
             }),
             latency: feed::unsplit_latency(),

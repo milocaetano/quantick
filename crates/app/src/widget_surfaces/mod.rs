@@ -20,11 +20,10 @@ use crate::config::AppConfig;
 use crate::pane::PaneSide;
 
 #[rustfmt::skip]
-pub(crate) const WIDGET_SURFACES: [WidgetSpec; 4] = [
+pub(crate) const WIDGET_SURFACES: [WidgetSpec; 3] = [
     WidgetSpec { id: "depth", title: "DEPTH", gate: |caps| caps.book_capture, book: true, tape: true, scene: handlers::depth_scene },
     WidgetSpec { id: "big_trades", title: "BIG TRADES", gate: |_| true, book: false, tape: true, scene: handlers::big_trades_scene },
     WidgetSpec { id: "liquidations", title: "LIQUIDATIONS", gate: |caps| caps.liquidations, book: false, tape: false, scene: handlers::liquidations_scene },
-    WidgetSpec { id: "open_interest", title: "OI + FUNDING", gate: |caps| caps.open_interest, book: false, tape: false, scene: handlers::open_interest_scene },
 ];
 
 /// Whether a feed with `capabilities` serves the surface `id`.
@@ -55,7 +54,7 @@ fn with_feed<R>(
     let tab = tabs.runtime_mut(tabs.active_index());
     let capabilities = tab.capabilities(config);
     let market = format!("{} · {}", tab.symbol, tab.feed_display_name(config));
-    let (setup, base_unit) = config.widget_setup(&tab.feed_id, &tab.symbol);
+    let setup = config.widget_setup(&tab.feed_id, &tab.symbol);
     let pane = tab.pane_mut(PaneSide::Flow);
     let at_ms = pane
         .orderflow
@@ -71,7 +70,6 @@ fn with_feed<R>(
             fallback_tick: book.map(|book| book.2).unwrap_or_default(),
             trades: pane.series.state.trades(),
             setup: &setup,
-            base_unit: &base_unit,
             tz,
             prints: None,
         },

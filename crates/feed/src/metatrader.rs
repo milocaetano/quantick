@@ -320,8 +320,6 @@ fn session_capabilities(
         // The bridge pushes one block; it cannot be asked for an interval.
         native_candle_intervals: false,
         liquidations: false,
-        open_interest: false,
-        funding: false,
         // A live terminal: the account it is logged into can take orders.
         order_routing: true,
     }

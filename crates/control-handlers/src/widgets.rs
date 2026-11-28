@@ -22,9 +22,6 @@ use quantick_chart::widgets::depth::{
 use quantick_chart::widgets::liquidations::{
     LIQUIDATION_HISTOGRAM_ROWS, LiquidationsLayout, liquidations_view,
 };
-use quantick_chart::widgets::open_interest::{
-    OpenInterestLayout, open_interest_plot_px, open_interest_view,
-};
 use quantick_chart::widgets::scene::{ROW_PX, WidgetScene};
 use quantick_civil::TzOffset;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
@@ -68,8 +65,6 @@ pub struct WidgetFeed<'a> {
     pub fallback_tick: Decimal,
     pub trades: &'a TradeTape,
     pub setup: &'a WidgetSetup,
-    /// What a quantity counts (`BTC`, `contracts`), from the asset's mode.
-    pub base_unit: &'a str,
     pub tz: TzOffset,
     /// The tape's recent prints, when [`WidgetDeck`] already copied them;
     /// `None` reads them from `trades`.
@@ -181,20 +176,6 @@ pub fn liquidations_scene(feed: &WidgetFeed<'_>, width: f32, height: f32) -> Wid
         histogram_height_px: LIQUIDATION_HISTOGRAM_ROWS * ROW_PX,
     };
     liquidations_view(None, &layout).paint(width, height)
-}
-
-/// No feed polls open interest or funding yet, so the pane says so.
-#[must_use]
-pub fn open_interest_scene(feed: &WidgetFeed<'_>, width: f32, height: f32) -> WidgetScene {
-    let (plot_width_px, plot_height_px) = open_interest_plot_px(width, height);
-    let layout = OpenInterestLayout {
-        tick: feed.tick(),
-        base_unit: feed.base_unit,
-        unit: feed.unit(),
-        plot_width_px,
-        plot_height_px,
-    };
-    open_interest_view(None, &layout).paint(width, height)
 }
 
 /// What a cached scene was built from.

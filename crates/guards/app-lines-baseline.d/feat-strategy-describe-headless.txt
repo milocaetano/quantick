@@ -1,3 +1,0 @@
-# This branch moved strategy-describe logic into ui-model; signed growth against the merge base.
-crates/app -233
-!budget -233

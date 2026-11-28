@@ -88,8 +88,6 @@ fn push_feed_app_restoring(
         ohlcv_aggressor_split: true,
         native_candle_intervals: false,
         liquidations: false,
-        open_interest: false,
-        funding: false,
         order_routing: false,
     });
     let mut app = QuantickApp::new(

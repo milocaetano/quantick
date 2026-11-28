@@ -211,10 +211,6 @@
           "description": "Defaults off for snapshots produced before deal counters existed.",
           "type": "boolean"
         },
-        "funding": {
-          "default": false,
-          "type": "boolean"
-        },
         "history_boundary": {
           "anyOf": [
             {
@@ -231,11 +227,7 @@
         },
         "liquidations": {
           "default": false,
-          "description": "The derivative streams the widget panes 3 and 4 gate on; false on\nevery provider today. Optional, so additive to v1.",
-          "type": "boolean"
-        },
-        "open_interest": {
-          "default": false,
+          "description": "The derivative stream the Liquidations pane gates on; false on\nevery provider today. Optional, so additive to v1.",
           "type": "boolean"
         },
         "traded_volume": {

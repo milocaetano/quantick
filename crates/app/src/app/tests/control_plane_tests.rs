@@ -745,8 +745,6 @@ fn a_capability_that_rises_later_is_asked_again() {
         ohlcv_aggressor_split: false,
         native_candle_intervals: false,
         liquidations: false,
-        open_interest: false,
-        funding: false,
         order_routing: false,
     });
     let mut app = QuantickApp::new(
@@ -837,8 +835,6 @@ fn a_new_candle_generation_is_asked_for_again_and_installed() {
         ohlcv_aggressor_split: false,
         native_candle_intervals: false,
         liquidations: false,
-        open_interest: false,
-        funding: false,
         order_routing: false,
     });
     let mut app = QuantickApp::new(

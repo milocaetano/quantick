@@ -419,8 +419,6 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
             ohlcv_aggressor_split: false,
             native_candle_intervals: false,
             liquidations: false,
-            open_interest: false,
-            funding: false,
             order_routing: false,
         }),
         commands: cmd_tx,

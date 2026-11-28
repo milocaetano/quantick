@@ -6,7 +6,6 @@
 pub mod big_trades;
 pub mod depth;
 pub mod liquidations;
-pub mod open_interest;
 pub mod ports;
 
 #[cfg(test)]
@@ -15,5 +14,3 @@ mod big_trades_tests;
 mod depth_tests;
 #[cfg(test)]
 mod liquidations_tests;
-#[cfg(test)]
-mod open_interest_tests;

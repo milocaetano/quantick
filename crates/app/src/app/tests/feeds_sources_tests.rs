@@ -2094,8 +2094,6 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
         ohlcv_aggressor_split: false,
         native_candle_intervals: false,
         liquidations: false,
-        open_interest: false,
-        funding: false,
         order_routing: false,
     });
     let mut app = QuantickApp::new(
