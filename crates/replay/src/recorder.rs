@@ -1026,7 +1026,7 @@ mod tests {
     use super::*;
 
     use crate::deals::HEADER;
-    use crate::scratch::Scratch as ScratchDir;
+    use crate::scratch::ScratchDir;
 
     /// A recording folder of the test's own, gone with the value.
     fn scratch(name: &str) -> ScratchDir {

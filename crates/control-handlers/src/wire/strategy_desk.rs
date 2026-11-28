@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::wire::readback::{EVERY_FORBIDDEN_TEST, Readback, journal};
 pub use crate::wire::script_strategy::FireAction;
 use crate::wire::script_strategy::{Placement, SCRIPT_NAME_MAX_BYTES};
-use crate::wire::trade::ActionSide;
+use quantick_trading::ActionSide;
 
 pub const LIST_CAPABILITY_ID: &str = "strategy.desk.list";
 pub const DETAIL_CAPABILITY_ID: &str = "strategy.desk.detail";
@@ -304,25 +304,6 @@ pub fn command_descriptors() -> Vec<CapabilityDescriptor> {
     ]
 }
 
-/// `strategy.script.action.set`: the trade tier's, because it can make a
-/// script place paper orders — the desk's own calls never start orders.
-/// Setting the same action twice leaves the same action.
-#[must_use]
-pub fn action_set_descriptor() -> CapabilityDescriptor {
-    let mut descriptor = crate::wire::trade::descriptor(
-        ACTION_SET_CAPABILITY_ID,
-        "Set what a script strategy does when it fires",
-        "Sets what one armed script strategy does from its next close: `alarm` rings and places nothing; `order` places a paper market order of `quantity` (a size above zero in the instrument's units, or `ticket` for the ticket's quantity when the bar closes) with a stop `stop` and a target `gain` away from the entry, in price (absent or 0: no leg). A resting order or an open position keeps its course. A drawn strategy takes its action from its preset and is refused, as are an order with no quantity, a quantity of zero or less, a distance below zero, and quantity, stop or gain sent with `alarm`. strategy.script.list and strategy.desk.detail read it back. Journaled as strategy.desk.changed.",
-        generated_schema::<ActionSetInput>(),
-        false,
-        "The instance is named by an id never reused in the tab's session, and the call states the whole action, so a repeat leaves the instance as the first call did; an id that has since been removed is refused.",
-    );
-    descriptor.module = ModuleId::new(STRATEGY_MODULE_ID).expect("static module ID is valid");
-    descriptor.output_schema = generated_schema::<CommandResult>();
-    descriptor.idempotency = IdempotencyPolicy::Optional;
-    descriptor
-}
-
 #[must_use]
 pub fn list_descriptor() -> CapabilityDescriptor {
     read_descriptor::<ListInput, ListResult>(&ReadSpec {
@@ -363,7 +344,10 @@ pub const READBACKS: &[Readback] = &[
         CHANGED_EVENT_KIND,
         "payload.capability",
         "an event after the pre-call cursor names the call; strategy.script.list shows the action, quantity, stop and gain",
-        &[ACTION_SET_TEST, crate::wire::trade::TRADE_UNREACHABLE_TEST],
+        &[
+            ACTION_SET_TEST,
+            crate::wire::readback::TRADE_UNREACHABLE_TEST,
+        ],
     ),
 ];
 

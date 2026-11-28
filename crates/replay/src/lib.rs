@@ -66,6 +66,7 @@ pub mod home;
 pub mod library;
 pub mod recorder;
 #[cfg(test)]
+#[path = "../../stores/src/scratch.rs"]
 mod scratch;
 pub mod session;
 

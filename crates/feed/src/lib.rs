@@ -49,6 +49,7 @@ pub mod replay;
 pub mod replay_desk;
 pub mod replay_download;
 #[cfg(test)]
+#[path = "../../stores/src/scratch.rs"]
 mod scratch;
 pub mod stall;
 pub mod sync;

@@ -36,7 +36,6 @@ fn posture(spec: &CallSpec) -> CapabilityDescriptor {
         "test.posture.only",
         "posture title",
         "posture description",
-        Value::Null,
         true,
         "stale",
     );

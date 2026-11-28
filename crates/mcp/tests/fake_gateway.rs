@@ -5,7 +5,8 @@
 //! discovery, the real `LocalClient`, the real `LocalLink` and the real
 //! `McpServer` run over it — only the application is replaced.
 
-mod common;
+#[path = "../../stores/src/scratch.rs"]
+mod scratch;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -280,8 +281,8 @@ fn answer(instance_id: &InstanceId, request: &RequestEnvelope) -> ResponseOutcom
     }
 }
 
-fn scratch_directory(name: &str) -> common::ScratchDir {
-    common::ScratchDir::new(name)
+fn scratch_directory(name: &str) -> scratch::ScratchDir {
+    scratch::ScratchDir::new(name)
 }
 
 #[test]

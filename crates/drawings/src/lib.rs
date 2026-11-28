@@ -55,6 +55,7 @@ mod tools;
 mod update;
 
 #[cfg(test)]
+#[path = "../../stores/src/scratch.rs"]
 mod scratch;
 
 pub use color::{RgbaExt, TRANSPARENT, WHITE, opaque, rgba_premultiplied, rgba_unmultiplied};

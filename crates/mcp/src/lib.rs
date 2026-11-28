@@ -24,14 +24,16 @@
 //! - [`tools`]: the fixed observer tool set and how each maps to a capability;
 //! - [`server`]: the request loop that turns lines into answers;
 //! - [`setup`]: the Codex / Claude Code registration assistant;
-//! - [`fake`]: a second implementation of the port, for tests.
+//! - `fake`: a second implementation of the port, for tests (`fake` feature).
 
 mod capture_chart;
+#[cfg(any(test, feature = "fake"))]
 pub mod fake;
 pub mod jsonrpc;
 pub mod link;
 pub mod protocol;
 #[cfg(test)]
+#[path = "../../stores/src/scratch.rs"]
 mod scratch;
 pub mod server;
 pub mod setup;

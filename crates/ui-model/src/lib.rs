@@ -11,6 +11,7 @@ pub mod layout_picker;
 pub mod manage_workspaces;
 pub mod paper_report;
 #[cfg(test)]
+#[path = "../../stores/src/scratch.rs"]
 mod scratch;
 pub mod store_home;
 pub mod strategy_describe_contract;

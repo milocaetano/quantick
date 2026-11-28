@@ -14,7 +14,6 @@ use crate::wire::script_strategy::{
     DisarmInput, DisarmResult, FireAction, LibraryListing, ListInput, ListResult, Placement,
     ScriptStrategy, ScriptStrategyState, TICKET_QUANTITY,
 };
-use crate::wire::trade::ActionSide;
 use quantick_chart::pane_series::PaneSeriesRead;
 use quantick_control::error::ControlError;
 use quantick_control::registry::RegistryError;
@@ -28,6 +27,7 @@ use quantick_session::script_strategies::{
 };
 use quantick_session::strategies::TabStrategies;
 use quantick_stores::script_library::{LoadedScript, ScriptLibrary};
+use quantick_trading::ActionSide;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use std::path::Path;

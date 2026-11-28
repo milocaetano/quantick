@@ -1,9 +1,8 @@
 //! A bridge with no terminal behind it, for tests and for callers that need
 //! a broker venue without a socket.
 //!
-//! Shipped rather than hidden behind `#[cfg(test)]` for the reason
-//! `quantick_trading::fake` is: the app's wiring proves itself against it
-//! from another crate. It decides nothing — a test says what the bridge
+//! Shipped rather than hidden behind `#[cfg(test)]`: the app's wiring
+//! proves itself against it from another crate. It decides nothing — a test says what the bridge
 //! answers, line by line, and reads back what the venue sent.
 
 use std::sync::{Arc, Mutex, PoisonError};

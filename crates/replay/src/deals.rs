@@ -292,11 +292,11 @@ pub fn scan_days(folder: &Path, cache: &mut DayCache) -> Vec<RecordedDealDay> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scratch::Scratch;
+    use crate::scratch::ScratchDir;
 
     #[test]
     fn a_broken_file_is_refused_below_the_application() {
-        let scratch = Scratch::new("broken-deals");
+        let scratch = ScratchDir::new("broken-deals");
         let path = scratch.write("broken.deals", "not a deal recording\n");
         let error = read_file(&path).unwrap_err();
         assert!(error.to_string().contains("line 1"), "{error}");

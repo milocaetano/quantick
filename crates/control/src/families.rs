@@ -100,8 +100,8 @@ macro_rules! control_families {
             ticket_money { wire: none, handlers: [pub ticket_money], actions: [] }
             time_axis { wire: [catalog, readbacks], handlers: [pub time_axis], actions: [register] }
             trace_replay { wire: [], handlers: [], actions: [] }
-            trade { wire: [readbacks], handlers: [pub trade], actions: [register] }
-            trade_account { wire: [readbacks], handlers: [pub trade_account], actions: [] }
+            trade { wire: [handler_readbacks: trade], handlers: [pub trade], actions: [register] }
+            trade_account { wire: [handler_readbacks: trade_account], handlers: [pub trade_account], actions: [] }
             ui_behaviours { wire: [], handlers: [], actions: [] }
             widget { wire: [catalog, readbacks], handlers: [], actions: [] }
             widgets { wire: none, handlers: [pub widgets], actions: [register] }

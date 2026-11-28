@@ -6,7 +6,6 @@ use crate::{
     cursor::{EventCursor, PageCursor},
     descriptor::InstanceDescriptor,
     error::ControlError,
-    fake::reference_registry,
     handshake::{HandshakeReply, HandshakeRequest, HandshakeResponse},
     registry::CapabilityDescriptor,
     schema::generated_schema,
@@ -41,6 +40,9 @@ pub fn public_schema_documents() -> Vec<PublicSchemaDocument> {
     ]
 }
 
+/// The schemas plus the reference capability catalog, which only the
+/// reference host (`fake`) registers.
+#[cfg(any(test, feature = "fake"))]
 pub fn public_contract_documents() -> Vec<PublicContractDocument> {
     let mut documents = public_schema_documents()
         .into_iter()
@@ -50,7 +52,8 @@ pub fn public_contract_documents() -> Vec<PublicContractDocument> {
             is_json_schema: true,
         })
         .collect::<Vec<_>>();
-    let registry = reference_registry().expect("reference capability registry must be valid");
+    let registry =
+        crate::fake::reference_registry().expect("reference capability registry must be valid");
     documents.push(PublicContractDocument {
         file_name: "reference-capabilities-v1.json",
         document: serde_json::json!({

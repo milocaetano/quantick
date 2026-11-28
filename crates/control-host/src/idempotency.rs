@@ -8,7 +8,7 @@
 //! one of those keys before dispatch, so a client that read the descriptor
 //! and did the correct thing got `control.invalid_request` for its trouble.
 //!
-//! The shape is the reference host's — [`quantick_control::fake`] has carried
+//! The shape is the reference host's — `quantick_control::fake` has carried
 //! it since the contract was written — with the differences a real gateway
 //! forces:
 //!

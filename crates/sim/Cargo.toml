@@ -11,5 +11,9 @@ quantick-engine = { path = "../engine" }
 quantick-trading = { path = "../trading" }
 rust_decimal = { workspace = true }
 
+[dev-dependencies]
+# `quantick_trading::fake`, the second venue the port tests run against.
+quantick-trading = { path = "../trading", features = ["fake"] }
+
 [lints]
 workspace = true

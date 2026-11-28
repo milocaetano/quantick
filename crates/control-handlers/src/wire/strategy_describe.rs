@@ -66,7 +66,7 @@ pub struct Save {
 pub struct Marker {
     pub slot: usize,
     pub close_time: i64,
-    pub side: crate::wire::trade::ActionSide,
+    pub side: quantick_trading::ActionSide,
 }
 #[derive(Serialize, JsonSchema)]
 pub struct Turn {

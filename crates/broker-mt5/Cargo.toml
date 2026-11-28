@@ -19,6 +19,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+# `quantick_trading::fake`, the second venue the port tests run against.
+quantick-trading = { path = "../trading", features = ["fake"] }
 proptest = { workspace = true }
 
 [lints]

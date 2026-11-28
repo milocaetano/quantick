@@ -547,7 +547,7 @@ pub fn date_from_path(path: &Path) -> Option<SessionDate> {
 mod tests {
     use super::*;
 
-    use crate::scratch::Scratch;
+    use crate::scratch::ScratchDir;
 
     const CONTEXT: &str = "\
 # quantick-context 1
@@ -560,7 +560,7 @@ Date,Time,Open,High,Low,Close,Volume
 
     #[test]
     fn a_context_file_beside_the_tape_is_loaded_with_it() {
-        let scratch = Scratch::new("session-context");
+        let scratch = ScratchDir::new("session-context");
         let tape = scratch.write("WINJ26/20260316.csv", SAMPLE);
         scratch.write("WINJ26/20260316.context.csv", CONTEXT);
 
@@ -578,7 +578,7 @@ Date,Time,Open,High,Low,Close,Volume
 
     #[test]
     fn a_session_with_no_context_file_loads_unchanged() {
-        let scratch = Scratch::new("session-no-context");
+        let scratch = ScratchDir::new("session-no-context");
         let tape = scratch.write("WINJ26/20260316.csv", SAMPLE);
 
         let session = Session::load(&tape, ParseOptions::default()).unwrap();
@@ -589,7 +589,7 @@ Date,Time,Open,High,Low,Close,Volume
 
     #[test]
     fn a_broken_context_never_costs_the_trader_the_session() {
-        let scratch = Scratch::new("session-bad-context");
+        let scratch = ScratchDir::new("session-bad-context");
         let tape = scratch.write("WINJ26/20260316.csv", SAMPLE);
         // No `# interval_ms=`, so the candles cannot be folded to anything.
         scratch.write(
@@ -710,7 +710,7 @@ Date,Time,Price,Volume,Side
 
     #[test]
     fn the_day_before_is_the_newest_tape_that_sits_before_this_one() {
-        let scratch = Scratch::new("day-before-pick");
+        let scratch = ScratchDir::new("day-before-pick");
         scratch.write("WINJ26/20260313.csv", &tape("2026-03-13", 181_000));
         scratch.write("WINJ26/20260312.csv", &tape("2026-03-12", 180_000));
         let monday = scratch.write("WINJ26/20260316.csv", &tape("2026-03-16", 182_000));
@@ -727,7 +727,7 @@ Date,Time,Price,Volume,Side
     /// series, with a badge saying it belongs.
     #[test]
     fn only_the_same_instrument_is_the_day_before() {
-        let scratch = Scratch::new("day-before-symbol");
+        let scratch = ScratchDir::new("day-before-symbol");
         scratch.write(
             "WDOV26-20260313.csv",
             &named_tape("WDOV26", "2026-03-13", 5_700),
@@ -754,7 +754,7 @@ Date,Time,Price,Volume,Side
     /// that can catch it.
     #[test]
     fn a_tape_that_holds_another_contract_is_refused_at_the_join() {
-        let scratch = Scratch::new("day-before-symbol-lies");
+        let scratch = ScratchDir::new("day-before-symbol-lies");
         scratch.write(
             "WINV26/20260313.csv",
             &named_tape("WDOV26", "2026-03-13", 5_700),
@@ -775,7 +775,7 @@ Date,Time,Price,Volume,Side
     /// of one day must still join the same file on every machine.
     #[test]
     fn a_tie_between_two_spellings_of_a_day_is_broken_the_same_way_everywhere() {
-        let scratch = Scratch::new("day-before-tie");
+        let scratch = ScratchDir::new("day-before-tie");
         scratch.write(
             "WINJ26/20260313.csv",
             &named_tape("WINJ26", "2026-03-13", 181_000),
@@ -803,7 +803,7 @@ Date,Time,Price,Volume,Side
     /// join, and pinned here so it stays a decision rather than an accident.
     #[test]
     fn a_joined_day_without_quotes_leaves_the_session_without_them() {
-        let scratch = Scratch::new("day-before-quotes");
+        let scratch = ScratchDir::new("day-before-quotes");
         scratch.write(
             "WINJ26/20260313.csv",
             &named_tape("WINJ26", "2026-03-13", 181_000),
@@ -824,7 +824,7 @@ Date,Time,Price,Volume,Side
 
     #[test]
     fn a_tape_further_back_than_a_long_weekend_is_not_the_day_before() {
-        let scratch = Scratch::new("day-before-gap");
+        let scratch = ScratchDir::new("day-before-gap");
         scratch.write("WINJ26/20251201.csv", &tape("2025-12-01", 170_000));
         let day = scratch.write("WINJ26/20260316.csv", &tape("2026-03-16", 182_000));
 
@@ -836,7 +836,7 @@ Date,Time,Price,Volume,Side
 
     #[test]
     fn joining_puts_yesterdays_prints_in_front_and_says_how_many() {
-        let scratch = Scratch::new("day-before-join");
+        let scratch = ScratchDir::new("day-before-join");
         scratch.write("WINJ26/20260313.csv", &tape("2026-03-13", 181_000));
         let monday = scratch.write("WINJ26/20260316.csv", &tape("2026-03-16", 182_000));
 
@@ -868,7 +868,7 @@ Date,Time,Price,Volume,Side
 
     #[test]
     fn a_session_with_nothing_to_join_is_the_session_it_always_was() {
-        let scratch = Scratch::new("day-before-alone");
+        let scratch = ScratchDir::new("day-before-alone");
         let tape = scratch.write("WINJ26/20260316.csv", SAMPLE);
 
         let joined = Session::load_with_day_before(&tape, ParseOptions::default()).unwrap();
@@ -882,7 +882,7 @@ Date,Time,Price,Volume,Side
 
     #[test]
     fn a_broken_day_before_never_costs_the_trader_the_session() {
-        let scratch = Scratch::new("day-before-broken");
+        let scratch = ScratchDir::new("day-before-broken");
         scratch.write("WINJ26/20260313.csv", "Date,Time,Price\n");
         let monday = scratch.write("WINJ26/20260316.csv", &tape("2026-03-16", 182_000));
 
@@ -900,7 +900,7 @@ Date,Time,Price,Volume,Side
 
     #[test]
     fn the_run_up_beside_the_chosen_day_is_still_the_one_that_is_read() {
-        let scratch = Scratch::new("day-before-context");
+        let scratch = ScratchDir::new("day-before-context");
         scratch.write("WINJ26/20260313.csv", &tape("2026-03-13", 181_000));
         let monday = scratch.write("WINJ26/20260316.csv", &tape("2026-03-16", 182_000));
         scratch.write("WINJ26/20260316.context.csv", CONTEXT);

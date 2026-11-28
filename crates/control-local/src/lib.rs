@@ -23,5 +23,6 @@ pub mod client;
 pub mod discovery;
 mod retry;
 #[cfg(test)]
+#[path = "../../stores/src/scratch.rs"]
 mod scratch;
 pub mod secret_file;
