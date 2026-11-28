@@ -1557,7 +1557,6 @@ mod tests {
                 liquidations: false,
                 open_interest: false,
                 funding: false,
-                spot_perp_pair: false,
                 order_routing: false,
             }
         );

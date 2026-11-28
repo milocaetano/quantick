@@ -253,16 +253,14 @@ pub struct FeedCapabilitiesSnapshot {
     pub deal_counter: bool,
     pub venue_ohlcv_history: bool,
     pub venue_ohlcv_generation: WireU64,
-    /// The derivative streams the widget panes 3-5 gate on; false on every
-    /// provider today. Optional, so additive to v1.
+    /// The derivative streams the widget panes 3 and 4 gate on; false on
+    /// every provider today. Optional, so additive to v1.
     #[serde(default)]
     pub liquidations: bool,
     #[serde(default)]
     pub open_interest: bool,
     #[serde(default)]
     pub funding: bool,
-    #[serde(default)]
-    pub spot_perp_pair: bool,
 }
 
 impl From<quantick_stores::config::FeedCapabilities> for FeedCapabilitiesSnapshot {
@@ -278,7 +276,6 @@ impl From<quantick_stores::config::FeedCapabilities> for FeedCapabilitiesSnapsho
             liquidations: caps.liquidations,
             open_interest: caps.open_interest,
             funding: caps.funding,
-            spot_perp_pair: caps.spot_perp_pair,
         }
     }
 }
@@ -509,5 +506,15 @@ mod tests {
         assert_eq!(refused.roll_refused.as_deref(), Some("Finish it first"));
         let read: FeedNoticeSnapshot = serde_json::from_value(bare).unwrap();
         assert_eq!(read, attention(), "a v1 payload reads with no roll");
+    }
+
+    #[test]
+    fn a_snapshot_naming_the_retired_spot_perp_flag_still_reads() {
+        let caps =
+            FeedCapabilitiesSnapshot::from(quantick_stores::config::FeedCapabilities::none());
+        let mut old = serde_json::to_value(&caps).unwrap();
+        old["spot_perp_pair"] = serde_json::Value::Bool(true);
+        let read: FeedCapabilitiesSnapshot = serde_json::from_value(old).unwrap();
+        assert_eq!(read, caps, "the retired field is ignored, not refused");
     }
 }

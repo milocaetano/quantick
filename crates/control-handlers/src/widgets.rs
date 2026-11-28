@@ -26,9 +26,6 @@ use quantick_chart::widgets::open_interest::{
     OpenInterestLayout, open_interest_plot_px, open_interest_view,
 };
 use quantick_chart::widgets::scene::{ROW_PX, WidgetScene};
-use quantick_chart::widgets::spot_perp_cvd::{
-    SpotPerpCvdLayout, spot_perp_cvd_view, spot_perp_plot_px,
-};
 use quantick_civil::TzOffset;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::authority::WIDGET_MODULE_ID;
@@ -198,18 +195,6 @@ pub fn open_interest_scene(feed: &WidgetFeed<'_>, width: f32, height: f32) -> Wi
         plot_height_px,
     };
     open_interest_view(None, &layout).paint(width, height)
-}
-
-/// No feed pairs a spot and a perpetual tape yet, so the pane says so.
-#[must_use]
-pub fn spot_perp_cvd_scene(feed: &WidgetFeed<'_>, width: f32, height: f32) -> WidgetScene {
-    let (plot_width_px, plot_height_px) = spot_perp_plot_px(width, height);
-    let layout = SpotPerpCvdLayout {
-        base_unit: feed.base_unit,
-        plot_width_px,
-        plot_height_px,
-    };
-    spot_perp_cvd_view(None, &layout).paint(width, height)
 }
 
 /// What a cached scene was built from.

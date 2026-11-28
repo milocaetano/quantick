@@ -231,14 +231,10 @@
         },
         "liquidations": {
           "default": false,
-          "description": "The derivative streams the widget panes 3-5 gate on; false on every\nprovider today. Optional, so additive to v1.",
+          "description": "The derivative streams the widget panes 3 and 4 gate on; false on\nevery provider today. Optional, so additive to v1.",
           "type": "boolean"
         },
         "open_interest": {
-          "default": false,
-          "type": "boolean"
-        },
-        "spot_perp_pair": {
           "default": false,
           "type": "boolean"
         },

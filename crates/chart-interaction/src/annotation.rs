@@ -155,6 +155,24 @@ pub fn resolve(
         .collect()
 }
 
+/// Whether `time_ms` is an estimate for future space: past the newest bar
+/// of a series with no clock there (tick, volume, renko), any time later
+/// than the newest bar's open is a pace projected by whoever sent it. The
+/// bar decides where the anchor lands and the time is dropped, so the pane
+/// names its own projection; a time chart's exact clock still has to match.
+fn projected_past_end(
+    series: &impl Series,
+    slot: usize,
+    exact: Option<i64>,
+    time: Option<i64>,
+) -> bool {
+    let newest = series.slots().checked_sub(1);
+    let newest_open = newest.and_then(|newest| series.open_time(newest));
+    slot >= series.slots()
+        && exact.is_none()
+        && time.is_some_and(|time| newest_open.is_none_or(|open| time > open))
+}
+
 fn resolve_anchor(
     series: &impl Series,
     input: InputAnchor,
@@ -173,7 +191,9 @@ fn resolve_anchor(
     if exact {
         let bar = input.bar.ok_or(Refusal::MissingCoordinate)?;
         let slot = slot_at_position(bar).ok_or(Refusal::InvalidBar)?;
-        if series.time_at_position(bar) != input.time_ms {
+        let exact_time = series.time_at_position(bar);
+        let projected = projected_past_end(series, slot, exact_time, input.time_ms);
+        if exact_time != input.time_ms && !projected {
             return Err(Refusal::AnchorMismatch);
         }
         if slot < series.slots() && input.time_ms.is_none() {
@@ -183,7 +203,7 @@ fn resolve_anchor(
             point: Anchor {
                 bar,
                 price: input.price,
-                time_ms: input.time_ms,
+                time_ms: input.time_ms.filter(|_| !projected),
             },
             slot: (slot < series.slots()).then_some(slot),
         });
@@ -219,7 +239,12 @@ mod tests {
     use super::*;
     use crate::quick_range::Owner;
 
-    struct Fixture;
+    /// Three bars opened at 1000; `clock`: past them a time chart's clock
+    /// names every slot, otherwise (tick, volume, renko) none does.
+    struct Fixture {
+        clock: bool,
+    }
+    const TICKS: Fixture = Fixture { clock: false };
     impl Series for Fixture {
         fn context(&self) -> RangeContext {
             RangeContext {
@@ -241,7 +266,9 @@ mod tests {
             (slot < 3).then_some(1000)
         }
         fn time_at_position(&self, bar: f32) -> Option<i64> {
-            self.open_time((bar - 0.5).ceil() as usize)
+            let slot = (bar - 0.5).ceil() as usize;
+            let clock = self.clock.then(|| 1000 + 60 * slot as i64);
+            self.open_time(slot).or(clock)
         }
         fn draft_in_progress(&self) -> bool {
             false
@@ -307,7 +334,7 @@ mod tests {
                 time_ms,
                 ..input()
             };
-            let result = resolve(&Fixture, &[anchor], Some(reference()), 1).unwrap();
+            let result = resolve(&TICKS, &[anchor], Some(reference()), 1).unwrap();
             assert_eq!(result[0].slot, expected_slot, "position {bar}");
             assert_eq!(result[0].point.bar, bar);
             assert_eq!(result[0].point.time_ms, time_ms);
@@ -321,19 +348,19 @@ mod tests {
             ..input()
         };
         assert_eq!(
-            resolve(&Fixture, &[ignored_bar], None, 1).unwrap()[0].slot,
+            resolve(&TICKS, &[ignored_bar], None, 1).unwrap()[0].slot,
             Some(2)
         );
         assert_eq!(
-            resolve(&Fixture, &[ignored_bar], Some(reference()), 1),
+            resolve(&TICKS, &[ignored_bar], Some(reference()), 1),
             Err(Refusal::InvalidBar)
         );
         assert_eq!(
-            resolve(&Fixture, &[input()], None, 1).unwrap()[0].slot,
+            resolve(&TICKS, &[input()], None, 1).unwrap()[0].slot,
             Some(2)
         );
         assert_eq!(
-            resolve(&Fixture, &[input()], Some(reference()), 1).unwrap()[0].slot,
+            resolve(&TICKS, &[input()], Some(reference()), 1).unwrap()[0].slot,
             Some(0)
         );
     }
@@ -355,13 +382,13 @@ mod tests {
             },
         ] {
             assert_eq!(
-                resolve(&Fixture, &[input()], Some(reference), 1),
+                resolve(&TICKS, &[input()], Some(reference), 1),
                 Err(Refusal::StaleReference)
             );
         }
         assert_eq!(
             resolve(
-                &Fixture,
+                &TICKS,
                 &[InputAnchor {
                     time_ms: Some(999),
                     ..input()
@@ -373,6 +400,46 @@ mod tests {
         );
     }
 
+    /// The trader's report: a range dragged past the newest bar of a tick
+    /// chart carries the time the pane projected there, and placed nothing.
+    #[test]
+    fn a_future_bar_keeps_its_slot_whatever_time_a_chart_without_a_clock_was_sent() {
+        for (row, series, time_ms, expected) in [
+            ("projected time, tick chart", TICKS, Some(5000), Ok(None)),
+            (
+                "time inside the newest bar, tick chart",
+                TICKS,
+                Some(1000),
+                Err(Refusal::AnchorMismatch),
+            ),
+            (
+                "the clock's time, time chart",
+                Fixture { clock: true },
+                Some(1480),
+                Ok(Some(1480)),
+            ),
+            (
+                "another time, time chart",
+                Fixture { clock: true },
+                Some(5000),
+                Err(Refusal::AnchorMismatch),
+            ),
+        ] {
+            let future = InputAnchor {
+                bar: Some(8.25),
+                time_ms,
+                ..input()
+            };
+            let result = resolve(&series, &[input(), future], Some(reference()), 2);
+            let placed = result.map(|anchors| {
+                assert_eq!(anchors[1].point.bar, 8.25, "{row}: the released slot");
+                assert_eq!(anchors[1].slot, None, "{row}: no bar holds it yet");
+                anchors[1].point.time_ms
+            });
+            assert_eq!(placed, expected, "{row}");
+        }
+    }
+
     #[test]
     fn valid_future_coordinates_remain_future_and_last_invalid_anchor_refuses_all() {
         let future = InputAnchor {
@@ -380,13 +447,13 @@ mod tests {
             time_ms: None,
             ..input()
         };
-        let result = resolve(&Fixture, &[input(), future], Some(reference()), 2).unwrap();
+        let result = resolve(&TICKS, &[input(), future], Some(reference()), 2).unwrap();
         assert_eq!(result[1].point.bar, 8.25);
         assert_eq!(result[1].point.time_ms, None);
         assert_eq!(result[1].slot, None);
         assert_eq!(
             resolve(
-                &Fixture,
+                &TICKS,
                 &[
                     input(),
                     InputAnchor {

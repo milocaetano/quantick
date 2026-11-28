@@ -322,7 +322,6 @@ fn session_capabilities(
         liquidations: false,
         open_interest: false,
         funding: false,
-        spot_perp_pair: false,
         // A live terminal: the account it is logged into can take orders.
         order_routing: true,
     }

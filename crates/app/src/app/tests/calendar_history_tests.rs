@@ -90,7 +90,6 @@ fn push_feed_app_restoring(
         liquidations: false,
         open_interest: false,
         funding: false,
-        spot_perp_pair: false,
         order_routing: false,
     });
     let mut app = QuantickApp::new(
