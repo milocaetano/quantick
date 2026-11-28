@@ -2,6 +2,8 @@
 //!
 //! A call is an owner type — the input its owner already decodes — plus one
 //! `impl Call` here: what the call publishes ([`CallSpec`]) and what it runs.
+//! Calls that share one input are zero-sized markers naming it as
+//! [`Call::Input`], so the shared input publishes one schema.
 //! [`dock_call`] builds the descriptor from the two types' own schemas, so
 //! the published contract cannot drift from what is decoded, and docks one
 //! erasure that parses, runs, journals and encodes. The impls live in this
@@ -49,8 +51,10 @@ pub struct CallCx<'a, A> {
     pub access: &'a mut A,
 }
 
-/// One call over host `H`: the input is `Self`, an owner type.
-pub trait Call<H: ?Sized>: DeserializeOwned + JsonSchema {
+/// One call over host `H`.
+pub trait Call<H: ?Sized> {
+    /// The owner type the call decodes: `Self`, or the input a marker shares.
+    type Input: DeserializeOwned + JsonSchema;
     type Answer: Serialize + JsonSchema;
 
     const SPEC: CallSpec;
@@ -61,7 +65,7 @@ pub trait Call<H: ?Sized>: DeserializeOwned + JsonSchema {
     ///
     /// The refusal, in words a caller can correct.
     fn run<A: JournalAccess>(
-        self,
+        input: Self::Input,
         host: &mut H,
         cx: &mut CallCx<'_, A>,
     ) -> Result<Self::Answer, ControlError>;
@@ -87,7 +91,7 @@ pub fn descriptor<C: Call<H>, H: ?Sized>() -> CapabilityDescriptor {
             .iter()
             .map(|id| PermissionId::new(*id).expect("static permission ID is valid"))
             .collect(),
-        input_schema: generated_schema::<C>(),
+        input_schema: generated_schema::<C::Input>(),
         output_schema: generated_schema::<C::Answer>(),
         ..(spec.posture)(&spec)
     }
@@ -125,9 +129,9 @@ fn erased<C: Call<H>, H: ?Sized, A: JournalAccess>(
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    let call: C = serde_json::from_value(input.clone()).map_err(invalid)?;
+    let asked: C::Input = serde_json::from_value(input.clone()).map_err(invalid)?;
     let mut cx = CallCx { actor, access };
-    let answer = call.run(host, &mut cx)?;
+    let answer = C::run(asked, host, &mut cx)?;
     let answer = serde_json::to_value(answer).map_err(invalid)?;
     if let Some(kind) = C::SPEC.event {
         let entry = C::entry(input.clone(), &answer);

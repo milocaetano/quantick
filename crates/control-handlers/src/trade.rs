@@ -436,6 +436,7 @@ fn posture(spec: &CallSpec, risk_reducing: bool, stale_input_safety: &str) -> Ca
 }
 
 impl<H: PaperHost + ?Sized> Call<H> for PlaceInput {
+    type Input = Self;
     type Answer = TradeResult;
 
     const SPEC: CallSpec = CallSpec {
@@ -456,11 +457,11 @@ impl<H: PaperHost + ?Sized> Call<H> for PlaceInput {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        input: Self,
         host: &mut H,
         cx: &mut CallCx<'_, A>,
     ) -> Result<TradeResult, ControlError> {
-        order(self, host, cx.actor)
+        order(input, host, cx.actor)
     }
 
     fn entry(asked: Value, answer: &Value) -> Value {
@@ -469,6 +470,7 @@ impl<H: PaperHost + ?Sized> Call<H> for PlaceInput {
 }
 
 impl<H: PaperHost + ?Sized> Call<H> for BracketInput {
+    type Input = Self;
     type Answer = TradeResult;
 
     const SPEC: CallSpec = CallSpec {
@@ -489,11 +491,11 @@ impl<H: PaperHost + ?Sized> Call<H> for BracketInput {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        input: Self,
         host: &mut H,
         cx: &mut CallCx<'_, A>,
     ) -> Result<TradeResult, ControlError> {
-        order(self, host, cx.actor)
+        order(input, host, cx.actor)
     }
 
     fn entry(asked: Value, answer: &Value) -> Value {
@@ -502,6 +504,7 @@ impl<H: PaperHost + ?Sized> Call<H> for BracketInput {
 }
 
 impl<H: PaperHost + ?Sized> Call<H> for CancelInput {
+    type Input = Self;
     type Answer = TradeResult;
 
     const SPEC: CallSpec = CallSpec {
@@ -522,11 +525,11 @@ impl<H: PaperHost + ?Sized> Call<H> for CancelInput {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        input: Self,
         host: &mut H,
         cx: &mut CallCx<'_, A>,
     ) -> Result<TradeResult, ControlError> {
-        order(self, host, cx.actor)
+        order(input, host, cx.actor)
     }
 
     fn entry(asked: Value, answer: &Value) -> Value {
@@ -535,6 +538,7 @@ impl<H: PaperHost + ?Sized> Call<H> for CancelInput {
 }
 
 impl<H: PaperHost + ?Sized> Call<H> for FlattenInput {
+    type Input = Self;
     type Answer = TradeResult;
 
     const SPEC: CallSpec = CallSpec {
@@ -555,11 +559,11 @@ impl<H: PaperHost + ?Sized> Call<H> for FlattenInput {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        input: Self,
         host: &mut H,
         cx: &mut CallCx<'_, A>,
     ) -> Result<TradeResult, ControlError> {
-        order(self, host, cx.actor)
+        order(input, host, cx.actor)
     }
 
     fn entry(asked: Value, answer: &Value) -> Value {
@@ -568,6 +572,7 @@ impl<H: PaperHost + ?Sized> Call<H> for FlattenInput {
 }
 
 impl<H: PaperHost + ?Sized> Call<H> for ReverseInput {
+    type Input = Self;
     type Answer = TradeResult;
 
     const SPEC: CallSpec = CallSpec {
@@ -588,11 +593,11 @@ impl<H: PaperHost + ?Sized> Call<H> for ReverseInput {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        input: Self,
         host: &mut H,
         cx: &mut CallCx<'_, A>,
     ) -> Result<TradeResult, ControlError> {
-        order(self, host, cx.actor)
+        order(input, host, cx.actor)
     }
 
     fn entry(asked: Value, answer: &Value) -> Value {
@@ -633,6 +638,7 @@ fn ticket<H: PaperHost + ?Sized>(
 }
 
 impl<H: PaperHost + ?Sized> Call<H> for SelectStrategyInput {
+    type Input = Self;
     type Answer = TradeResult;
 
     const SPEC: CallSpec = CallSpec {
@@ -652,13 +658,13 @@ impl<H: PaperHost + ?Sized> Call<H> for SelectStrategyInput {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        input: Self,
         host: &mut H,
         _cx: &mut CallCx<'_, A>,
     ) -> Result<TradeResult, ControlError> {
         ticket(host, Some(SharedChange::OrderStrategies), |desk| {
             let strategies = desk.account().order_strategies().to_vec();
-            if let Some(name) = self.name.as_deref()
+            if let Some(name) = input.name.as_deref()
                 && !strategies.iter().any(|strategy| strategy.name == name)
             {
                 return Err(ControlError::invalid_request(format!(
@@ -666,7 +672,7 @@ impl<H: PaperHost + ?Sized> Call<H> for SelectStrategyInput {
                 )));
             }
             desk.account_mut()
-                .set_order_strategies(strategies, self.name.as_deref());
+                .set_order_strategies(strategies, input.name.as_deref());
             Ok(())
         })
     }
@@ -677,6 +683,7 @@ impl<H: PaperHost + ?Sized> Call<H> for SelectStrategyInput {
 }
 
 impl<H: PaperHost + ?Sized> Call<H> for SetRulerInput {
+    type Input = Self;
     type Answer = TradeResult;
 
     const SPEC: CallSpec = CallSpec {
@@ -696,12 +703,12 @@ impl<H: PaperHost + ?Sized> Call<H> for SetRulerInput {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        input: Self,
         host: &mut H,
         _cx: &mut CallCx<'_, A>,
     ) -> Result<TradeResult, ControlError> {
         ticket(host, None, |desk| {
-            desk.set_ruler_ticks(self.ticks);
+            desk.set_ruler_ticks(input.ticks);
             Ok(())
         })
     }
@@ -712,6 +719,7 @@ impl<H: PaperHost + ?Sized> Call<H> for SetRulerInput {
 }
 
 impl<H: PaperHost + ?Sized> Call<H> for SetRiskInput {
+    type Input = Self;
     type Answer = TradeResult;
 
     const SPEC: CallSpec = CallSpec {
@@ -731,11 +739,11 @@ impl<H: PaperHost + ?Sized> Call<H> for SetRiskInput {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        input: Self,
         host: &mut H,
         _cx: &mut CallCx<'_, A>,
     ) -> Result<TradeResult, ControlError> {
-        let edit = crate::ticket_money::risk_edit(&self)?;
+        let edit = crate::ticket_money::risk_edit(&input)?;
         ticket(host, Some(SharedChange::RiskSettings), |desk| {
             desk.account_mut().apply_risk_edit(edit);
             Ok(())
@@ -748,6 +756,7 @@ impl<H: PaperHost + ?Sized> Call<H> for SetRiskInput {
 }
 
 impl<H: PaperHost + ?Sized> Call<H> for SetInstrumentMoneyInput {
+    type Input = Self;
     type Answer = TradeResult;
 
     const SPEC: CallSpec = CallSpec {
@@ -767,12 +776,12 @@ impl<H: PaperHost + ?Sized> Call<H> for SetInstrumentMoneyInput {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        input: Self,
         host: &mut H,
         _cx: &mut CallCx<'_, A>,
     ) -> Result<TradeResult, ControlError> {
         ticket(host, Some(SharedChange::RiskSettings), |desk| {
-            crate::ticket_money::declare_money(desk.account_mut(), &self)
+            crate::ticket_money::declare_money(desk.account_mut(), &input)
         })
     }
 

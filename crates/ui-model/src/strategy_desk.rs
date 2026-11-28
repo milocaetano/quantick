@@ -9,10 +9,8 @@ use std::collections::BTreeMap;
 
 use quantick_control::error::ControlError;
 use quantick_control_handlers::notify::AttentionHost;
-use quantick_control_handlers::script_strategy::signal_action;
-use quantick_control_handlers::strategy_desk::{self as desk, StrategyDeskHost};
-use quantick_control_handlers::wire::script_strategy::TICKET_QUANTITY;
-use quantick_control_handlers::wire::strategy_desk::{CommandResult, FireAction};
+use quantick_control_handlers::script_strategy::{FireAction, TICKET_QUANTITY, signal_action};
+use quantick_control_handlers::strategy_desk::{self as desk, CommandResult, StrategyDeskHost};
 use quantick_drawings::DrawingId;
 use quantick_engine::Side;
 use quantick_session::script_strategies::{OrderQuantity, ScriptPlacement, SignalAction};

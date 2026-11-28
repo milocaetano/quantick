@@ -18,6 +18,7 @@ macro_rules! schema_modules {
 macro_rules! schema_module {
     ($family:ident none) => {};
     ($family:ident [handler_readbacks: $($path:ident)::+]) => {};
+    ($family:ident [handler_catalog_readbacks: $($path:ident)::+]) => {};
     ($family:ident [$(catalog)?]) => {
         pub mod $family;
     };

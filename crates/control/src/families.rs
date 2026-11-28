@@ -83,14 +83,14 @@ macro_rules! control_families {
             script { wire: [readbacks], handlers: [pub script], actions: [register] }
             script_alarms { wire: [catalog], handlers: [pub script_alarms], actions: [register] }
             script_editor { wire: [catalog, readbacks], handlers: [pub script_editor], actions: [register] }
-            script_strategy { wire: [catalog, readbacks], handlers: [pub script_strategy], actions: [register] }
+            script_strategy { wire: [handler_catalog_readbacks: script_strategy], handlers: [pub script_strategy], actions: [register] }
             semantic { wire: none, handlers: [pub semantic], actions: [] }
             session { wire: [catalog], handlers: [pub session], actions: [] }
             session_reports { wire: [catalog, readbacks], handlers: [pub session_reports], actions: [register] }
             settings { wire: none, handlers: [pub settings], actions: [] }
             settings_sections { wire: [], handlers: [], actions: [] }
             strategy_describe { wire: [catalog, readbacks], handlers: [], actions: [] }
-            strategy_desk { wire: [catalog, readbacks], handlers: [pub strategy_desk], actions: [register] }
+            strategy_desk { wire: [handler_catalog_readbacks: strategy_desk], handlers: [pub strategy_desk], actions: [register] }
             tabs { wire: none, handlers: [tabs], actions: [] }
             tape_fold { wire: [readbacks], handlers: [pub tape_fold], actions: [register] }
             tape_market_fold { wire: [readbacks], handlers: [pub tape_market_fold], actions: [] }

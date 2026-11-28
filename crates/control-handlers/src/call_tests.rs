@@ -50,6 +50,7 @@ fn posture(spec: &CallSpec) -> CapabilityDescriptor {
 }
 
 impl Call<Host> for Probe {
+    type Input = Self;
     type Answer = Ran;
 
     const SPEC: CallSpec = CallSpec {
@@ -64,11 +65,11 @@ impl Call<Host> for Probe {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        input: Self,
         host: &mut Host,
         _: &mut CallCx<'_, A>,
     ) -> Result<Ran, ControlError> {
-        if self.refuse {
+        if input.refuse {
             return Err(ControlError::invalid_request("refused"));
         }
         host.runs += 1;
@@ -81,6 +82,7 @@ impl Call<Host> for Probe {
 struct Quiet {}
 
 impl Call<Host> for Quiet {
+    type Input = Self;
     type Answer = Ran;
 
     const SPEC: CallSpec = CallSpec {
@@ -91,7 +93,7 @@ impl Call<Host> for Quiet {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        _input: Self,
         host: &mut Host,
         _: &mut CallCx<'_, A>,
     ) -> Result<Ran, ControlError> {

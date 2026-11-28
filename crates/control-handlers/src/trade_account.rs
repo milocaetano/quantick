@@ -254,6 +254,7 @@ fn route_posture(
 }
 
 impl<H: PaperHost + ?Sized> Call<H> for AccountReadInput {
+    type Input = Self;
     type Answer = AccountRouteResult;
 
     const SPEC: CallSpec = CallSpec {
@@ -277,7 +278,7 @@ impl<H: PaperHost + ?Sized> Call<H> for AccountReadInput {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        _input: Self,
         host: &mut H,
         _cx: &mut CallCx<'_, A>,
     ) -> Result<AccountRouteResult, ControlError> {
@@ -286,6 +287,7 @@ impl<H: PaperHost + ?Sized> Call<H> for AccountReadInput {
 }
 
 impl<H: PaperHost + ?Sized> Call<H> for AccountSelectInput {
+    type Input = Self;
     type Answer = AccountRouteResult;
 
     const SPEC: CallSpec = CallSpec {
@@ -307,20 +309,21 @@ impl<H: PaperHost + ?Sized> Call<H> for AccountSelectInput {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        input: Self,
         host: &mut H,
         cx: &mut CallCx<'_, A>,
     ) -> Result<AccountRouteResult, ControlError> {
         let request = RouteRequest::new(
-            route_of(self.route),
+            route_of(input.route),
             actor_of(cx.actor),
-            leave_of(self.leave),
+            leave_of(input.leave),
         );
-        route_to(host, cx, request, &self)
+        route_to(host, cx, request, &input)
     }
 }
 
 impl<H: PaperHost + ?Sized> Call<H> for AccountDisarmInput {
+    type Input = Self;
     type Answer = AccountRouteResult;
 
     const SPEC: CallSpec = CallSpec {
@@ -342,12 +345,12 @@ impl<H: PaperHost + ?Sized> Call<H> for AccountDisarmInput {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        input: Self,
         host: &mut H,
         cx: &mut CallCx<'_, A>,
     ) -> Result<AccountRouteResult, ControlError> {
-        let request = RouteRequest::new(Route::Sim, actor_of(cx.actor), leave_of(self.leave));
-        route_to(host, cx, request, &self)
+        let request = RouteRequest::new(Route::Sim, actor_of(cx.actor), leave_of(input.leave));
+        route_to(host, cx, request, &input)
     }
 }
 
