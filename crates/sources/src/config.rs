@@ -673,7 +673,7 @@ mod tests {
     }
 
     /// No venue feeds the derivative panes yet: every provider, and the
-    /// unresolved feed, says so, so panes 3-5 show their empty state.
+    /// unresolved feed, says so, so panes 3 and 4 show their empty state.
     #[test]
     fn derivative_bits_are_off_on_every_provider() {
         use super::{FeedCapabilities, ProviderKind};

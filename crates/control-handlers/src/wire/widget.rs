@@ -1,7 +1,7 @@
-//! The widget panes (Depth, Big Trades, Liquidations, OI + Funding, Spot vs
-//! Perp CVD) over the control plane: open one in its floating window, close
-//! it, and read what it paints. Presentation only: nothing a chart holds
-//! changes, and nothing is saved.
+//! The widget panes (Depth, Big Trades, Liquidations, OI + Funding) over the
+//! control plane: open one in its floating window, close it, and read what it
+//! paints. Presentation only: nothing a chart holds changes, and nothing is
+//! saved.
 use quantick_control::registry::{CapabilityDescriptor, IdempotencyPolicy};
 use quantick_control_host::authority::{ReadSpec, WIDGET_MODULE_ID, read_descriptor};
 use schemars::JsonSchema;

@@ -513,7 +513,7 @@ mod tests {
         let caps =
             FeedCapabilitiesSnapshot::from(quantick_stores::config::FeedCapabilities::none());
         let mut old = serde_json::to_value(&caps).unwrap();
-        old["spot_perp_pair"] = serde_json::Value::Bool(false);
+        old["spot_perp_pair"] = serde_json::Value::Bool(true);
         let read: FeedCapabilitiesSnapshot = serde_json::from_value(old).unwrap();
         assert_eq!(read, caps, "the retired field is ignored, not refused");
     }
