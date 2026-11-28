@@ -12,9 +12,7 @@ macro_rules! family_documents {
         $documents.extend(crate::wire::$family::documents());
     };
     (@family $documents:ident $family:ident [handler_readbacks: $($path:ident)::+]) => {};
-    (@family $documents:ident $family:ident [handler_catalog_readbacks: $($path:ident)::+]) => {
-        $documents.extend(crate::$($path)::+::documents());
-    };
+    (@family $documents:ident $family:ident [handler_catalog_readbacks: $($path:ident)::+]) => {};
     (@family $documents:ident $family:ident none) => {};
     (@family $documents:ident $family:ident [$(readbacks)?]) => {};
 }
