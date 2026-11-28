@@ -17,8 +17,7 @@ use quantick_engine::{BarBuilderDiagnostics, Side};
 use quantick_indicators::{IndicatorHost, InstanceId};
 use quantick_replay::Session;
 use quantick_sim::{PerformanceReport, Simulator};
-use quantick_trading::FillCosts;
-use quantick_trading::{ClosedTrade, RejectReason, VenueEvent};
+use quantick_trading::{ClosedTrade, FillCosts, RejectReason, VenueEvent};
 use rust_decimal::Decimal;
 
 use crate::strategy::{Account, Signals, SimPort, Strategy};

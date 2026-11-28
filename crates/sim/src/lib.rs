@@ -2,7 +2,7 @@
 //!
 //! [`Simulator`] consumes the same trade stream the bar engine consumes, plus
 //! order [`Command`]s issued between prints, and produces simulated fills,
-//! one net [`Position`], and [`ClosedTrade`] records. It is a pure domain
+//! one net [`Position`](quantick_trading::Position), and [`ClosedTrade`](quantick_trading::ClosedTrade) records. It is a pure domain
 //! crate like `engine`: no UI, no network, no async, no wall clock — every
 //! timestamp it emits is the venue time of a print it was shown.
 //!
@@ -30,7 +30,7 @@
 //!
 //! A **limit with a cancel-at price** ([`Command::PlaceLimit`]'s
 //! `cancel_at`) removes itself, unfilled, on a print trading at or through
-//! that level ([`CancelReason::PriceTouched`]) — "the move completed
+//! that level ([`CancelReason::PriceTouched`](quantick_trading::CancelReason::PriceTouched)) — "the move completed
 //! without the retest, so stop waiting for one". Validation keeps the
 //! cancel level on the far side of the market from the limit price, so no
 //! single print can ever satisfy both fill and cancel.
@@ -38,25 +38,25 @@
 //! A **flat-only limit** ([`Command::PlaceLimit`]'s `flat_only`) fills only
 //! into an account with no open position: if its fill print arrives while
 //! one is open, the order stands down instead
-//! ([`CancelReason::AccountOccupied`]). The strategy kernel rests its
+//! ([`CancelReason::AccountOccupied`](quantick_trading::CancelReason::AccountOccupied)). The strategy kernel rests its
 //! entries this way — an order placed under a flat-account promise must
 //! never net a position a human opened while it rested.
 //!
 //! A protective level attached to a market or stop entry is re-checked
 //! against the *actual* fill price: validation ran against the mark, but
 //! the fill lands on a later print, and when the tape outran the level in
-//! between it is dropped and reported ([`VenueEvent::BracketDropped`]) —
+//! between it is dropped and reported ([`VenueEvent::BracketDropped`](quantick_trading::VenueEvent::BracketDropped)) —
 //! kept, it would exit on the next print wearing a lying label.
 //!
 //! # Fill costs
 //!
 //! A simulator built [`Simulator::with_costs`] (or told
-//! [`TradingVenue::set_fill_costs`]) prices its fills with a
+//! [`TradingVenue::set_fill_costs`](quantick_trading::TradingVenue::set_fill_costs)) prices its fills with a
 //! [`FillCosts`](quantick_trading::FillCosts): market-style fills (market and stop entries, stop exits,
 //! hand closes, flattens and resets) land `slippage_ticks` against the
 //! trader; with conservative limits on, a resting limit (an entry or a take
 //! profit) fills only on a print one tick through its price; and each
-//! [`ClosedTrade`] carries the commission both its sides paid in
+//! [`ClosedTrade`](quantick_trading::ClosedTrade) carries the commission both its sides paid in
 //! `fees_points`, charged at its entry average and its exit price. Its
 //! `pnl_points` stays gross. The default costs are free and change nothing
 //! above.
@@ -81,12 +81,12 @@
 //! Everything the simulator reports is *simulated* and labeled so by the
 //! consumer. P&L is reported in **points** (price units × quantity), and
 //! stays that way: the simulator is never told what an instrument is worth.
-//! What one point costs is now expressible — [`InstrumentMoney`] carries it
+//! What one point costs is now expressible — [`InstrumentMoney`](quantick_trading::InstrumentMoney) carries it
 //! — but it is *declared* by the trader per symbol and held by the surface,
 //! not learned from the tape, so a fill can never carry a currency figure it
 //! could not prove. A number the simulator cannot compute honestly is still
 //! a number it does not show. Simulated positions and pending orders do not
-//! survive a session; only [`ClosedTrade`] history is meant to be persisted
+//! survive a session; only [`ClosedTrade`](quantick_trading::ClosedTrade) history is meant to be persisted
 //! (see [`history`]).
 
 mod simulator;

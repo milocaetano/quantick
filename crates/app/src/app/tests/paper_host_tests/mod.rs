@@ -12,7 +12,7 @@ use eframe::egui;
 use quantick_engine::{Side, Trade};
 use quantick_paper::desk::PaperControl;
 use quantick_sim::{Command, history};
-use quantick_trading::ClosedTrade;
+use quantick_trading::{ClosedTrade, EntryKind};
 use rust_decimal::Decimal;
 
 use crate::chart::PriceScale;
@@ -23,7 +23,6 @@ use crate::paper_trading::*;
 use crate::timezone::TzOffset;
 use quantick_paper::desk::PaperDrag;
 use quantick_paper::desk::geometry::{TAG_BUTTON_PX, TAG_GAP_PX};
-use quantick_trading::EntryKind;
 
 fn print(agg_id: u64, price: i64) -> Trade {
     Trade {

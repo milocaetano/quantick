@@ -63,7 +63,7 @@ pub enum Command {
     /// ride the order and arm the moment it fills — and are re-checked
     /// against the *actual* fill price then, so a level the tape outran
     /// while the order rested is dropped and reported
-    /// ([`quantick_trading::VenueEvent::BracketDropped`]) rather than kept wearing a
+    /// ([`VenueEvent::BracketDropped`]) rather than kept wearing a
     /// lying label.
     SetOrderBracket { id: OrderId, bracket: Bracket },
     /// Remove a pending order without filling it.

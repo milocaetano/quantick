@@ -7,9 +7,7 @@ use std::sync::Arc;
 use quantick_civil::{TzOffset, parse_iso_date};
 use quantick_engine::Side;
 use quantick_sim::history;
-use quantick_trading::ClosedTrade;
-use quantick_trading::ExitReason;
-use quantick_trading::rates::RateStore;
+use quantick_trading::{ClosedTrade, ExitReason, rates::RateStore};
 
 use super::*;
 use crate::instruments::InstrumentCatalog;

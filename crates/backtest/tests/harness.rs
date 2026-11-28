@@ -21,8 +21,7 @@ use quantick_indicators::{
 use quantick_replay::format::{self, ParseOptions, UtcOffset, WriteHeader};
 use quantick_replay::session::Session;
 use quantick_sim::Command;
-use quantick_trading::ExitReason;
-use quantick_trading::{Commission, FillCosts};
+use quantick_trading::{Commission, ExitReason, FillCosts};
 use rust_decimal::Decimal;
 
 /// The 34-print opening auction the replay crate keeps as its own fixture.
