@@ -19,7 +19,7 @@ use quantick_chart::pane_series::PaneSeriesRead;
 use quantick_chart::state::dec_from_f64;
 use quantick_control::error::ControlError;
 use quantick_control::registry::{CapabilityDescriptor, IdempotencyPolicy, RegistryError};
-use quantick_control::schema::generated_schema;
+use quantick_control::schema::schema_document;
 use quantick_control::wire::WireU64;
 use quantick_control_host::actions::ReplayTrace;
 use quantick_control_host::authority::{STRATEGY_MODULE_ID, TRADE_PERMISSION_ID};
@@ -966,41 +966,17 @@ const fn changed(capability: &'static str) -> Readback {
 
 pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
     vec![
-        (
-            "strategy-desk-list-input-v1.schema.json",
-            generated_schema::<ListInput>(),
-        ),
-        (
-            "strategy-desk-list-result-v1.schema.json",
-            generated_schema::<ListResult>(),
-        ),
-        (
-            "strategy-desk-instance-input-v1.schema.json",
-            generated_schema::<InstanceInput>(),
-        ),
-        (
-            "strategy-desk-detail-result-v1.schema.json",
-            generated_schema::<DetailResult>(),
-        ),
-        (
-            "strategy-desk-asset-input-v1.schema.json",
-            generated_schema::<AssetInput>(),
-        ),
-        (
-            "strategy-desk-save-as-input-v1.schema.json",
-            generated_schema::<SaveAsInput>(),
-        ),
-        (
-            "strategy-script-action-set-input-v1.schema.json",
-            generated_schema::<ActionSetInput>(),
-        ),
-        (
-            "strategy-desk-command-result-v1.schema.json",
-            generated_schema::<CommandResult>(),
-        ),
+        schema_document::<ListInput>("strategy-desk-list-input-v1.schema.json"),
+        schema_document::<ListResult>("strategy-desk-list-result-v1.schema.json"),
+        schema_document::<InstanceInput>("strategy-desk-instance-input-v1.schema.json"),
+        schema_document::<DetailResult>("strategy-desk-detail-result-v1.schema.json"),
+        schema_document::<AssetInput>("strategy-desk-asset-input-v1.schema.json"),
+        schema_document::<SaveAsInput>("strategy-desk-save-as-input-v1.schema.json"),
+        schema_document::<ActionSetInput>("strategy-script-action-set-input-v1.schema.json"),
+        schema_document::<CommandResult>("strategy-desk-command-result-v1.schema.json"),
     ]
 }
 
 #[cfg(test)]
 #[path = "strategy_desk_tests.rs"]
-mod tests;
+pub(crate) mod tests;

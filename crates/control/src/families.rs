@@ -29,7 +29,6 @@ macro_rules! control_families {
             bubble_scale { wire: [catalog, readbacks], handlers: [pub bubble_scale], actions: [register] }
             calls { wire: [], handlers: [], actions: [] }
             canvas { wire: [catalog, readbacks], handlers: [pub canvas], actions: [register] }
-            catalog { wire: [], handlers: [], actions: [] }
             chart { wire: [], handlers: [pub chart], actions: [] }
             chart_context { wire: [catalog], handlers: [pub chart_context], actions: [register] }
             chart_layer { wire: none, handlers: [pub chart_layer], actions: [] }

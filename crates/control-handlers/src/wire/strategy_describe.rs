@@ -6,7 +6,7 @@ use quantick_control::{
         Availability, AvailabilityStatus, CapabilityDescriptor, EffectPersistence,
         IdempotencyPolicy,
     },
-    schema::generated_schema,
+    schema::{generated_schema, schema_document},
     wire::WireU64,
 };
 use quantick_control_host::authority::{
@@ -204,26 +204,11 @@ pub const READBACKS: &[Readback] = &[
 
 pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
     vec![
-        (
-            "strategy-describe-empty-input-v1.schema.json",
-            generated_schema::<Empty>(),
-        ),
-        (
-            "strategy-describe-submit-input-v1.schema.json",
-            generated_schema::<Submit>(),
-        ),
-        (
-            "strategy-describe-cancel-input-v1.schema.json",
-            generated_schema::<Revision>(),
-        ),
-        (
-            "strategy-describe-save-input-v1.schema.json",
-            generated_schema::<Save>(),
-        ),
-        (
-            "strategy-describe-result-v1.schema.json",
-            generated_schema::<Status>(),
-        ),
+        schema_document::<Empty>("strategy-describe-empty-input-v1.schema.json"),
+        schema_document::<Submit>("strategy-describe-submit-input-v1.schema.json"),
+        schema_document::<Revision>("strategy-describe-cancel-input-v1.schema.json"),
+        schema_document::<Save>("strategy-describe-save-input-v1.schema.json"),
+        schema_document::<Status>("strategy-describe-result-v1.schema.json"),
     ]
 }
 

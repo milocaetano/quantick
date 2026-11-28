@@ -26,14 +26,6 @@ pub(crate) use paper::{DeskWindow, NoDesk, PaperDesk};
 pub(crate) use tab::FakeTab;
 pub(crate) use window::{FakeWindow, TabsWindow};
 
-/// A docked handler over host `H`, as a test drives it.
-pub(crate) type Handler<H> = quantick_control_host::actions::ActionHandler<H, FakeAccess>;
-
-/// The handler `dock_call` docks for `C`.
-pub(crate) fn docked<C: crate::call::Call<H>, H>() -> Handler<H> {
-    crate::call::handler::<C, H, FakeAccess>()
-}
-
 /// The main-click default a fake window opens with.
 pub(crate) const FAKE_DEFAULT_REACH: HistoryReach = HistoryReach::Sessions(9);
 

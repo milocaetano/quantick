@@ -21,7 +21,7 @@ use quantick_control::error::ControlError;
 use quantick_control::registry::{
     CapabilityDescriptor, EffectPersistence, IdempotencyPolicy, RegistryError,
 };
-use quantick_control::schema::generated_schema;
+use quantick_control::schema::schema_document;
 use quantick_control::wire::WireU64;
 use quantick_control_host::actions::ReplayTrace;
 use quantick_control_host::authority::STRATEGY_MODULE_ID;
@@ -670,30 +670,12 @@ pub const READBACKS: &[Readback] = &[
 
 pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
     vec![
-        (
-            "strategy-script-arm-input-v1.schema.json",
-            generated_schema::<ArmInput>(),
-        ),
-        (
-            "strategy-script-arm-result-v1.schema.json",
-            generated_schema::<ArmResult>(),
-        ),
-        (
-            "strategy-script-list-input-v1.schema.json",
-            generated_schema::<ListInput>(),
-        ),
-        (
-            "strategy-script-list-result-v1.schema.json",
-            generated_schema::<ListResult>(),
-        ),
-        (
-            "strategy-script-disarm-input-v1.schema.json",
-            generated_schema::<DisarmInput>(),
-        ),
-        (
-            "strategy-script-disarm-result-v1.schema.json",
-            generated_schema::<DisarmResult>(),
-        ),
+        schema_document::<ArmInput>("strategy-script-arm-input-v1.schema.json"),
+        schema_document::<ArmResult>("strategy-script-arm-result-v1.schema.json"),
+        schema_document::<ListInput>("strategy-script-list-input-v1.schema.json"),
+        schema_document::<ListResult>("strategy-script-list-result-v1.schema.json"),
+        schema_document::<DisarmInput>("strategy-script-disarm-input-v1.schema.json"),
+        schema_document::<DisarmResult>("strategy-script-disarm-result-v1.schema.json"),
     ]
 }
 

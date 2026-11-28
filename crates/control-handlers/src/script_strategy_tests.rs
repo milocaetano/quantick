@@ -1,5 +1,6 @@
 use super::*;
-use crate::test_support::{FakeAccess, FakeWindow, Handler, docked};
+use crate::strategy_desk::tests::{Handler, docked};
+use crate::test_support::{FakeAccess, FakeWindow};
 use quantick_chart::state::{ChartState, SpecSelector};
 use quantick_drawings::{ChartPoint, DRAWING_TOOLS, DrawingBand, DrawingStyle, NewDrawing};
 use quantick_engine::BarSpec;

@@ -1,7 +1,7 @@
 use super::*;
 use crate::script_strategy::ScriptPane;
 use crate::tabs::TabDirectory;
-use crate::test_support::{FakeAccess, FakeTab, FakeWindow, Handler, docked};
+use crate::test_support::{FakeAccess, FakeTab, FakeWindow};
 use quantick_chart::state::{ChartState, SpecSelector};
 use quantick_control_host::actions::ActionRegistry;
 use quantick_control_host::authority::CAPABILITY_VERSION;
@@ -9,6 +9,14 @@ use quantick_engine::BarSpec;
 use quantick_session::script_strategies::{ScriptArm, ScriptPlacement, SignalAction};
 use quantick_session::strategies::TabStrategies;
 use serde_json::{Value, json};
+
+/// A docked handler over host `H`, as a test drives it.
+pub(crate) type Handler<H> = quantick_control_host::actions::ActionHandler<H, FakeAccess>;
+
+/// The handler `dock_call` docks for `C`.
+pub(crate) fn docked<C: crate::call::Call<H>, H>() -> Handler<H> {
+    crate::call::handler::<C, H, FakeAccess>()
+}
 
 const TAB: u64 = 31;
 const FLOW: u64 = 5;
