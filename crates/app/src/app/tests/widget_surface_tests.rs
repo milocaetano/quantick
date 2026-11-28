@@ -76,7 +76,6 @@ fn open_read_close_every_widget() {
     let ctx = egui::Context::default();
     let ids = crate::widget_surfaces::WIDGET_SURFACES.map(|spec| spec.id);
     assert_eq!(ids, ["depth", "big_trades", "liquidations"]);
-    let not_provided = [LIQUIDATIONS_NOT_PROVIDED];
     for id in ids {
         let opened = call(&mut app, "widget.open", id);
         assert_eq!(opened["open"], true, "{id}: {opened}");
@@ -107,7 +106,7 @@ fn open_read_close_every_widget() {
                 assert_eq!(read["provided"], false, "{id}");
                 assert_eq!(read["rows"], 0, "{id}");
                 let empty = read["empty"].as_str().expect("an empty state");
-                assert!(not_provided.contains(&empty), "{id}: {empty}");
+                assert_eq!(empty, LIQUIDATIONS_NOT_PROVIDED, "{id}");
                 assert!(painted.iter().any(|text| text == empty), "{id} painted");
             }
         }

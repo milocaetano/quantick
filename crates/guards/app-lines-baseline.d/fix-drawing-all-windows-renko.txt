@@ -1,5 +1,0 @@
-# These shrank: the tab's mirror-owner rule, its shared pick and its
-# selection side moved to quantick_drawings. Cut by this branch's own
-# shrink against the merge base, so the ceiling stays within its slack.
-crates/app -14
-!budget -14

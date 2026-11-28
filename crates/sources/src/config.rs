@@ -659,8 +659,8 @@ mod tests {
         );
     }
 
-    /// No venue feeds the derivative panes yet: every provider, and the
-    /// unresolved feed, says so, so pane 3 shows its empty state.
+    /// No venue streams liquidations yet: every provider, and the unresolved
+    /// feed, says so, so the Liquidations pane shows its empty state.
     #[test]
     fn derivative_bits_are_off_on_every_provider() {
         use super::{FeedCapabilities, ProviderKind};

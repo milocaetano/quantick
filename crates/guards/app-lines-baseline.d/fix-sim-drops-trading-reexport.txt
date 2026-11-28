@@ -1,5 +1,0 @@
-# One import line: position_card.rs takes Position from quantick_trading and
-# Command from quantick_sim now that sim no longer re-exports the order
-# vocabulary, so one use statement became two.
-crates/app +1
-!budget +1

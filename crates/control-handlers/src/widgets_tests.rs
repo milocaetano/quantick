@@ -174,13 +174,11 @@ fn depth_needs_a_book_and_says_which_is_missing() {
 }
 
 #[test]
-fn derivative_panes_say_the_feed_does_not_provide_them() {
+fn the_liquidations_pane_says_the_feed_does_not_provide_it() {
     let (trades, setup) = (tape(), usd());
     let feed = feed(&trades, &setup, FeedCapabilities::none());
-    let builders: [(SceneBuilder, &str); 1] = [(liquidations_scene, LIQUIDATIONS_NOT_PROVIDED)];
-    for (build, text) in builders {
-        assert_eq!(build(&feed, SIZE.0, SIZE.1).empty.as_deref(), Some(text));
-    }
+    let scene = liquidations_scene(&feed, SIZE.0, SIZE.1);
+    assert_eq!(scene.empty.as_deref(), Some(LIQUIDATIONS_NOT_PROVIDED));
 }
 
 #[test]

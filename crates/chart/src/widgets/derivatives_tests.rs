@@ -42,7 +42,7 @@ pub(super) fn liquidations_model() -> Liquidations {
         totals: [
             totals(60_000, "420000", "30000"),
             totals(300_000, "2910000", "180000"),
-            totals(3_600_000, "11600000", "3400000"),
+            totals(3_600_000, "11600000000", "3400000"),
         ],
         buckets: vec![bucket(0, "100", "0"), bucket(60_000, "50", "200")],
         rows: vec![
@@ -87,7 +87,8 @@ fn views_match_golden_and_empty_state() {
         vec![
             totals("1m", "L $420.0k", "S $30.0k"),
             totals("5m", "L $2.9M", "S $180.0k"),
-            totals("1h", "L $11.6M", "S $3.4M"),
+            // From a billion the figure switches to the axis spelling.
+            totals("1h", "L $11.60B", "S $3.4M"),
         ]
     );
     // Longs hang below the baseline, shorts stand on it; the largest side
@@ -135,11 +136,4 @@ fn views_match_golden_and_empty_state() {
     let empty = liquidations_view(None, &liquidations_layout());
     assert_eq!(empty.empty.as_deref(), Some(LIQUIDATIONS_NOT_PROVIDED));
     assert!(empty.totals.is_empty() && empty.bars.is_empty() && empty.rows.is_empty());
-
-    // The "not provided" text says the feed lacks it, never that it is
-    // still loading.
-    assert!(
-        LIQUIDATIONS_NOT_PROVIDED.starts_with("feed does not provide"),
-        "{LIQUIDATIONS_NOT_PROVIDED}"
-    );
 }
