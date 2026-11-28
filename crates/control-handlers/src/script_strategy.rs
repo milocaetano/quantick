@@ -24,9 +24,7 @@ use quantick_control::registry::{
 use quantick_control::schema::generated_schema;
 use quantick_control::wire::WireU64;
 use quantick_control_host::actions::ReplayTrace;
-use quantick_control_host::authority::{
-    ANNOTATE_PERMISSION_ID, SCRIPT_PERMISSION_ID, STRATEGY_MODULE_ID,
-};
+use quantick_control_host::authority::STRATEGY_MODULE_ID;
 use quantick_control_host::journal::NewEvent;
 use quantick_drawings::{DrawingId, DrawingTool, Drawings};
 use quantick_engine::{Bar, Side};
@@ -49,6 +47,7 @@ use crate::invalid;
 use crate::market_tab::{LentTab, MarketTabHost};
 use crate::tabs::{TabDirectory, tab_closed, tab_index};
 use crate::wire::readback::{EVERY_FORBIDDEN_TEST, Readback, journal};
+use crate::wire::script::{SCRIPT_PERMISSIONS, STRATEGY_NAME_MAX_BYTES, script_descriptor};
 
 pub const ARM_CAPABILITY_ID: &str = "strategy.script.arm";
 pub const LIST_CAPABILITY_ID: &str = "strategy.script.list";
@@ -62,9 +61,6 @@ pub const DISARMED_EVENT_KIND: &str = "strategy.script.disarmed";
 
 /// The handler test that arms, lists and disarms through a fake host.
 pub const ARM_LIST_DISARM_TEST: &str = "arm_list_and_disarm_a_script_strategy";
-
-/// The longest script file name a call may give.
-pub const SCRIPT_NAME_MAX_BYTES: usize = 128;
 
 /// Where a script may ring. Prices are decimal strings.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -103,7 +99,7 @@ pub struct ArmInput {
     pub pane_id: Option<WireU64>,
     /// A `.pine` file name in the strategy library, as `strategy.script.list`
     /// reports it.
-    #[schemars(length(min = 1, max = SCRIPT_NAME_MAX_BYTES))]
+    #[schemars(length(min = 1, max = STRATEGY_NAME_MAX_BYTES))]
     pub script: String,
     /// The side the instance hunts: alerts whose title names the other side
     /// do not ring it.
@@ -292,11 +288,6 @@ where
     dock_call::<DisarmInput, _, _, _>(registry)
 }
 
-/// The indicator-script tier's permissions: what `indicator.script.attach`
-/// asks — code an operator puts on the chart, which never touches a
-/// position.
-pub(crate) const SCRIPT_TIER: &[&str] = &[ANNOTATE_PERMISSION_ID, SCRIPT_PERMISSION_ID];
-
 /// What every `strategy.*` read asks.
 pub(crate) const READ_PERMISSIONS: &[&str] =
     &["observe", "observe.indicators", "observe.user_text"];
@@ -307,7 +298,7 @@ pub(crate) fn script_action(spec: &CallSpec, stale_input_safety: &str) -> Capabi
         persistence: EffectPersistence::Transient,
         stale_input_safety: Some(stale_input_safety.to_owned()),
         // `dock_call` sets both schemas from the call's own types.
-        ..crate::wire::script::script_descriptor(
+        ..script_descriptor(
             spec.id,
             spec.title,
             spec.description,
@@ -328,7 +319,7 @@ impl<H: ScriptStrategyHost + ?Sized> Call<H> for ArmInput {
         module: STRATEGY_MODULE_ID,
         title: "Arm a script strategy",
         description: "Loads a .pine file from the strategy library and arms it as an alarm on one chart's closed bars: an alertcondition that holds rings the alarm when the bar's body meets the placement (a drawn rectangle, a fixed range, a line crossed one way, or anywhere). The title's first word is the side (bull, buy or long; bear, sell or short; any case); a script with a title naming no side, a computed title, no alertcondition, no title naming the side asked for, or a compile error is refused with the reason, compile errors as `line N: <CODE> <message>`. Places no order: an `action` of `order` is refused, and strategy.script.action.set, in the trade tier, switches an armed instance to orders. A runtime error later disarms that instance alone; strategy.script.list shows the reason. Journaled as strategy.script.armed. Lives for the session.",
-        permissions: SCRIPT_TIER,
+        permissions: SCRIPT_PERMISSIONS,
         event: Some(ARMED_EVENT_KIND),
         replay: ReplayTrace::Recorded,
         posture: |spec| script_action(spec, ARMED_TWICE),
@@ -439,7 +430,7 @@ impl<H: ScriptStrategyHost + ?Sized> Call<H> for DisarmInput {
         module: STRATEGY_MODULE_ID,
         title: "Disarm a script strategy",
         description: "Removes one armed script strategy by the id strategy.script.arm answered; it rings no more. An id no instance has answers disarmed: false. Journaled as strategy.script.disarmed.",
-        permissions: SCRIPT_TIER,
+        permissions: SCRIPT_PERMISSIONS,
         // Journaled by `run`, and only when one was removed.
         event: None,
         replay: ReplayTrace::Recorded,

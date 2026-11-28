@@ -22,8 +22,7 @@ use quantick_control::registry::{CapabilityDescriptor, IdempotencyPolicy, Regist
 use quantick_control::schema::generated_schema;
 use quantick_control::wire::WireU64;
 use quantick_control_host::actions::ReplayTrace;
-use quantick_control_host::authority::STRATEGY_MODULE_ID;
-use quantick_control_host::authority::TRADE_PERMISSION_ID;
+use quantick_control_host::authority::{STRATEGY_MODULE_ID, TRADE_PERMISSION_ID};
 use quantick_drawings::{DrawingId, DrawingTool, Drawings};
 use quantick_engine::{Bar, Side};
 use quantick_session::script_strategies::SignalAction;
@@ -35,8 +34,9 @@ use quantick_stores::script_library::ScriptLibrary;
 use quantick_trading::ActionSide;
 use rust_decimal::Decimal;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 use std::path::Path;
 
 use crate::JournalAccess;
@@ -45,14 +45,14 @@ use crate::dock::ActionDock;
 use crate::invalid;
 use crate::market_tab::MarketTabHost;
 use crate::script_strategy::{
-    DEFAULT_LIBRARY, FireAction, Placement, READ_PERMISSIONS, SCRIPT_NAME_MAX_BYTES, SCRIPT_TIER,
+    DEFAULT_LIBRARY, FireAction, Placement, READ_PERMISSIONS,
     ScriptPane, ScriptStrategyHost, ScriptTab, action_words, footprint_warmup, placement,
     script_action, signal_action,
 };
 use crate::session::SessionTab;
 use crate::tabs::{tab_closed, tab_index};
-use crate::wire::readback::{EVERY_FORBIDDEN_TEST, Readback, journal};
-use command::DeskCommand;
+use crate::wire::readback::{EVERY_FORBIDDEN_TEST, Readback, TRADE_UNREACHABLE_TEST, journal};
+use crate::wire::script::{SCRIPT_PERMISSIONS, STRATEGY_NAME_MAX_BYTES};
 
 pub const LIST_CAPABILITY_ID: &str = "strategy.desk.list";
 pub const DETAIL_CAPABILITY_ID: &str = "strategy.desk.detail";
@@ -131,7 +131,7 @@ pub struct SaveAsInput {
     /// A script instance.
     pub instance: InstanceId,
     /// The new library file: letters, digits, `_` or `-`, then `.pine`.
-    #[schemars(length(min = 1, max = SCRIPT_NAME_MAX_BYTES))]
+    #[schemars(length(min = 1, max = STRATEGY_NAME_MAX_BYTES))]
     pub name: String,
 }
 
@@ -298,14 +298,14 @@ where
 {
     dock_call::<ListInput, _, _, _>(registry)?;
     dock_call::<Detail, _, _, _>(registry)?;
-    dock_call::<Pause, _, _, _>(registry)?;
-    dock_call::<Resume, _, _, _>(registry)?;
-    dock_call::<Remove, _, _, _>(registry)?;
-    dock_call::<AssetPause, _, _, _>(registry)?;
-    dock_call::<AssetResume, _, _, _>(registry)?;
-    dock_call::<Arm, _, _, _>(registry)?;
-    dock_call::<SaveAsInput, _, _, _>(registry)?;
-    dock_call::<Duplicate, _, _, _>(registry)?;
+    dock_call::<Desk<Pause>, _, _, _>(registry)?;
+    dock_call::<Desk<Resume>, _, _, _>(registry)?;
+    dock_call::<Desk<Remove>, _, _, _>(registry)?;
+    dock_call::<Desk<AssetPause>, _, _, _>(registry)?;
+    dock_call::<Desk<AssetResume>, _, _, _>(registry)?;
+    dock_call::<Desk<Arm>, _, _, _>(registry)?;
+    dock_call::<Desk<SaveAsInput>, _, _, _>(registry)?;
+    dock_call::<Desk<Duplicate>, _, _, _>(registry)?;
     dock_call::<ActionSetInput, _, _, _>(registry)
 }
 
@@ -509,38 +509,43 @@ const NO_SUCH: &str = "no armed strategy on this tab has that id; read strategy.
 
 const BY_INSTANCE: &str = "The instance is named by an id never reused in the tab's session, so a repeat reaches the same instance or none; read strategy.desk.list, or the strategy.desk.changed events after a cursor taken before the call, before retrying.";
 
-/// What the desk's own commands share: the indicator-script tier, owned by
-/// the `strategy` module and journaled as [`CHANGED_EVENT_KIND`]. Each
-/// command states its id, title and description, and its posture when a
-/// repeat is not [`BY_INSTANCE`]'s.
-const COMMAND: CallSpec = CallSpec {
-    id: "",
-    module: STRATEGY_MODULE_ID,
-    title: "",
-    description: "",
-    permissions: SCRIPT_TIER,
-    event: Some(CHANGED_EVENT_KIND),
-    replay: ReplayTrace::Recorded,
-    posture: |spec| script_action(spec, BY_INSTANCE),
-};
-
-/// `pub` only because the blanket [`Call`] impl names it; the private module
-/// keeps it the family's.
-mod command {
-    use super::{CallSpec, JsonSchema, Sent};
-    use serde::de::DeserializeOwned;
-
-    /// One of the desk's own commands: its spec and what its input sends.
-    pub trait DeskCommand {
-        type Input: DeserializeOwned + JsonSchema;
-        const SPEC: CallSpec;
-        fn command(input: Self::Input) -> Sent;
+/// A desk command's spec: the indicator-script tier, owned by the `strategy`
+/// module and journaled as [`CHANGED_EVENT_KIND`]; `posture` states what a
+/// repeat reaches.
+const fn command(
+    id: &'static str,
+    title: &'static str,
+    description: &'static str,
+    posture: fn(&CallSpec) -> CapabilityDescriptor,
+) -> CallSpec {
+    CallSpec {
+        id,
+        module: STRATEGY_MODULE_ID,
+        title,
+        description,
+        permissions: SCRIPT_PERMISSIONS,
+        event: Some(CHANGED_EVENT_KIND),
+        replay: ReplayTrace::Recorded,
+        posture,
     }
 }
 
-/// Every desk command runs the one path the Strategies tab shares, and none
-/// may start a drawn instance's paper orders.
-impl<H: StrategyDeskHost + ?Sized, C: DeskCommand> Call<H> for C {
+fn by_instance(spec: &CallSpec) -> CapabilityDescriptor {
+    script_action(spec, BY_INSTANCE)
+}
+
+/// One of the desk's own commands: its spec and what its input sends.
+trait DeskCommand {
+    type Input: DeserializeOwned + JsonSchema;
+    const SPEC: CallSpec;
+    const SEND: fn(Self::Input) -> Sent;
+}
+
+/// The call a desk command docks as: every one runs the path the Strategies
+/// tab shares, and none may start a drawn instance's paper orders.
+struct Desk<C>(PhantomData<C>);
+
+impl<H: StrategyDeskHost + ?Sized, C: DeskCommand> Call<H> for Desk<C> {
     type Input = C::Input;
     type Answer = CommandResult;
 
@@ -551,7 +556,7 @@ impl<H: StrategyDeskHost + ?Sized, C: DeskCommand> Call<H> for C {
         host: &mut H,
         _cx: &mut CallCx<'_, A>,
     ) -> Result<CommandResult, ControlError> {
-        let (tab_id, command) = C::command(input);
+        let (tab_id, command) = (C::SEND)(input);
         send(host, tab_id, command, MAY_START_ORDERS)
     }
 }
@@ -570,30 +575,26 @@ struct Pause;
 
 impl DeskCommand for Pause {
     type Input = InstanceInput;
-    const SPEC: CallSpec = CallSpec {
-        id: PAUSE_CAPABILITY_ID,
-        title: "Pause a strategy",
-        description: "Pauses one watching strategy: it rings and places nothing, while its script or ruler keeps reading closes, so a resume judges the next close as a never-paused one would. A resting order or an open position keeps its course. Pausing a paused one changes nothing; an ended one is refused. Journaled as strategy.desk.changed.",
-        ..COMMAND
-    };
-    fn command(input: InstanceInput) -> Sent {
-        of_instance(input, StrategyDeskCommand::Pause)
-    }
+    const SPEC: CallSpec = command(
+        PAUSE_CAPABILITY_ID,
+        "Pause a strategy",
+        "Pauses one watching strategy: it rings and places nothing, while its script or ruler keeps reading closes, so a resume judges the next close as a never-paused one would. A resting order or an open position keeps its course. Pausing a paused one changes nothing; an ended one is refused. Journaled as strategy.desk.changed.",
+        by_instance,
+    );
+    const SEND: fn(InstanceInput) -> Sent = |input| of_instance(input, StrategyDeskCommand::Pause);
 }
 
 struct Resume;
 
 impl DeskCommand for Resume {
     type Input = InstanceInput;
-    const SPEC: CallSpec = CallSpec {
-        id: RESUME_CAPABILITY_ID,
-        title: "Resume a strategy",
-        description: "Resumes one paused strategy from the next close. Resuming a watching one changes nothing; an ended one is refused, and so is a drawn strategy that places paper orders: only the trader restarts those. Journaled as strategy.desk.changed.",
-        ..COMMAND
-    };
-    fn command(input: InstanceInput) -> Sent {
-        of_instance(input, StrategyDeskCommand::Resume)
-    }
+    const SPEC: CallSpec = command(
+        RESUME_CAPABILITY_ID,
+        "Resume a strategy",
+        "Resumes one paused strategy from the next close. Resuming a watching one changes nothing; an ended one is refused, and so is a drawn strategy that places paper orders: only the trader restarts those. Journaled as strategy.desk.changed.",
+        by_instance,
+    );
+    const SEND: fn(InstanceInput) -> Sent = |input| of_instance(input, StrategyDeskCommand::Resume);
 }
 
 const REMOVED_ONCE: &str = "A second remove of the same id finds no instance and is refused. Read strategy.desk.list, or the strategy.desk.changed events after a cursor taken before the call, before retrying.";
@@ -602,16 +603,13 @@ struct Remove;
 
 impl DeskCommand for Remove {
     type Input = InstanceInput;
-    const SPEC: CallSpec = CallSpec {
-        id: REMOVE_CAPABILITY_ID,
-        title: "Remove a strategy",
-        description: "Removes one strategy; a drawn one's resting entry is cancelled, an open position stays the trader's, and its drawing keeps its other strategies. Journaled as strategy.desk.changed.",
-        posture: |spec| script_action(spec, REMOVED_ONCE),
-        ..COMMAND
-    };
-    fn command(input: InstanceInput) -> Sent {
-        of_instance(input, StrategyDeskCommand::Remove)
-    }
+    const SPEC: CallSpec = command(
+        REMOVE_CAPABILITY_ID,
+        "Remove a strategy",
+        "Removes one strategy; a drawn one's resting entry is cancelled, an open position stays the trader's, and its drawing keeps its other strategies. Journaled as strategy.desk.changed.",
+        |spec| script_action(spec, REMOVED_ONCE),
+    );
+    const SEND: fn(InstanceInput) -> Sent = |input| of_instance(input, StrategyDeskCommand::Remove);
 }
 
 const PAUSED_AGAIN: &str = "Pausing again changes nothing; the answer counts what changed.";
@@ -620,16 +618,13 @@ struct AssetPause;
 
 impl DeskCommand for AssetPause {
     type Input = AssetInput;
-    const SPEC: CallSpec = CallSpec {
-        id: ASSET_PAUSE_CAPABILITY_ID,
-        title: "Pause an asset's strategies",
-        description: "Pauses every watching strategy on charts of the symbol and bar type, on every open tab; the other assets' are untouched. Answers how many changed. Journaled as strategy.desk.changed.",
-        posture: |spec| script_action(spec, PAUSED_AGAIN),
-        ..COMMAND
-    };
-    fn command(input: AssetInput) -> Sent {
-        of_asset(input, StrategyDeskCommand::PauseAsset)
-    }
+    const SPEC: CallSpec = command(
+        ASSET_PAUSE_CAPABILITY_ID,
+        "Pause an asset's strategies",
+        "Pauses every watching strategy on charts of the symbol and bar type, on every open tab; the other assets' are untouched. Answers how many changed. Journaled as strategy.desk.changed.",
+        |spec| script_action(spec, PAUSED_AGAIN),
+    );
+    const SEND: fn(AssetInput) -> Sent = |input| of_asset(input, StrategyDeskCommand::PauseAsset);
 }
 
 const RESUMED_AGAIN: &str = "Resuming again changes nothing; the answer counts what changed.";
@@ -638,49 +633,43 @@ struct AssetResume;
 
 impl DeskCommand for AssetResume {
     type Input = AssetInput;
-    const SPEC: CallSpec = CallSpec {
-        id: ASSET_RESUME_CAPABILITY_ID,
-        title: "Resume an asset's strategies",
-        description: "Resumes every paused strategy on charts of the symbol and bar type, on every open tab, except drawn strategies that place paper orders, which stay paused for the trader to restart; the answer counts what changed. Journaled as strategy.desk.changed.",
-        posture: |spec| script_action(spec, RESUMED_AGAIN),
-        ..COMMAND
-    };
-    fn command(input: AssetInput) -> Sent {
-        of_asset(input, StrategyDeskCommand::ResumeAsset)
-    }
+    const SPEC: CallSpec = command(
+        ASSET_RESUME_CAPABILITY_ID,
+        "Resume an asset's strategies",
+        "Resumes every paused strategy on charts of the symbol and bar type, on every open tab, except drawn strategies that place paper orders, which stay paused for the trader to restart; the answer counts what changed. Journaled as strategy.desk.changed.",
+        |spec| script_action(spec, RESUMED_AGAIN),
+    );
+    const SEND: fn(AssetInput) -> Sent = |input| of_asset(input, StrategyDeskCommand::ResumeAsset);
 }
 
 struct Arm;
 
 impl DeskCommand for Arm {
     type Input = InstanceInput;
-    const SPEC: CallSpec = CallSpec {
-        id: ARM_CAPABILITY_ID,
-        title: "Arm an ended strategy",
-        description: "Arms one ended strategy again, warmed on the chart's latest closes and unpaused; a script is recompiled from the source it was armed with. A watching one, one whose drawing no longer passes the arm check, and a drawn one that places paper orders are refused. Journaled as strategy.desk.changed.",
-        ..COMMAND
-    };
-    fn command(input: InstanceInput) -> Sent {
-        of_instance(input, StrategyDeskCommand::Arm)
-    }
+    const SPEC: CallSpec = command(
+        ARM_CAPABILITY_ID,
+        "Arm an ended strategy",
+        "Arms one ended strategy again, warmed on the chart's latest closes and unpaused; a script is recompiled from the source it was armed with. A watching one, one whose drawing no longer passes the arm check, and a drawn one that places paper orders are refused. Journaled as strategy.desk.changed.",
+        by_instance,
+    );
+    const SEND: fn(InstanceInput) -> Sent = |input| of_instance(input, StrategyDeskCommand::Arm);
 }
 
 const SAVED_ONCE: &str = "A second save under the same name is refused because the file exists.";
 
 impl DeskCommand for SaveAsInput {
     type Input = Self;
-    const SPEC: CallSpec = CallSpec {
-        id: SAVE_AS_CAPABILITY_ID,
-        title: "Save a script strategy as",
-        description: "Writes the source a script strategy was armed with to the strategy library as a new .pine file; the name must be free. The instance is unchanged. A drawn strategy has no script and is refused. Journaled as strategy.desk.changed.",
-        posture: |spec| script_action(spec, SAVED_ONCE),
-        ..COMMAND
-    };
-    fn command(input: Self) -> Sent {
+    const SPEC: CallSpec = command(
+        SAVE_AS_CAPABILITY_ID,
+        "Save a script strategy as",
+        "Writes the source a script strategy was armed with to the strategy library as a new .pine file; the name must be free. The instance is unchanged. A drawn strategy has no script and is refused. Journaled as strategy.desk.changed.",
+        |spec| script_action(spec, SAVED_ONCE),
+    );
+    const SEND: fn(Self) -> Sent = |input| {
         let instance = instance_ref(input.instance);
         let name = input.name;
         (input.tab_id.get(), StrategyDeskCommand::SaveAs { instance, name })
-    }
+    };
 }
 
 const EACH_DUPLICATE_ARMS: &str = "Each duplicate arms another copy; read strategy.desk.list, or the strategy.desk.changed events after a cursor taken before the call, before retrying.";
@@ -689,16 +678,13 @@ struct Duplicate;
 
 impl DeskCommand for Duplicate {
     type Input = InstanceInput;
-    const SPEC: CallSpec = CallSpec {
-        id: DUPLICATE_CAPABILITY_ID,
-        title: "Duplicate a strategy",
-        description: "Arms a copy beside one strategy — the same script or preset, side and placement on the same chart — paused, and answers its id. A drawing that no longer passes the arm check, and a drawn strategy that places paper orders, are refused. Journaled as strategy.desk.changed.",
-        posture: |spec| script_action(spec, EACH_DUPLICATE_ARMS),
-        ..COMMAND
-    };
-    fn command(input: InstanceInput) -> Sent {
-        of_instance(input, StrategyDeskCommand::Duplicate)
-    }
+    const SPEC: CallSpec = command(
+        DUPLICATE_CAPABILITY_ID,
+        "Duplicate a strategy",
+        "Arms a copy beside one strategy — the same script or preset, side and placement on the same chart — paused, and answers its id. A drawing that no longer passes the arm check, and a drawn strategy that places paper orders, are refused. Journaled as strategy.desk.changed.",
+        |spec| script_action(spec, EACH_DUPLICATE_ARMS),
+    );
+    const SEND: fn(InstanceInput) -> Sent = |input| of_instance(input, StrategyDeskCommand::Duplicate);
 }
 
 /// `strategy.script.action.set`: the trade tier's, because it can make a
@@ -964,10 +950,7 @@ pub const READBACKS: &[Readback] = &[
         CHANGED_EVENT_KIND,
         "payload.capability",
         "an event after the pre-call cursor names the call; strategy.script.list shows the action, quantity, stop and gain",
-        &[
-            ACTION_SET_TEST,
-            crate::wire::readback::TRADE_UNREACHABLE_TEST,
-        ],
+        &[ACTION_SET_TEST, TRADE_UNREACHABLE_TEST],
     ),
 ];
 

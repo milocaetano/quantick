@@ -1,7 +1,6 @@
 use super::*;
-use crate::test_support::{FakeAccess, FakeWindow};
+use crate::test_support::{FakeAccess, FakeWindow, Handler, docked};
 use quantick_chart::state::{ChartState, SpecSelector};
-use quantick_control::wire::ActorContext;
 use quantick_drawings::{ChartPoint, DRAWING_TOOLS, DrawingBand, DrawingStyle, NewDrawing};
 use quantick_engine::BarSpec;
 use serde_json::json;
@@ -77,16 +76,8 @@ fn window() -> Window {
     }
 }
 
-type Handler =
-    fn(&mut Window, &mut FakeAccess, &ActorContext, &Value) -> Result<Value, ControlError>;
-
-/// The handler `dock_call` docks for `C`.
-fn docked<C: Call<Window>>() -> Handler {
-    crate::call::handler::<C, Window, FakeAccess>()
-}
-
 fn call(
-    handler: Handler,
+    handler: Handler<Window>,
     window: &mut Window,
     access: &mut FakeAccess,
     input: Value,
@@ -107,7 +98,7 @@ fn arm_renko(
     for (key, value) in extra.as_object().expect("an object") {
         input[key] = value.clone();
     }
-    call(docked::<ArmInput>(), window, access, input)
+    call(docked::<ArmInput, _>(), window, access, input)
 }
 
 #[test]
@@ -137,7 +128,7 @@ fn arm_list_and_disarm_a_script_strategy() {
     assert_eq!(second["strategy"]["id"], "2");
     assert_eq!(second["strategy"]["pane_id"], "6");
 
-    let listed = call(docked::<ListInput>(), &mut window, &mut access, json!({})).expect("lists");
+    let listed = call(docked::<ListInput, _>(), &mut window, &mut access, json!({})).expect("lists");
     assert_eq!(listed["library"]["folder"], BUNDLED);
     let scripts = listed["library"]["scripts"].as_array().expect("names");
     assert!(
@@ -154,7 +145,7 @@ fn arm_list_and_disarm_a_script_strategy() {
     );
 
     let gone = call(
-        docked::<DisarmInput>(),
+        docked::<DisarmInput, _>(),
         &mut window,
         &mut access,
         json!({"id": "1"}),
@@ -165,7 +156,7 @@ fn arm_list_and_disarm_a_script_strategy() {
     assert_eq!(gone["strategy"]["state"], "disarmed");
     assert_eq!(gone["strategy"]["disarm_reason"], "disarmed");
     let again = call(
-        docked::<DisarmInput>(),
+        docked::<DisarmInput, _>(),
         &mut window,
         &mut access,
         json!({"id": "1"}),
@@ -173,7 +164,7 @@ fn arm_list_and_disarm_a_script_strategy() {
     .expect("answers");
     assert_eq!(again["disarmed"], false);
     assert_eq!(again["strategy"], Value::Null);
-    let left = call(docked::<ListInput>(), &mut window, &mut access, json!({})).expect("lists");
+    let left = call(docked::<ListInput, _>(), &mut window, &mut access, json!({})).expect("lists");
     assert_eq!(left["armed"].as_array().map(Vec::len), Some(1));
 
     let kinds: Vec<_> = access
@@ -259,7 +250,7 @@ fn an_unreadable_folder_lists_its_reason_and_a_missing_script_names_it() {
     let mut window = window();
     window.dir = Some(format!("{BUNDLED}/no-such-folder"));
     let mut access = FakeAccess::default();
-    let listed = call(docked::<ListInput>(), &mut window, &mut access, json!({}))
+    let listed = call(docked::<ListInput, _>(), &mut window, &mut access, json!({}))
         .expect("the list still answers");
     assert_eq!(listed["library"]["found"], false);
     let reason = listed["library"]["error"].as_str().expect("labelled");
@@ -280,7 +271,7 @@ fn the_default_folder_absent_reads_as_no_folder() {
     let mut window = window();
     window.dir = None;
     let listed = call(
-        docked::<ListInput>(),
+        docked::<ListInput, _>(),
         &mut window,
         &mut FakeAccess::default(),
         json!({}),
@@ -296,7 +287,7 @@ fn an_unreadable_folder_still_lists_and_arms_the_bundled_scripts() {
     let mut window = window();
     window.dir = Some(format!("{BUNDLED}/no-such-folder"));
     let mut access = FakeAccess::default();
-    let listed = call(docked::<ListInput>(), &mut window, &mut access, json!({}))
+    let listed = call(docked::<ListInput, _>(), &mut window, &mut access, json!({}))
         .expect("the list still answers");
     let scripts = listed["library"]["scripts"].as_array().expect("names");
     assert!(

@@ -3,7 +3,10 @@
 //! A family docks by adding its files and one row. Support modules also have
 //! rows so module declarations have no second list. `wire: none` declares no
 //! `wire::<family>` module; `wire: [..]` declares it and names the facets it
-//! publishes, `catalog` then `readbacks`. Empty bindings opt out;
+//! publishes, `catalog` then `readbacks`. A family whose wire types live with
+//! its handlers names that module instead: `handler_readbacks: <module>` for
+//! its readbacks alone, `handler_catalog_readbacks: <module>` for its
+//! documents and readbacks. Empty bindings opt out;
 //! runtime-argument actions such as strategy_describe are registered by the host.
 
 /// Pass the complete table and optional arguments to a local consumer macro.

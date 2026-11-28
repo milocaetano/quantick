@@ -62,6 +62,14 @@ pub const SCRIPT_MAX_BYTES: usize = 64 * 1024;
 /// The longest display name an attached script may carry.
 pub const SCRIPT_NAME_MAX_BYTES: usize = 80;
 
+/// The longest strategy-library file name a `strategy.*` call may give.
+pub const STRATEGY_NAME_MAX_BYTES: usize = 128;
+
+/// The indicator-script tier's permissions: what `indicator.script.attach`
+/// asks — code an operator puts on the chart, which never touches a
+/// position.
+pub const SCRIPT_PERMISSIONS: &[&str] = &[ANNOTATE_PERMISSION_ID, SCRIPT_PERMISSION_ID];
+
 /// What an attach takes: the script, its name, and optionally which pane.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -118,9 +126,9 @@ pub struct ScriptDiagnostic {
 }
 
 pub fn script_permissions() -> BTreeSet<PermissionId> {
-    [ANNOTATE_PERMISSION_ID, SCRIPT_PERMISSION_ID]
-        .into_iter()
-        .map(|id| PermissionId::new(id).expect("static permission ID is valid"))
+    SCRIPT_PERMISSIONS
+        .iter()
+        .map(|id| PermissionId::new(*id).expect("static permission ID is valid"))
         .collect()
 }
 

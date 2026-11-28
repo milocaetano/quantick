@@ -1,9 +1,10 @@
 use super::*;
 use crate::script_strategy::ScriptPane;
 use crate::tabs::TabDirectory;
-use crate::test_support::{FakeAccess, FakeTab, FakeWindow};
+use crate::test_support::{FakeAccess, FakeTab, FakeWindow, Handler, docked};
+use quantick_control_host::actions::ActionRegistry;
+use quantick_control_host::authority::CAPABILITY_VERSION;
 use quantick_chart::state::{ChartState, SpecSelector};
-use quantick_control::wire::ActorContext;
 use quantick_engine::BarSpec;
 use quantick_session::script_strategies::{ScriptArm, ScriptPlacement, SignalAction};
 use quantick_session::strategies::TabStrategies;
@@ -97,17 +98,31 @@ fn arm_steady(window: &mut Window, pane_id: u64) {
     armed.expect("the fixture arms");
 }
 
-type Handler =
-    fn(&mut Window, &mut FakeAccess, &ActorContext, &Value) -> Result<Value, ControlError>;
-
-/// The handler `dock_call` docks for `C`.
-fn docked<C: Call<Window>>() -> Handler {
-    crate::call::handler::<C, Window, FakeAccess>()
-}
-
-fn call(handler: Handler, window: &mut Window, access: &mut FakeAccess, input: Value) -> Value {
+fn call(
+    handler: Handler<Window>,
+    window: &mut Window,
+    access: &mut FakeAccess,
+    input: Value,
+) -> Value {
     handler(window, access, &FakeWindow::assistant(), &input)
         .unwrap_or_else(|error| panic!("{input}: {error:?}"))
+}
+
+/// Run capability `id` as both families dock it; a command must answer that
+/// `id` is the call that ran.
+fn invoke(
+    docked: &ActionRegistry<Window, FakeAccess>,
+    id: &str,
+    window: &mut Window,
+    access: &mut FakeAccess,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let action = (docked.lookup(id, CAPABILITY_VERSION)).unwrap_or_else(|| panic!("{id} docks"));
+    let answer = (action.handler)(window, access, &FakeWindow::assistant(), input)?;
+    if let Some(ran) = answer.get("capability") {
+        assert_eq!(ran, id, "{id} ran another call's handler");
+    }
+    Ok(answer)
 }
 
 fn script(id: &str) -> Value {
@@ -116,6 +131,8 @@ fn script(id: &str) -> Value {
 
 #[test]
 fn every_desk_action_has_a_call() {
+    use crate::script_strategy as scripts;
+
     let scratch = crate::scratch::ScratchDir::new("strategy-desk");
     let mut window = Window {
         library: scratch.path().display().to_string(),
@@ -128,10 +145,16 @@ fn every_desk_action_has_a_call() {
     let mut access = FakeAccess::default();
     arm_steady(&mut window, FLOW);
     arm_steady(&mut window, CONTEXT);
+    let mut docked = ActionRegistry::new();
+    register(&mut docked).expect("the desk docks");
+    crate::script_strategy::register(&mut docked).expect("the scripts dock");
     let window = &mut window;
     let access = &mut access;
+    let mut run = |id: &str, input: Value| {
+        invoke(&docked, id, window, access, &input).unwrap_or_else(|error| panic!("{id}: {error:?}"))
+    };
 
-    let listed = call(docked::<ListInput>(), window, access, json!({}));
+    let listed = run(LIST_CAPABILITY_ID, json!({}));
     let groups = listed["groups"].as_array().expect("groups");
     assert_eq!(groups.len(), 2, "one group per bar type: {listed}");
     assert_eq!(groups[0]["symbol"], "WINZ26");
@@ -144,7 +167,7 @@ fn every_desk_action_has_a_call() {
     let flow_bars = groups[0]["bar_type"].clone();
 
     let asked = json!({"tab_id": "31", "instance": script("1")});
-    let read = call(docked::<Detail>(), window, access, asked);
+    let read = run(DETAIL_CAPABILITY_ID, asked);
     assert_eq!(read["description"], "Steady rise");
     assert_eq!(read["inputs"], json!([{"name": "Length", "value": "14"}]));
     assert_eq!(read["code"], STEADY);
@@ -153,41 +176,42 @@ fn every_desk_action_has_a_call() {
     assert_eq!(read["history_slots"], json!([]));
 
     let one = json!({"tab_id": "31", "instance": script("1")});
-    let paused = call(docked::<Pause>(), window, access, one.clone());
+    let paused = run(PAUSE_CAPABILITY_ID, one.clone());
     assert_eq!(paused["changed"], 1);
     assert_eq!(paused["tab_id"], "31");
-    let resumed = call(docked::<Resume>(), window, access, one.clone());
+    let resumed = run(RESUME_CAPABILITY_ID, one.clone());
     assert_eq!(resumed["changed"], 1);
     let asset = json!({"symbol": "WINZ26", "bar_type": flow_bars});
-    let asset_paused = call(docked::<AssetPause>(), window, access, asset.clone());
+    let asset_paused = run(ASSET_PAUSE_CAPABILITY_ID, asset.clone());
     assert_eq!(asset_paused["changed"], 1, "only the flow chart's asset");
     assert_eq!(asset_paused["tab_id"], Value::Null);
-    let listed = call(docked::<ListInput>(), window, access, json!({}));
+    let listed = run(LIST_CAPABILITY_ID, json!({}));
     assert_eq!(listed["groups"][0]["paused"], true);
     assert_eq!(listed["groups"][1]["paused"], false);
-    let asset_resumed = call(docked::<AssetResume>(), window, access, asset);
+    let asset_resumed = run(ASSET_RESUME_CAPABILITY_ID, asset);
     assert_eq!(asset_resumed["changed"], 1);
 
-    let copy = call(docked::<Duplicate>(), window, access, one.clone());
+    let copy = run(DUPLICATE_CAPABILITY_ID, one.clone());
     assert_eq!(copy["created"], script("3"));
     let save = json!({"tab_id": "31", "instance": script("1"), "name": "steady_copy.pine"});
-    let saved = call(docked::<SaveAsInput>(), window, access, save.clone());
+    let saved = run(SAVE_AS_CAPABILITY_ID, save.clone());
     assert_eq!(saved["saved_as"], "steady_copy.pine");
     let written = std::fs::read_to_string(scratch.path().join("steady_copy.pine"));
     assert_eq!(written.ok().as_deref(), Some(STEADY));
-    let refused = docked::<SaveAsInput>()(window, access, &FakeWindow::assistant(), &save);
+    let refused = invoke(&docked, SAVE_AS_CAPABILITY_ID, window, access, &save);
     assert!(refused.is_err(), "the name is taken");
 
-    let watching = docked::<Arm>()(window, access, &FakeWindow::assistant(), &one);
+    let watching = invoke(&docked, ARM_CAPABILITY_ID, window, access, &one);
     assert!(watching.is_err(), "a watching strategy is not armed again");
-    let removed = call(
-        docked::<Remove>(),
-        window,
-        access,
+    let mut run = |id: &str, input: Value| {
+        invoke(&docked, id, window, access, &input).unwrap_or_else(|error| panic!("{id}: {error:?}"))
+    };
+    let removed = run(
+        REMOVE_CAPABILITY_ID,
         json!({"tab_id": "31", "instance": script("3")}),
     );
     assert_eq!(removed["changed"], 1);
-    let listed = call(docked::<ListInput>(), window, access, json!({}));
+    let listed = run(LIST_CAPABILITY_ID, json!({}));
     assert_eq!(listed["groups"][0]["count"], 1, "the copy is gone");
 
     let kinds = access.events.iter().map(|event| event.kind.to_string());
@@ -210,70 +234,21 @@ fn every_desk_action_has_a_call() {
         ],
         "each command that went through is journaled"
     );
-}
 
-#[test]
-fn every_call_runs_its_own_handler() {
-    use crate::script_strategy as scripts;
-
-    let scratch = crate::scratch::ScratchDir::new("strategy-calls");
-    let mut window = Window {
-        library: scratch.path().display().to_string(),
-        strategies: TabStrategies::default(),
-        panes: vec![
-            Pane::new(FLOW, BarSpec::Tick(4)),
-            Pane::new(CONTEXT, BarSpec::Time(60_000)),
-        ],
-    };
-    let mut access = FakeAccess::default();
-    arm_steady(&mut window, FLOW);
-    arm_steady(&mut window, CONTEXT);
+    // The calls left, each with a field only its own handler answers.
     let _ = window.strategies.pane_mut(CONTEXT).scripts[0]
         .halt(quantick_session::strategies::DRAWING_REMOVED);
-    let mut registry = quantick_control_host::actions::ActionRegistry::new();
-    register(&mut registry).expect("the desk docks");
-    crate::script_strategy::register(&mut registry).expect("the scripts dock");
-    let one = json!({"tab_id": "31", "instance": script("1")});
-    let flow_bars = window.panes[0].spec.spec().summary();
-    let asset = json!({"symbol": "WINZ26", "bar_type": flow_bars});
-    let save = json!({"tab_id": "31", "instance": script("1"), "name": "steady_copy.pine"});
-    let copy = json!({"tab_id": "31", "instance": script("3")});
-    let ended = json!({"tab_id": "31", "instance": script("2")});
-    let alarm = json!({"id": "1", "action": "alarm"});
-    let arm =
-        json!({"script": "steady_copy.pine", "side": "buy", "placement": {"kind": "anywhere"}});
-
-    // Each call, its input, and a field only its own handler answers; a
-    // command also names the call that ran.
+    let arm = json!({"script": "steady_copy.pine", "side": "buy", "placement": {"kind": "anywhere"}});
     for (id, input, answers) in [
-        (LIST_CAPABILITY_ID, json!({}), "/groups"),
-        (DETAIL_CAPABILITY_ID, one.clone(), "/history_slots"),
-        (PAUSE_CAPABILITY_ID, one.clone(), "/capability"),
-        (RESUME_CAPABILITY_ID, one.clone(), "/capability"),
-        (ASSET_PAUSE_CAPABILITY_ID, asset.clone(), "/capability"),
-        (ASSET_RESUME_CAPABILITY_ID, asset, "/capability"),
-        (DUPLICATE_CAPABILITY_ID, one.clone(), "/capability"),
-        (SAVE_AS_CAPABILITY_ID, save, "/capability"),
-        (REMOVE_CAPABILITY_ID, copy, "/capability"),
-        (ARM_CAPABILITY_ID, ended, "/capability"),
-        (ACTION_SET_CAPABILITY_ID, alarm, "/capability"),
+        (ARM_CAPABILITY_ID, json!({"tab_id": "31", "instance": script("2")}), "/changed"),
+        (ACTION_SET_CAPABILITY_ID, json!({"id": "1", "action": "alarm"}), "/changed"),
         (scripts::LIST_CAPABILITY_ID, json!({}), "/library"),
         (scripts::ARM_CAPABILITY_ID, arm, "/strategy/script"),
-        (
-            scripts::DISARM_CAPABILITY_ID,
-            json!({"id": "1"}),
-            "/disarmed",
-        ),
+        (scripts::DISARM_CAPABILITY_ID, json!({"id": "1"}), "/disarmed"),
     ] {
-        let action = registry
-            .lookup(id, quantick_control_host::authority::CAPABILITY_VERSION)
-            .unwrap_or_else(|| panic!("{id} is docked"));
-        let answer = (action.handler)(&mut window, &mut access, &FakeWindow::assistant(), &input)
-            .unwrap_or_else(|error| panic!("{id}: {error:?}"));
+        let answer = invoke(&docked, id, window, access, &input);
+        let answer = answer.unwrap_or_else(|error| panic!("{id}: {error:?}"));
         assert!(answer.pointer(answers).is_some(), "{id}: {answer}");
-        if let Some(ran) = answer.get("capability") {
-            assert_eq!(ran, id, "{id} ran another call's handler");
-        }
     }
 }
 
@@ -290,14 +265,14 @@ fn an_ended_script_is_armed_again_through_its_call() {
         .halt(quantick_session::strategies::DRAWING_REMOVED);
 
     let armed = call(
-        docked::<Arm>(),
+        docked::<Desk<Arm>, _>(),
         &mut window,
         &mut access,
         json!({"tab_id": "31", "instance": script("1")}),
     );
 
     assert_eq!(armed["changed"], 1);
-    let listed = call(docked::<ListInput>(), &mut window, &mut access, json!({}));
+    let listed = call(docked::<ListInput, _>(), &mut window, &mut access, json!({}));
     assert_eq!(listed["groups"][0]["rows"][0]["state"], "watching");
 }
 
@@ -328,8 +303,8 @@ fn script_action_set_reads_back_through_list() {
     let mut access = FakeAccess::default();
     arm_steady(&mut window, FLOW);
     let (window, access) = (&mut window, &mut access);
-    let set = docked::<ActionSetInput>();
-    let list = docked::<crate::script_strategy::ListInput>();
+    let set = docked::<ActionSetInput, _>();
+    let list = docked::<crate::script_strategy::ListInput, _>();
 
     let order =
         json!({"id": "1", "action": "order", "quantity": "2", "stop": "100", "gain": "200"});
@@ -347,7 +322,7 @@ fn script_action_set_reads_back_through_list() {
         (&json!("2"), &json!("100"), &json!("200"))
     );
     let input = json!({"tab_id": "31", "instance": script("1")});
-    let detail = call(docked::<Detail>(), window, access, input);
+    let detail = call(docked::<Detail, _>(), window, access, input);
     assert_eq!(detail["strategy"]["action"], "order");
     assert_eq!(
         (&detail["quantity"], &detail["gain"]),

@@ -269,7 +269,7 @@ pub fn command(id: &str, input: &Value) -> Result<Command, ControlError> {
         SAVE_CAPABILITY_ID => {
             let Save { revision, id } = parse(input)?;
             if id.trim().is_empty()
-                || id.len() > crate::script_strategy::SCRIPT_NAME_MAX_BYTES
+                || id.len() > crate::wire::script::STRATEGY_NAME_MAX_BYTES
             {
                 return Err(ControlError::invalid_request("Invalid strategy file name"));
             }
