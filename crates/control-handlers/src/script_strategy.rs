@@ -1,6 +1,13 @@
-//! `strategy.script.arm`, `.list` and `.disarm`: Pine scripts armed on a
-//! tab's charts, read and removed by id. `strategy.script.action.set` runs
-//! through the desk (`crate::strategy_desk`) and parses here.
+//! `strategy.script.arm`, `.list` and `.disarm`: a Pine script from the
+//! strategy library armed on one chart's bars, read and removed by id, as
+//! named calls. `strategy.script.action.set` runs through the desk
+//! (`crate::strategy_desk`) and parses here.
+//!
+//! A script fires when one of its `alertcondition`s holds on a closed bar
+//! whose body meets the placement; the title's first word is the side. It
+//! rings, or — once `strategy.script.action.set` says so — places a paper
+//! order of a set quantity and protection. Instances live for the session
+//! only.
 //!
 //! The tab's strategies decide (`quantick_session::script_strategies`):
 //! whether a script's titles name sides, what each instance is doing. What
@@ -9,15 +16,14 @@
 //! footprint warmup, and the journal. The tab lends itself through
 //! [`MarketTab::script_tab`](crate::market_tab::MarketTab::script_tab).
 
-use crate::wire::script_strategy::{
-    self as wire, ARMED_EVENT_KIND, ArmInput, ArmResult, CrossDirection, DISARMED_EVENT_KIND,
-    DisarmInput, DisarmResult, FireAction, LibraryListing, ListInput, ListResult, Placement,
-    ScriptStrategy, ScriptStrategyState, TICKET_QUANTITY,
-};
 use quantick_chart::pane_series::PaneSeriesRead;
 use quantick_control::error::ControlError;
-use quantick_control::registry::RegistryError;
-use quantick_control::wire::{ActorContext, WireU64};
+use quantick_control::registry::{
+    CapabilityDescriptor, EffectPersistence, IdempotencyPolicy, RegistryError,
+};
+use quantick_control::schema::schema_document;
+use quantick_control::wire::WireU64;
+use quantick_control_host::actions::ReplayTrace;
 use quantick_control_host::authority::STRATEGY_MODULE_ID;
 use quantick_control_host::journal::NewEvent;
 use quantick_drawings::{DrawingId, DrawingTool, Drawings};
@@ -29,14 +35,187 @@ use quantick_session::strategies::TabStrategies;
 use quantick_stores::script_library::{LoadedScript, ScriptLibrary};
 use quantick_trading::ActionSide;
 use rust_decimal::Decimal;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
 
 use crate::JournalAccess;
+use crate::call::{Call, CallCx, CallSpec, dock_call, read_posture};
 use crate::dock::ActionDock;
 use crate::invalid;
 use crate::market_tab::{LentTab, MarketTabHost};
 use crate::tabs::{TabDirectory, tab_closed, tab_index};
+use crate::wire::readback::{EVERY_FORBIDDEN_TEST, Readback, journal};
+use crate::wire::script::{SCRIPT_PERMISSIONS, STRATEGY_NAME_MAX_BYTES, script_descriptor};
+
+pub const ARM_CAPABILITY_ID: &str = "strategy.script.arm";
+pub const LIST_CAPABILITY_ID: &str = "strategy.script.list";
+pub const DISARM_CAPABILITY_ID: &str = "strategy.script.disarm";
+
+/// Journaled by every arm that armed; its payload is the [`ArmResult`].
+pub const ARMED_EVENT_KIND: &str = "strategy.script.armed";
+/// Journaled by every disarm that removed one; its payload is the
+/// [`DisarmResult`].
+pub const DISARMED_EVENT_KIND: &str = "strategy.script.disarmed";
+
+/// The handler test that arms, lists and disarms through a fake host.
+pub const ARM_LIST_DISARM_TEST: &str = "arm_list_and_disarm_a_script_strategy";
+
+/// Where a script may ring. Prices are decimal strings.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Placement {
+    /// The rectangle drawing `drawing_id` on the pane marks, while its time
+    /// span covers the bar.
+    Region { drawing_id: WireU64 },
+    /// A fixed band; both edges inside, either order.
+    Range { low: String, high: String },
+    /// A horizontal line the bar's body must cross in `direction`.
+    Line {
+        level: String,
+        direction: CrossDirection,
+    },
+    /// Any closed bar.
+    Anywhere,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CrossDirection {
+    Up,
+    Down,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ArmInput {
+    /// The tab; absent for the one on screen.
+    #[serde(default)]
+    pub tab_id: Option<WireU64>,
+    /// The chart whose closed bars the script judges; absent for the flow
+    /// chart.
+    #[serde(default)]
+    pub pane_id: Option<WireU64>,
+    /// A `.pine` file name in the strategy library, as `strategy.script.list`
+    /// reports it.
+    #[schemars(length(min = 1, max = STRATEGY_NAME_MAX_BYTES))]
+    pub script: String,
+    /// The side the instance hunts: alerts whose title names the other side
+    /// do not ring it.
+    pub side: ActionSide,
+    pub placement: Placement,
+    /// What a firing does; absent rings. This call arms alarms only: an
+    /// `order` is refused, since placing orders is the trade tier's — set it
+    /// with `strategy.script.action.set`.
+    #[serde(default)]
+    pub action: Option<FireAction>,
+}
+
+/// What a firing does.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FireAction {
+    Alarm,
+    /// A paper market order.
+    Order,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListInput {
+    #[serde(default)]
+    pub tab_id: Option<WireU64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DisarmInput {
+    #[serde(default)]
+    pub tab_id: Option<WireU64>,
+    /// The id `strategy.script.arm` answered.
+    pub id: WireU64,
+}
+
+/// One armed script.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ScriptStrategy {
+    /// Stable for the tab's session; never reused.
+    pub id: WireU64,
+    pub pane_id: WireU64,
+    pub script: String,
+    pub side: ActionSide,
+    pub placement: Placement,
+    pub state: ScriptStrategyState,
+    /// Why it stopped: `line N: <CODE> <message>` when its script failed at
+    /// runtime, otherwise the disarm reason in the badge's words.
+    pub disarm_reason: Option<String>,
+    /// What the last closed bar did, as the instance's badge line says it.
+    pub status: String,
+    /// True while `action` is `alarm`: it rings and places nothing.
+    pub alarm_only: bool,
+    pub action: FireAction,
+    /// An order's size in the instrument's units, or `ticket` for the
+    /// ticket's quantity when the bar closes. Absent for an alarm.
+    pub quantity: Option<String>,
+    /// An order's stop distance from the entry, in price; `0` places none.
+    /// Absent for an alarm.
+    pub stop: Option<String>,
+    /// An order's target distance from the entry, in price; `0` places none.
+    /// Absent for an alarm.
+    pub gain: Option<String>,
+}
+
+/// The word [`ScriptStrategy::quantity`] uses for the ticket's quantity.
+pub const TICKET_QUANTITY: &str = "ticket";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScriptStrategyState {
+    Watching,
+    Disarmed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ArmResult {
+    pub tab_id: WireU64,
+    pub strategy: ScriptStrategy,
+}
+
+/// The strategy library as the call found it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LibraryListing {
+    /// The folder the launch named (`QUANTICK_STRATEGIES_DIR`), else
+    /// `strategies` beside the working directory.
+    pub folder: String,
+    /// Whether the folder exists and was read. The default folder absent is
+    /// `false` with no `error`: there is simply no folder.
+    pub found: bool,
+    /// Why the folder could not be read; its scripts are then missing here.
+    pub error: Option<String>,
+    /// The scripts `strategy.script.arm` can name: the bundled ones, then
+    /// the folder's `.pine` files, sorted.
+    pub scripts: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ListResult {
+    pub tab_id: WireU64,
+    pub library: LibraryListing,
+    /// Every armed script on the tab, charts in id order, each chart's in
+    /// arming order.
+    pub armed: Vec<ScriptStrategy>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DisarmResult {
+    pub tab_id: WireU64,
+    pub id: WireU64,
+    /// False when no armed script had the id.
+    pub disarmed: bool,
+    /// The instance as it stood when removed.
+    pub strategy: Option<ScriptStrategy>,
+}
 
 /// One chart of a lent tab: the bars a script warms on, and the drawings a
 /// region placement must name.
@@ -104,128 +283,186 @@ where
     H: ScriptStrategyHost + ?Sized,
     A: JournalAccess,
 {
-    registry.register(wire::arm_descriptor(), arm::<H, A>)?;
-    registry.register(wire::list_descriptor(), list::<H, A>)?;
-    registry.register(wire::disarm_descriptor(), disarm::<H, A>)
+    dock_call::<ArmInput, _, _, _>(registry)?;
+    dock_call::<ListInput, _, _, _>(registry)?;
+    dock_call::<DisarmInput, _, _, _>(registry)
 }
 
-fn arm<H: ScriptStrategyHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: ArmInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    if input.action == Some(FireAction::Order) {
-        return Err(invalid(ORDER_ARM));
+/// What every `strategy.*` read asks.
+pub(crate) const READ_PERMISSIONS: &[&str] =
+    &["observe", "observe.indicators", "observe.user_text"];
+
+/// An action in the indicator-script tier, gone with the session.
+pub(crate) fn script_action(spec: &CallSpec, stale_input_safety: &str) -> CapabilityDescriptor {
+    CapabilityDescriptor {
+        persistence: EffectPersistence::Transient,
+        stale_input_safety: Some(stale_input_safety.to_owned()),
+        // `dock_call` sets both schemas from the call's own types.
+        ..script_descriptor(
+            spec.id,
+            spec.title,
+            spec.description,
+            Value::Null,
+            Value::Null,
+        )
     }
-    let index = tab_index(host, input.tab_id)?;
-    let tab_id = host.tab_id_at(index);
-    let place = place_of(&input.placement)?;
-    let ScriptTab {
-        strategies,
-        panes,
-        library,
-    } = host.script_tab(index).ok_or_else(tab_closed)?;
-    let pane = match input.pane_id {
-        None => panes.first(),
-        Some(id) => panes.iter().find(|pane| pane.id == id.get()),
-    }
-    .ok_or_else(|| invalid("the tab has no such chart; omit pane_id for the flow chart"))?;
-    if let ScriptPlacement::Region(drawing) = place {
-        let closed = pane.series.closed_slots();
-        quantick_drawings::alert_geometry::check_arm(pane.drawings, drawing, closed)
-            .map_err(|refusal| invalid(format!("drawing {}: {refusal}", drawing.0)))?;
-    }
-    let (scripts, read) = library_of(library);
-    let source = match scripts.load(&input.script) {
-        LoadedScript::Read { text, .. } => text,
-        LoadedScript::Unreadable { message, .. } => return Err(invalid(message)),
-        LoadedScript::Missing { message } => {
-            return Err(invalid(match read {
-                Err(folder) => format!("{message}; {folder}"),
-                Ok(_) => message,
-            }));
+}
+
+const ARMED_TWICE: &str = "Each arm adds one instance with a new id, so arming twice rings twice; no retry key can make that safe. Read strategy.script.list, or the strategy.script.armed events after a cursor taken before the call, before retrying one whose answer was lost.";
+
+impl<H: ScriptStrategyHost + ?Sized> Call<H> for ArmInput {
+    type Input = Self;
+    type Answer = ArmResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: ARM_CAPABILITY_ID,
+        module: STRATEGY_MODULE_ID,
+        title: "Arm a script strategy",
+        description: "Loads a .pine file from the strategy library and arms it as an alarm on one chart's closed bars: an alertcondition that holds rings the alarm when the bar's body meets the placement (a drawn rectangle, a fixed range, a line crossed one way, or anywhere). The title's first word is the side (bull, buy or long; bear, sell or short; any case); a script with a title naming no side, a computed title, no alertcondition, no title naming the side asked for, or a compile error is refused with the reason, compile errors as `line N: <CODE> <message>`. Places no order: an `action` of `order` is refused, and strategy.script.action.set, in the trade tier, switches an armed instance to orders. A runtime error later disarms that instance alone; strategy.script.list shows the reason. Journaled as strategy.script.armed. Lives for the session.",
+        permissions: SCRIPT_PERMISSIONS,
+        event: Some(ARMED_EVENT_KIND),
+        replay: ReplayTrace::Recorded,
+        posture: |spec| script_action(spec, ARMED_TWICE),
+    };
+
+    fn run<A: JournalAccess>(
+        input: Self,
+        host: &mut H,
+        _cx: &mut CallCx<'_, A>,
+    ) -> Result<ArmResult, ControlError> {
+        if input.action == Some(FireAction::Order) {
+            return Err(invalid(ORDER_ARM));
         }
-    };
-    let request = ScriptArm {
-        pane_id: pane.id,
-        script: &input.script,
-        source: &source,
-        side: input.side.into_engine(),
-        place,
-        action: SignalAction::Alarm,
-    };
-    let reading = strategies
-        .arm_script(request, |depth| footprint_warmup(&pane.series, depth))
-        .map_err(invalid)?;
-    let result = ArmResult {
-        tab_id: WireU64::new(tab_id),
-        strategy: strategy(&reading),
-    };
-    let answer = serde_json::to_value(&result).map_err(invalid)?;
-    access.record_event(NewEvent::by(
-        STRATEGY_MODULE_ID,
-        ARMED_EVENT_KIND,
-        actor,
-        answer.clone(),
-    ));
-    Ok(answer)
+        let index = tab_index(host, input.tab_id)?;
+        let tab_id = host.tab_id_at(index);
+        let place = place_of(&input.placement)?;
+        let ScriptTab {
+            strategies,
+            panes,
+            library,
+        } = host.script_tab(index).ok_or_else(tab_closed)?;
+        let pane = match input.pane_id {
+            None => panes.first(),
+            Some(id) => panes.iter().find(|pane| pane.id == id.get()),
+        }
+        .ok_or_else(|| invalid("the tab has no such chart; omit pane_id for the flow chart"))?;
+        if let ScriptPlacement::Region(drawing) = place {
+            let closed = pane.series.closed_slots();
+            quantick_drawings::alert_geometry::check_arm(pane.drawings, drawing, closed)
+                .map_err(|refusal| invalid(format!("drawing {}: {refusal}", drawing.0)))?;
+        }
+        let (scripts, read) = library_of(library);
+        let source = match scripts.load(&input.script) {
+            LoadedScript::Read { text, .. } => text,
+            LoadedScript::Unreadable { message, .. } => return Err(invalid(message)),
+            LoadedScript::Missing { message } => {
+                return Err(invalid(match read {
+                    Err(folder) => format!("{message}; {folder}"),
+                    Ok(_) => message,
+                }));
+            }
+        };
+        let request = ScriptArm {
+            pane_id: pane.id,
+            script: &input.script,
+            source: &source,
+            side: input.side.into_engine(),
+            place,
+            action: SignalAction::Alarm,
+        };
+        let reading = strategies
+            .arm_script(request, |depth| footprint_warmup(&pane.series, depth))
+            .map_err(invalid)?;
+        Ok(ArmResult {
+            tab_id: WireU64::new(tab_id),
+            strategy: strategy(&reading),
+        })
+    }
 }
 
 /// Placing orders is the trade tier's; this call sits in the script tier.
 const ORDER_ARM: &str = "strategy.script.arm arms alarms only: arm it, then switch it to orders with strategy.script.action.set";
 
-pub(crate) fn list<H: ScriptStrategyHost + ?Sized, A>(
-    host: &mut H,
-    _access: &mut A,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: ListInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    let index = tab_index(host, input.tab_id)?;
-    let tab_id = host.tab_id_at(index);
-    let tab = host.script_tab(index).ok_or_else(tab_closed)?;
-    let result = ListResult {
-        tab_id: WireU64::new(tab_id),
-        library: listing(tab.library),
-        armed: tab
-            .strategies
-            .script_readings()
-            .iter()
-            .map(strategy)
-            .collect(),
+impl<H: ScriptStrategyHost + ?Sized> Call<H> for ListInput {
+    type Input = Self;
+    type Answer = ListResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: LIST_CAPABILITY_ID,
+        module: STRATEGY_MODULE_ID,
+        title: "List script strategies",
+        description: "Reads the strategy library (the bundled scripts, then the folder's .pine files, sorted: what strategy.script.arm accepts) and every script strategy armed on the tab: its id, chart, script, side, placement, whether it is watching or disarmed and why, its badge line, and what a firing does — an alarm, or an order with its quantity, stop and gain. Changes nothing.",
+        permissions: READ_PERMISSIONS,
+        event: None,
+        replay: ReplayTrace::Recorded,
+        posture: read_posture,
     };
-    serde_json::to_value(result).map_err(invalid)
+
+    fn run<A: JournalAccess>(
+        input: Self,
+        host: &mut H,
+        _cx: &mut CallCx<'_, A>,
+    ) -> Result<ListResult, ControlError> {
+        let index = tab_index(host, input.tab_id)?;
+        let tab_id = host.tab_id_at(index);
+        let tab = host.script_tab(index).ok_or_else(tab_closed)?;
+        Ok(ListResult {
+            tab_id: WireU64::new(tab_id),
+            library: listing(tab.library),
+            armed: tab
+                .strategies
+                .script_readings()
+                .iter()
+                .map(strategy)
+                .collect(),
+        })
+    }
 }
 
-fn disarm<H: ScriptStrategyHost + ?Sized, A: JournalAccess>(
-    host: &mut H,
-    access: &mut A,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: DisarmInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    let index = tab_index(host, input.tab_id)?;
-    let tab_id = host.tab_id_at(index);
-    let tab = host.script_tab(index).ok_or_else(tab_closed)?;
-    let removed = tab.strategies.disarm_script(input.id.get());
-    let result = DisarmResult {
-        tab_id: WireU64::new(tab_id),
-        id: input.id,
-        disarmed: removed.is_some(),
-        strategy: removed.as_ref().map(strategy),
+const DISARMED_ONCE: &str = "Disarming names one instance by id, and a second disarm of the same id reports it was not there.";
+
+impl<H: ScriptStrategyHost + ?Sized> Call<H> for DisarmInput {
+    type Input = Self;
+    type Answer = DisarmResult;
+
+    const SPEC: CallSpec = CallSpec {
+        id: DISARM_CAPABILITY_ID,
+        module: STRATEGY_MODULE_ID,
+        title: "Disarm a script strategy",
+        description: "Removes one armed script strategy by the id strategy.script.arm answered; it rings no more. An id no instance has answers disarmed: false. Journaled as strategy.script.disarmed.",
+        permissions: SCRIPT_PERMISSIONS,
+        // Journaled by `run`, and only when one was removed.
+        event: None,
+        replay: ReplayTrace::Recorded,
+        posture: |spec| script_action(spec, DISARMED_ONCE),
     };
-    let answer = serde_json::to_value(&result).map_err(invalid)?;
-    if result.disarmed {
-        access.record_event(NewEvent::by(
-            STRATEGY_MODULE_ID,
-            DISARMED_EVENT_KIND,
-            actor,
-            answer.clone(),
-        ));
+
+    fn run<A: JournalAccess>(
+        input: Self,
+        host: &mut H,
+        cx: &mut CallCx<'_, A>,
+    ) -> Result<DisarmResult, ControlError> {
+        let index = tab_index(host, input.tab_id)?;
+        let tab_id = host.tab_id_at(index);
+        let tab = host.script_tab(index).ok_or_else(tab_closed)?;
+        let removed = tab.strategies.disarm_script(input.id.get());
+        let result = DisarmResult {
+            tab_id: WireU64::new(tab_id),
+            id: input.id,
+            disarmed: removed.is_some(),
+            strategy: removed.as_ref().map(strategy),
+        };
+        if result.disarmed {
+            let answer = serde_json::to_value(&result).map_err(invalid)?;
+            cx.access.record_event(NewEvent::by(
+                STRATEGY_MODULE_ID,
+                DISARMED_EVENT_KIND,
+                cx.actor,
+                answer,
+            ));
+        }
+        Ok(result)
     }
-    Ok(answer)
 }
 
 /// The library over the folder the launch named, scanned for this call: a
@@ -409,6 +646,37 @@ fn strategy(reading: &ScriptReading<DrawingId>) -> ScriptStrategy {
         stop,
         gain,
     }
+}
+
+/// How a client reconciles an arm or a disarm whose answer it lost.
+pub const READBACKS: &[Readback] = &[
+    journal(
+        ARM_CAPABILITY_ID,
+        IdempotencyPolicy::Forbidden,
+        ARMED_EVENT_KIND,
+        "payload.strategy.id",
+        "an event after the pre-call cursor names the armed instance, its script and placement as the call asked",
+        &[ARM_LIST_DISARM_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    journal(
+        DISARM_CAPABILITY_ID,
+        IdempotencyPolicy::Forbidden,
+        DISARMED_EVENT_KIND,
+        "payload.id",
+        "an event after the pre-call cursor carries the id the call named",
+        &[ARM_LIST_DISARM_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+];
+
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        schema_document::<ArmInput>("strategy-script-arm-input-v1.schema.json"),
+        schema_document::<ArmResult>("strategy-script-arm-result-v1.schema.json"),
+        schema_document::<ListInput>("strategy-script-list-input-v1.schema.json"),
+        schema_document::<ListResult>("strategy-script-list-result-v1.schema.json"),
+        schema_document::<DisarmInput>("strategy-script-disarm-input-v1.schema.json"),
+        schema_document::<DisarmResult>("strategy-script-disarm-result-v1.schema.json"),
+    ]
 }
 
 #[cfg(test)]

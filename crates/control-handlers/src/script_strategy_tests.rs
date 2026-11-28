@@ -1,4 +1,5 @@
 use super::*;
+use crate::strategy_desk::tests::{Handler, docked};
 use crate::test_support::{FakeAccess, FakeWindow};
 use quantick_chart::state::{ChartState, SpecSelector};
 use quantick_drawings::{ChartPoint, DRAWING_TOOLS, DrawingBand, DrawingStyle, NewDrawing};
@@ -76,11 +77,8 @@ fn window() -> Window {
     }
 }
 
-type Handler =
-    fn(&mut Window, &mut FakeAccess, &ActorContext, &Value) -> Result<Value, ControlError>;
-
 fn call(
-    handler: Handler,
+    handler: Handler<Window>,
     window: &mut Window,
     access: &mut FakeAccess,
     input: Value,
@@ -101,7 +99,7 @@ fn arm_renko(
     for (key, value) in extra.as_object().expect("an object") {
         input[key] = value.clone();
     }
-    call(arm::<Window, FakeAccess>, window, access, input)
+    call(docked::<ArmInput, _>(), window, access, input)
 }
 
 #[test]
@@ -132,7 +130,7 @@ fn arm_list_and_disarm_a_script_strategy() {
     assert_eq!(second["strategy"]["pane_id"], "6");
 
     let listed = call(
-        list::<Window, FakeAccess>,
+        docked::<ListInput, _>(),
         &mut window,
         &mut access,
         json!({}),
@@ -154,7 +152,7 @@ fn arm_list_and_disarm_a_script_strategy() {
     );
 
     let gone = call(
-        disarm::<Window, FakeAccess>,
+        docked::<DisarmInput, _>(),
         &mut window,
         &mut access,
         json!({"id": "1"}),
@@ -165,7 +163,7 @@ fn arm_list_and_disarm_a_script_strategy() {
     assert_eq!(gone["strategy"]["state"], "disarmed");
     assert_eq!(gone["strategy"]["disarm_reason"], "disarmed");
     let again = call(
-        disarm::<Window, FakeAccess>,
+        docked::<DisarmInput, _>(),
         &mut window,
         &mut access,
         json!({"id": "1"}),
@@ -174,7 +172,7 @@ fn arm_list_and_disarm_a_script_strategy() {
     assert_eq!(again["disarmed"], false);
     assert_eq!(again["strategy"], Value::Null);
     let left = call(
-        list::<Window, FakeAccess>,
+        docked::<ListInput, _>(),
         &mut window,
         &mut access,
         json!({}),
@@ -266,7 +264,7 @@ fn an_unreadable_folder_lists_its_reason_and_a_missing_script_names_it() {
     window.dir = Some(format!("{BUNDLED}/no-such-folder"));
     let mut access = FakeAccess::default();
     let listed = call(
-        list::<Window, FakeAccess>,
+        docked::<ListInput, _>(),
         &mut window,
         &mut access,
         json!({}),
@@ -291,7 +289,7 @@ fn the_default_folder_absent_reads_as_no_folder() {
     let mut window = window();
     window.dir = None;
     let listed = call(
-        list::<Window, FakeAccess>,
+        docked::<ListInput, _>(),
         &mut window,
         &mut FakeAccess::default(),
         json!({}),
@@ -308,7 +306,7 @@ fn an_unreadable_folder_still_lists_and_arms_the_bundled_scripts() {
     window.dir = Some(format!("{BUNDLED}/no-such-folder"));
     let mut access = FakeAccess::default();
     let listed = call(
-        list::<Window, FakeAccess>,
+        docked::<ListInput, _>(),
         &mut window,
         &mut access,
         json!({}),

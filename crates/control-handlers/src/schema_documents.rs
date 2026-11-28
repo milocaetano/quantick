@@ -41,6 +41,24 @@ pub struct SchemaDocument {
     pub schema: Value,
 }
 
+/// Each family's published documents: from its wire module, or from its
+/// handler module when that owns the wire types, since the wire shapes never
+/// reach a handler module.
+macro_rules! family_documents {
+    ($args:tt $($family:ident { wire: $wire:tt, handlers: $handlers:tt, actions: $actions:tt })*) => {{
+        let mut documents: Vec<(&'static str, Value)> = Vec::new();
+        $(family_documents!(@family documents $family $wire);)*
+        documents
+    }};
+    (@family $documents:ident $family:ident [catalog $(, readbacks)?]) => {
+        $documents.extend(crate::wire::$family::documents());
+    };
+    (@family $documents:ident $family:ident [handler_catalog_readbacks: $($path:ident)::+]) => {
+        $documents.extend(crate::$($path)::+::documents());
+    };
+    (@family $documents:ident $family:ident $wire:tt) => {};
+}
+
 /// Every published document whose type lives below the app.
 #[must_use]
 pub fn documents() -> Vec<SchemaDocument> {
@@ -113,7 +131,7 @@ pub fn documents() -> Vec<SchemaDocument> {
         document::<VisibilityResult>("layers-visibility-set-result-v1.schema.json"),
     ];
     documents.extend(
-        crate::wire::catalog::documents()
+        quantick_control::control_families!(family_documents)
             .into_iter()
             .map(|(file_name, schema)| SchemaDocument { file_name, schema }),
     );

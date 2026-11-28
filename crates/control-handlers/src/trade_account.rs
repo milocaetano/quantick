@@ -15,7 +15,7 @@ use quantick_control::registry::{CapabilityDescriptor, IdempotencyPolicy, Regist
 use quantick_control::wire::{ActorContext, ActorKind};
 use quantick_control_host::actions::ReplayTrace;
 use quantick_control_host::admission::known_error;
-use quantick_control_host::authority::{ReadSpec, TRADE_MODULE_ID, read_descriptor};
+use quantick_control_host::authority::TRADE_MODULE_ID;
 use quantick_control_host::journal::NewEvent;
 use quantick_paper::route::{
     Actor, Leave, Refusal, Route, RouteRead, RouteRequest, RowGesture, RowState,
@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::JournalAccess;
-use crate::call::{Call, CallCx, CallSpec, dock_call};
+use crate::call::{Call, CallCx, CallSpec, dock_call, read_posture};
 use crate::dock::ActionDock;
 use crate::trade::{PaperHost, PaperOwner, TRADE_PERMISSION_ID, descriptor};
 use crate::wire::readback::{Readback, TRADE_UNREACHABLE_TEST, journal};
@@ -254,6 +254,7 @@ fn route_posture(
 }
 
 impl<H: PaperHost + ?Sized> Call<H> for AccountReadInput {
+    type Input = Self;
     type Answer = AccountRouteResult;
 
     const SPEC: CallSpec = CallSpec {
@@ -264,20 +265,11 @@ impl<H: PaperHost + ?Sized> Call<H> for AccountReadInput {
         permissions: &["observe", "observe.paper"],
         event: None,
         replay: ReplayTrace::Recorded,
-        posture: |spec| {
-            read_descriptor::<AccountReadInput, AccountRouteResult>(&ReadSpec {
-                id: spec.id,
-                module: spec.module,
-                title: spec.title,
-                description: spec.description,
-                permissions: spec.permissions,
-                pagination: None,
-            })
-        },
+        posture: read_posture,
     };
 
     fn run<A: JournalAccess>(
-        self,
+        _input: Self,
         host: &mut H,
         _cx: &mut CallCx<'_, A>,
     ) -> Result<AccountRouteResult, ControlError> {
@@ -286,6 +278,7 @@ impl<H: PaperHost + ?Sized> Call<H> for AccountReadInput {
 }
 
 impl<H: PaperHost + ?Sized> Call<H> for AccountSelectInput {
+    type Input = Self;
     type Answer = AccountRouteResult;
 
     const SPEC: CallSpec = CallSpec {
@@ -307,20 +300,21 @@ impl<H: PaperHost + ?Sized> Call<H> for AccountSelectInput {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        input: Self,
         host: &mut H,
         cx: &mut CallCx<'_, A>,
     ) -> Result<AccountRouteResult, ControlError> {
         let request = RouteRequest::new(
-            route_of(self.route),
+            route_of(input.route),
             actor_of(cx.actor),
-            leave_of(self.leave),
+            leave_of(input.leave),
         );
-        route_to(host, cx, request, &self)
+        route_to(host, cx, request, &input)
     }
 }
 
 impl<H: PaperHost + ?Sized> Call<H> for AccountDisarmInput {
+    type Input = Self;
     type Answer = AccountRouteResult;
 
     const SPEC: CallSpec = CallSpec {
@@ -342,12 +336,12 @@ impl<H: PaperHost + ?Sized> Call<H> for AccountDisarmInput {
     };
 
     fn run<A: JournalAccess>(
-        self,
+        input: Self,
         host: &mut H,
         cx: &mut CallCx<'_, A>,
     ) -> Result<AccountRouteResult, ControlError> {
-        let request = RouteRequest::new(Route::Sim, actor_of(cx.actor), leave_of(self.leave));
-        route_to(host, cx, request, &self)
+        let request = RouteRequest::new(Route::Sim, actor_of(cx.actor), leave_of(input.leave));
+        route_to(host, cx, request, &input)
     }
 }
 

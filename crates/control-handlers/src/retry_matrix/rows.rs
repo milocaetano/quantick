@@ -11,6 +11,9 @@ macro_rules! family_readbacks {
     (@family $family:ident [handler_readbacks: $($path:ident)::+]) => {
         crate::$($path)::+::READBACKS
     };
+    (@family $family:ident [handler_catalog_readbacks: $($path:ident)::+]) => {
+        crate::$($path)::+::READBACKS
+    };
     (@family $family:ident none) => { &[] };
     (@family $family:ident [$(catalog)?]) => { &[] };
 }

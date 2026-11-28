@@ -15,6 +15,13 @@ pub fn generated_schema<T: JsonSchema>() -> Value {
     serde_json::to_value(schemars::schema_for!(T)).expect("generated JSON Schema is serializable")
 }
 
+/// A published document: its file name under `schemas/control` and the
+/// schema `T` generates.
+#[must_use]
+pub fn schema_document<T: JsonSchema>(file_name: &'static str) -> (&'static str, Value) {
+    (file_name, generated_schema::<T>())
+}
+
 pub fn validate_schema(schema: &Value) -> Result<(), SchemaError> {
     CompiledSchema::new(schema).map(|_| ())
 }

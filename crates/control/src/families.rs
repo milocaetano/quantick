@@ -3,7 +3,10 @@
 //! A family docks by adding its files and one row. Support modules also have
 //! rows so module declarations have no second list. `wire: none` declares no
 //! `wire::<family>` module; `wire: [..]` declares it and names the facets it
-//! publishes, `catalog` then `readbacks`. Empty bindings opt out;
+//! publishes, `catalog` then `readbacks`. A family whose wire types live with
+//! its handlers names that module instead: `handler_readbacks: <module>` for
+//! its readbacks alone, `handler_catalog_readbacks: <module>` for its
+//! documents and readbacks. Empty bindings opt out;
 //! runtime-argument actions such as strategy_describe are registered by the host.
 
 /// Pass the complete table and optional arguments to a local consumer macro.
@@ -26,7 +29,6 @@ macro_rules! control_families {
             bubble_scale { wire: [catalog, readbacks], handlers: [pub bubble_scale], actions: [register] }
             calls { wire: [], handlers: [], actions: [] }
             canvas { wire: [catalog, readbacks], handlers: [pub canvas], actions: [register] }
-            catalog { wire: [], handlers: [], actions: [] }
             chart { wire: [], handlers: [pub chart], actions: [] }
             chart_context { wire: [catalog], handlers: [pub chart_context], actions: [register] }
             chart_layer { wire: none, handlers: [pub chart_layer], actions: [] }
@@ -83,14 +85,14 @@ macro_rules! control_families {
             script { wire: [readbacks], handlers: [pub script], actions: [register] }
             script_alarms { wire: [catalog], handlers: [pub script_alarms], actions: [register] }
             script_editor { wire: [catalog, readbacks], handlers: [pub script_editor], actions: [register] }
-            script_strategy { wire: [catalog, readbacks], handlers: [pub script_strategy], actions: [register] }
+            script_strategy { wire: [handler_catalog_readbacks: script_strategy], handlers: [pub script_strategy], actions: [register] }
             semantic { wire: none, handlers: [pub semantic], actions: [] }
             session { wire: [catalog], handlers: [pub session], actions: [] }
             session_reports { wire: [catalog, readbacks], handlers: [pub session_reports], actions: [register] }
             settings { wire: none, handlers: [pub settings], actions: [] }
             settings_sections { wire: [], handlers: [], actions: [] }
             strategy_describe { wire: [catalog, readbacks], handlers: [], actions: [] }
-            strategy_desk { wire: [catalog, readbacks], handlers: [pub strategy_desk], actions: [register] }
+            strategy_desk { wire: [handler_catalog_readbacks: strategy_desk], handlers: [pub strategy_desk], actions: [register] }
             tabs { wire: none, handlers: [tabs], actions: [] }
             tape_fold { wire: [readbacks], handlers: [pub tape_fold], actions: [register] }
             tape_market_fold { wire: [readbacks], handlers: [pub tape_market_fold], actions: [] }
