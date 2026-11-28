@@ -7045,7 +7045,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Opens one widget pane in its floating window over the chart, reading the active tab: depth (the DOM ladder), big_trades, liquidations or open_interest. A pane whose data the feed does not provide opens and says so; provided reports which. Read what it paints with widget.read.",
+      "description": "Opens one widget pane in its floating window over the chart, reading the active tab: depth (the DOM ladder), big_trades or liquidations. A pane whose data the feed does not provide opens and says so; provided reports which. Read what it paints with widget.read.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -9588,10 +9588,6 @@
                 "description": "Defaults off for snapshots produced before deal counters existed.",
                 "type": "boolean"
               },
-              "funding": {
-                "default": false,
-                "type": "boolean"
-              },
               "history_boundary": {
                 "anyOf": [
                   {
@@ -9608,11 +9604,7 @@
               },
               "liquidations": {
                 "default": false,
-                "description": "The derivative streams the widget panes 3 and 4 gate on; false on\nevery provider today. Optional, so additive to v1.",
-                "type": "boolean"
-              },
-              "open_interest": {
-                "default": false,
+                "description": "The derivative stream the Liquidations pane gates on; false on\nevery provider today. Optional, so additive to v1.",
                 "type": "boolean"
               },
               "traded_volume": {

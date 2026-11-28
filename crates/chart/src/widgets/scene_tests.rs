@@ -4,7 +4,6 @@ use rust_decimal::Decimal;
 use super::big_trades::{BIG_TRADES_EMPTY, NotionalUnit, big_trades_view};
 use super::depth::{DEPTH_EMPTY, depth_rows_per_side, depth_view};
 use super::liquidations::{LIQUIDATIONS_NOT_PROVIDED, liquidations_view};
-use super::open_interest::{OPEN_INTEREST_NOT_PROVIDED, READING_NOTE, open_interest_view};
 use super::scene::{ROW_PX, ScenePrim, WidgetScene};
 use super::{big_trades_tests, depth_tests, derivatives_tests};
 
@@ -123,32 +122,13 @@ fn derivative_panes_paint_their_data_inside_the_body() {
     .paint(SIZE.0, SIZE.1);
     assert!(liquidations.rows > 0);
     assert_inside(&liquidations);
-    let oi = open_interest_view(
-        Some(&derivatives_tests::oi_model()),
-        &derivatives_tests::oi_layout(),
-    )
-    .paint(SIZE.0, SIZE.1);
-    let reading = texts(&oi)
-        .into_iter()
-        .find(|text| text.contains(" = "))
-        .expect("the reading rule is painted");
-    assert!(reading.ends_with(READING_NOTE), "{reading}");
 }
 
 #[test]
 fn a_feed_without_derivatives_paints_the_not_provided_state() {
-    let liquidations = liquidations_view(None, &derivatives_tests::liquidations_layout());
-    let oi = open_interest_view(None, &derivatives_tests::oi_layout());
-    let scenes = [
-        (
-            liquidations.paint(SIZE.0, SIZE.1),
-            LIQUIDATIONS_NOT_PROVIDED,
-        ),
-        (oi.paint(SIZE.0, SIZE.1), OPEN_INTEREST_NOT_PROVIDED),
-    ];
-    for (scene, text) in scenes {
-        assert_eq!(scene.empty.as_deref(), Some(text));
-        assert_eq!(texts(&scene), vec![text]);
-        assert_eq!(scene.rows, 0);
-    }
+    let scene =
+        liquidations_view(None, &derivatives_tests::liquidations_layout()).paint(SIZE.0, SIZE.1);
+    assert_eq!(scene.empty.as_deref(), Some(LIQUIDATIONS_NOT_PROVIDED));
+    assert_eq!(texts(&scene), vec![LIQUIDATIONS_NOT_PROVIDED]);
+    assert_eq!(scene.rows, 0);
 }

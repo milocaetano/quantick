@@ -4,7 +4,6 @@ use super::asset_bubbles_tests::shipped_config;
 use super::*;
 use crate::control::ActionOrigin;
 use quantick_chart::widgets::liquidations::LIQUIDATIONS_NOT_PROVIDED;
-use quantick_chart::widgets::open_interest::OPEN_INTEREST_NOT_PROVIDED;
 use quantick_orderbook::{BookCoverage, BookLevel, BookSnapshot};
 use serde_json::{Value, json};
 
@@ -76,11 +75,8 @@ fn open_read_close_every_widget() {
     let mut app = live_btc_tab();
     let ctx = egui::Context::default();
     let ids = crate::widget_surfaces::WIDGET_SURFACES.map(|spec| spec.id);
-    assert_eq!(
-        ids,
-        ["depth", "big_trades", "liquidations", "open_interest"]
-    );
-    let not_provided = [LIQUIDATIONS_NOT_PROVIDED, OPEN_INTEREST_NOT_PROVIDED];
+    assert_eq!(ids, ["depth", "big_trades", "liquidations"]);
+    let not_provided = [LIQUIDATIONS_NOT_PROVIDED];
     for id in ids {
         let opened = call(&mut app, "widget.open", id);
         assert_eq!(opened["open"], true, "{id}: {opened}");

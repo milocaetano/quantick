@@ -722,8 +722,6 @@ fn a_quote_driven_feed_says_so_where_the_side_note_goes() {
                 ohlcv_aggressor_split: false,
                 native_candle_intervals: false,
                 liquidations: false,
-                open_interest: false,
-                funding: false,
                 order_routing: false,
             }),
             latency: feed::unsplit_latency(),

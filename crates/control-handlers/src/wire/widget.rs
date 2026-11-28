@@ -1,4 +1,4 @@
-//! The widget panes (Depth, Big Trades, Liquidations, OI + Funding) over the
+//! The widget panes (Depth, Big Trades, Liquidations) over the
 //! control plane: open one in its floating window, close it, and read what it
 //! paints. Presentation only: nothing a chart holds changes, and nothing is
 //! saved.
@@ -21,7 +21,7 @@ pub const MAX_READ_TEXTS: usize = 512;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WidgetInput {
-    /// `depth`, `big_trades`, `liquidations` or `open_interest`.
+    /// `depth`, `big_trades` or `liquidations`.
     pub id: String,
 }
 
@@ -67,7 +67,7 @@ pub fn open_descriptor() -> CapabilityDescriptor {
         WIDGET_OPEN_CAPABILITY_ID,
         WIDGET_MODULE_ID,
         "Open a widget pane",
-        "Opens one widget pane in its floating window over the chart, reading the active tab: depth (the DOM ladder), big_trades, liquidations or open_interest. A pane whose data the feed does not provide opens and says so; provided reports which. Read what it paints with widget.read.",
+        "Opens one widget pane in its floating window over the chart, reading the active tab: depth (the DOM ladder), big_trades or liquidations. A pane whose data the feed does not provide opens and says so; provided reports which. Read what it paints with widget.read.",
         "Opening an open pane is the same state, so a stale or repeated call can only show it.",
     )
 }

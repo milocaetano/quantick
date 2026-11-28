@@ -3,8 +3,7 @@ use quantick_civil::TzOffset;
 use quantick_orderflow::widgets::liquidations::{
     LiquidationBucket, LiquidationTotals, Liquidations,
 };
-use quantick_orderflow::widgets::open_interest::{FundingState, OpenInterest};
-use quantick_orderflow::widgets::ports::{LiquidatedSide, LiquidationPrint, OpenInterestSample};
+use quantick_orderflow::widgets::ports::{LiquidatedSide, LiquidationPrint};
 use rust_decimal::Decimal;
 
 use super::WidgetCell;
@@ -12,9 +11,6 @@ use super::big_trades::NotionalUnit;
 use super::liquidations::{
     LIQUIDATIONS_NOT_PROVIDED, LiquidationBarView, LiquidationRowView, LiquidationTotalsView,
     LiquidationsLayout, liquidations_view,
-};
-use super::open_interest::{
-    FUNDING_STALE, OPEN_INTEREST_NOT_PROVIDED, OpenInterestLayout, READING_NOTE, open_interest_view,
 };
 
 fn d(text: &str) -> Decimal {
@@ -73,43 +69,6 @@ pub(super) fn liquidations_layout() -> LiquidationsLayout {
         unit: NotionalUnit::USD,
         histogram_width_px: 100.0,
         histogram_height_px: 40.0,
-    }
-}
-
-pub(super) fn oi_model() -> OpenInterest {
-    let sample = |timestamp_ms, oi: &str, price: &str| OpenInterestSample {
-        timestamp_ms,
-        open_interest: d(oi),
-        price: d(price),
-    };
-    OpenInterest {
-        latest: Some(sample(T0, "92418", "75984.32")),
-        notional: Some(d("6980000000")),
-        oi_change_1h: Some(d("-0.0184")),
-        price_change_1h: Some(d("-0.003")),
-        funding: Some(FundingState {
-            rate: d("0.0001"),
-            predicted_rate: Some(d("0.000071")),
-            annualised_rate: Some(d("0.1095")),
-            countdown_ms: 11_564_000,
-            stale: false,
-        }),
-        provenance: "OI polled every 5 s from venue REST".to_owned(),
-        series: vec![
-            sample(0, "100", "10"),
-            sample(50, "200", "20"),
-            sample(100, "150", "30"),
-        ],
-    }
-}
-
-pub(super) fn oi_layout() -> OpenInterestLayout<'static> {
-    OpenInterestLayout {
-        tick: d("0.01"),
-        base_unit: "BTC",
-        unit: NotionalUnit::USD,
-        plot_width_px: 100.0,
-        plot_height_px: 50.0,
     }
 }
 
@@ -177,81 +136,10 @@ fn views_match_golden_and_empty_state() {
     assert_eq!(empty.empty.as_deref(), Some(LIQUIDATIONS_NOT_PROVIDED));
     assert!(empty.totals.is_empty() && empty.bars.is_empty() && empty.rows.is_empty());
 
-    // OI + Funding.
-    let view = open_interest_view(Some(&oi_model()), &oi_layout());
-    assert_eq!(view.open_interest, cell("92418 BTC", Token::TextPrimary));
-    assert_eq!(view.oi_change, cell("-1.84% 1h", Token::Sell));
-    assert_eq!(view.notional, cell("$6.98B", Token::TextFaint));
-    let funding = view.funding.expect("funding card");
-    assert_eq!(funding.countdown, cell("3:12:44", Token::TextPrimary));
-    assert_eq!(funding.rate, cell("+0.0100%", Token::Buy));
-    assert_eq!(funding.predicted, Some(cell("+0.0071%", Token::Buy)));
-    assert_eq!(funding.annualised, cell("10.95%/yr", Token::TextFaint));
-    assert_eq!(
-        view.reading.as_deref(),
-        Some("price ↓ · OI ↓ = longs closing")
-    );
-    assert_eq!(READING_NOTE, "(reading rule, not a signal)");
-    assert_eq!(view.price_label, "price 75984.32");
-    assert_eq!(view.oi_label, "OI 92418");
-    assert_eq!(
-        view.provenance,
-        cell("OI polled every 5 s from venue REST", Token::DrawViolet)
-    );
-    // Each line on its own scale, four pixels in from top and bottom.
-    assert_eq!(view.oi_line, vec![[0.0, 46.0], [50.0, 4.0], [100.0, 25.0]]);
-    assert_eq!(
-        view.price_line,
-        vec![[0.0, 46.0], [50.0, 25.0], [100.0, 4.0]]
-    );
-    assert_eq!(view.empty, None);
-    let empty = open_interest_view(None, &oi_layout());
-    assert_eq!(empty.empty.as_deref(), Some(OPEN_INTEREST_NOT_PROVIDED));
-    assert!(empty.funding.is_none() && empty.oi_line.is_empty());
-
-    // Each "not provided" text says the feed lacks it, never that it is
+    // The "not provided" text says the feed lacks it, never that it is
     // still loading.
-    for text in [LIQUIDATIONS_NOT_PROVIDED, OPEN_INTEREST_NOT_PROVIDED] {
-        assert!(text.starts_with("feed does not provide"), "{text}");
-    }
-}
-
-#[test]
-fn oi_view_labels_what_it_does_not_know() {
-    // Funding before the first OI reading still shows its card.
-    let funding_only = OpenInterest {
-        latest: None,
-        notional: None,
-        oi_change_1h: None,
-        price_change_1h: None,
-        series: Vec::new(),
-        ..oi_model()
-    };
-    let view = open_interest_view(Some(&funding_only), &oi_layout());
-    assert_eq!(view.empty, None);
-    assert!(view.funding.is_some());
-    assert!(view.oi_line.is_empty());
-
-    // A settled snapshot no newer one replaced says so, in faint ink.
-    let mut stale = oi_model();
-    if let Some(funding) = stale.funding.as_mut() {
-        funding.stale = true;
-        funding.countdown_ms = 0;
-        funding.annualised_rate = None;
-    }
-    let card = open_interest_view(Some(&stale), &oi_layout())
-        .funding
-        .expect("funding card");
-    assert_eq!(card.countdown, cell(FUNDING_STALE, Token::TextFaint));
-    assert_eq!(card.rate, cell("+0.0100%", Token::TextFaint));
-    assert_eq!(card.annualised, cell("—/yr", Token::TextFaint));
-
-    // A move that prints as zero is neither coloured nor read.
-    let flat = OpenInterest {
-        oi_change_1h: Some(d("-0.00001")),
-        ..oi_model()
-    };
-    let view = open_interest_view(Some(&flat), &oi_layout());
-    assert_eq!(view.oi_change, cell("0.00% 1h", Token::TextMuted));
-    assert_eq!(view.reading, None);
+    assert!(
+        LIQUIDATIONS_NOT_PROVIDED.starts_with("feed does not provide"),
+        "{LIQUIDATIONS_NOT_PROVIDED}"
+    );
 }

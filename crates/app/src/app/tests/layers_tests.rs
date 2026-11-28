@@ -1240,8 +1240,6 @@ fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
                 ohlcv_aggressor_split: false,
                 native_candle_intervals: false,
                 liquidations: false,
-                open_interest: false,
-                funding: false,
                 order_routing: false,
             }),
             commands: cmd_tx,

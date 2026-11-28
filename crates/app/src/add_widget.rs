@@ -184,7 +184,6 @@ fn icon(widget: &WidgetSpec) -> &'static str {
         "depth" => icons::STACK,
         "big_trades" => icons::CIRCLES_THREE,
         "liquidations" => icons::LIGHTNING,
-        "open_interest" => icons::CHART_LINE,
         _ => icons::ARROWS_LEFT_RIGHT,
     }
 }

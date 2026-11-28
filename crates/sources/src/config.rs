@@ -120,8 +120,6 @@ impl ProviderKind {
                 ohlcv_aggressor_split: true,
                 native_candle_intervals: true,
                 liquidations: false,
-                open_interest: false,
-                funding: false,
                 order_routing: false,
             },
             // `recentTrades` is a short recovery window, not a pageable
@@ -145,8 +143,6 @@ impl ProviderKind {
                 ohlcv_aggressor_split: false,
                 native_candle_intervals: true,
                 liquidations: false,
-                open_interest: false,
-                funding: false,
                 order_routing: false,
             },
             // The bridge streams the terminal's Depth of Market. Whether a
@@ -174,8 +170,6 @@ impl ProviderKind {
                 ohlcv_aggressor_split: false,
                 native_candle_intervals: false,
                 liquidations: false,
-                open_interest: false,
-                funding: false,
                 order_routing: true,
             },
         }
@@ -296,11 +290,6 @@ pub struct FeedCapabilities {
     /// provide them. A venue that publishes at most one liquidation per
     /// symbol per second (Binance) delivers a lower bound, and must say so.
     pub liquidations: bool,
-    /// Polls the venue's open interest. No provider does yet.
-    pub open_interest: bool,
-    /// Publishes the perpetual's funding rate and settlement time. No
-    /// provider does yet.
-    pub funding: bool,
     /// Orders placed on this chart can route to the broker account the
     /// source's own terminal is logged into. Only a live MetaTrader feed:
     /// a recording has no broker behind it, and a crypto venue's prints are
@@ -415,8 +404,6 @@ impl FeedCapabilities {
             ohlcv_aggressor_split: false,
             native_candle_intervals: false,
             liquidations: false,
-            open_interest: false,
-            funding: false,
             order_routing: false,
         }
     }
@@ -673,7 +660,7 @@ mod tests {
     }
 
     /// No venue feeds the derivative panes yet: every provider, and the
-    /// unresolved feed, says so, so panes 3 and 4 show their empty state.
+    /// unresolved feed, says so, so pane 3 shows its empty state.
     #[test]
     fn derivative_bits_are_off_on_every_provider() {
         use super::{FeedCapabilities, ProviderKind};
@@ -688,8 +675,7 @@ mod tests {
             .map(|provider| provider.capabilities())
             .chain([FeedCapabilities::none()]);
         for caps in answers {
-            let bits = [caps.liquidations, caps.open_interest, caps.funding];
-            assert_eq!(bits, [false; 3], "{caps:?}");
+            assert!(!caps.liquidations, "{caps:?}");
         }
     }
 

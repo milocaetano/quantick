@@ -47,11 +47,6 @@ pub static WIDGETS: &[WidgetSpec] = &[
         "The largest prints as they land",
     ),
     surface("liquidations", "Liquidations", "Forced closes by side"),
-    surface(
-        "open_interest",
-        "OI + Funding",
-        "Open interest and the funding rate",
-    ),
 ];
 
 /// The widget `id` names, if the registry has one.

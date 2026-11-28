@@ -1555,8 +1555,6 @@ mod tests {
                 ohlcv_aggressor_split: false,
                 native_candle_intervals: true,
                 liquidations: false,
-                open_interest: false,
-                funding: false,
                 order_routing: false,
             }
         );
