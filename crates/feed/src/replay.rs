@@ -421,7 +421,6 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
             liquidations: false,
             open_interest: false,
             funding: false,
-            spot_perp_pair: false,
             order_routing: false,
         }),
         commands: cmd_tx,

@@ -20,12 +20,11 @@ use crate::config::AppConfig;
 use crate::pane::PaneSide;
 
 #[rustfmt::skip]
-pub(crate) const WIDGET_SURFACES: [WidgetSpec; 5] = [
+pub(crate) const WIDGET_SURFACES: [WidgetSpec; 4] = [
     WidgetSpec { id: "depth", title: "DEPTH", gate: |caps| caps.book_capture, book: true, tape: true, scene: handlers::depth_scene },
     WidgetSpec { id: "big_trades", title: "BIG TRADES", gate: |_| true, book: false, tape: true, scene: handlers::big_trades_scene },
     WidgetSpec { id: "liquidations", title: "LIQUIDATIONS", gate: |caps| caps.liquidations, book: false, tape: false, scene: handlers::liquidations_scene },
     WidgetSpec { id: "open_interest", title: "OI + FUNDING", gate: |caps| caps.open_interest, book: false, tape: false, scene: handlers::open_interest_scene },
-    WidgetSpec { id: "spot_perp_cvd", title: "SPOT vs PERP CVD", gate: |caps| caps.spot_perp_pair, book: false, tape: false, scene: handlers::spot_perp_cvd_scene },
 ];
 
 /// Whether a feed with `capabilities` serves the surface `id`.

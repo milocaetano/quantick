@@ -1,6 +1,5 @@
 use quantick_appearance::Token;
 use quantick_civil::TzOffset;
-use quantick_indicators::spot_perp_cvd::{CvdPoint, OppositeSpan, SpotPerpCvd};
 use quantick_orderflow::widgets::liquidations::{
     LiquidationBucket, LiquidationTotals, Liquidations,
 };
@@ -17,7 +16,6 @@ use super::liquidations::{
 use super::open_interest::{
     FUNDING_STALE, OPEN_INTEREST_NOT_PROVIDED, OpenInterestLayout, READING_NOTE, open_interest_view,
 };
-use super::spot_perp_cvd::{SPOT_PERP_NOT_PROVIDED, SpotPerpCvdLayout, spot_perp_cvd_view};
 
 fn d(text: &str) -> Decimal {
     text.parse().expect("fixture decimal")
@@ -112,44 +110,6 @@ pub(super) fn oi_layout() -> OpenInterestLayout<'static> {
         unit: NotionalUnit::USD,
         plot_width_px: 100.0,
         plot_height_px: 50.0,
-    }
-}
-
-pub(super) fn cvd_model() -> SpotPerpCvd {
-    let points = |values: &[(i64, f64)]| {
-        values
-            .iter()
-            .map(|&(time_ms, value)| CvdPoint { time_ms, value })
-            .collect()
-    };
-    SpotPerpCvd {
-        perp: points(&[(0, 5.0), (60_000, -3.0), (120_000, -7.0), (180_000, 3.0)]),
-        spot: points(&[
-            (30_000, 2.0),
-            (90_000, 3.0),
-            (150_000, 4.0),
-            (210_000, -2.0),
-        ]),
-        opposite_spans: vec![
-            OppositeSpan {
-                start_ms: 60_000,
-                end_ms: 180_000,
-                ongoing: false,
-            },
-            OppositeSpan {
-                start_ms: 210_000,
-                end_ms: 210_000,
-                ongoing: true,
-            },
-        ],
-    }
-}
-
-pub(super) fn cvd_layout() -> SpotPerpCvdLayout<'static> {
-    SpotPerpCvdLayout {
-        base_unit: "BTC",
-        plot_width_px: 210.0,
-        plot_height_px: 104.0,
     }
 }
 
@@ -249,37 +209,9 @@ fn views_match_golden_and_empty_state() {
     assert_eq!(empty.empty.as_deref(), Some(OPEN_INTEREST_NOT_PROVIDED));
     assert!(empty.funding.is_none() && empty.oi_line.is_empty());
 
-    // Spot vs Perp CVD.
-    let view = spot_perp_cvd_view(Some(&cvd_model()), &cvd_layout());
-    // One scale for both lines: 5 at the top pad, -7 at the bottom one.
-    assert_eq!(
-        view.perp_line,
-        vec![[0.0, 4.0], [60.0, 68.0], [120.0, 100.0], [180.0, 20.0]]
-    );
-    assert_eq!(
-        view.spot_line,
-        vec![[30.0, 28.0], [90.0, 20.0], [150.0, 12.0], [210.0, 60.0]]
-    );
-    assert_eq!(view.perp_token, Token::DrawCyan);
-    assert_eq!(view.spot_token, Token::DrawViolet);
-    assert_eq!(view.zero_y_px, Some(44.0));
-    // The ongoing span opened on the last point: still drawn, at the edge.
-    assert_eq!(view.shaded, vec![[60.0, 180.0], [207.0, 210.0]]);
-    assert_eq!(view.perp_legend, cell("— perp +3 BTC", Token::DrawCyan));
-    assert_eq!(view.spot_legend, cell("— spot -2 BTC", Token::DrawViolet));
-    assert_eq!(view.note, "shaded = opposite signs");
-    assert_eq!(view.empty, None);
-    let empty = spot_perp_cvd_view(None, &cvd_layout());
-    assert_eq!(empty.empty.as_deref(), Some(SPOT_PERP_NOT_PROVIDED));
-    assert!(empty.perp_line.is_empty() && empty.shaded.is_empty());
-
     // Each "not provided" text says the feed lacks it, never that it is
     // still loading.
-    for text in [
-        LIQUIDATIONS_NOT_PROVIDED,
-        OPEN_INTEREST_NOT_PROVIDED,
-        SPOT_PERP_NOT_PROVIDED,
-    ] {
+    for text in [LIQUIDATIONS_NOT_PROVIDED, OPEN_INTEREST_NOT_PROVIDED] {
         assert!(text.starts_with("feed does not provide"), "{text}");
     }
 }

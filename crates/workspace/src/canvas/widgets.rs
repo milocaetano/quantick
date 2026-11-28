@@ -52,11 +52,6 @@ pub static WIDGETS: &[WidgetSpec] = &[
         "OI + Funding",
         "Open interest and the funding rate",
     ),
-    surface(
-        "spot_perp_cvd",
-        "Spot vs Perp CVD",
-        "Cumulative delta, spot against perp",
-    ),
 ];
 
 /// The widget `id` names, if the registry has one.
