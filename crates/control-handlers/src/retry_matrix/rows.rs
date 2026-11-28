@@ -8,10 +8,9 @@ macro_rules! family_readbacks {
         pub const FAMILIES: &[&[Readback]] = &[$(family_readbacks!(@family $family $wire),)*];
     };
     (@family $family:ident [$(catalog,)? readbacks]) => { crate::wire::$family::READBACKS };
-    (@family $family:ident [handler_readbacks: $($path:ident)::+]) => {
-        crate::$($path)::+::READBACKS
-    };
-    (@family $family:ident [handler_catalog_readbacks: $($path:ident)::+]) => {
+    (@family $family:ident [
+        $(handler_readbacks)? $(handler_catalog_readbacks)?: $($path:ident)::+
+    ]) => {
         crate::$($path)::+::READBACKS
     };
     (@family $family:ident none) => { &[] };

@@ -40,18 +40,19 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::JournalAccess;
-use crate::call::{Call, CallCx, CallSpec, dock_call};
+use crate::call::{Call, CallCx, CallSpec, dock_call, read_posture};
 use crate::dock::ActionDock;
 use crate::invalid;
 use crate::market_tab::MarketTabHost;
 use crate::script_strategy::{
     DEFAULT_LIBRARY, FireAction, Placement, READ_PERMISSIONS, SCRIPT_NAME_MAX_BYTES, SCRIPT_TIER,
     ScriptPane, ScriptStrategyHost, ScriptTab, action_words, footprint_warmup, placement,
-    read_posture, script_action, signal_action,
+    script_action, signal_action,
 };
 use crate::session::SessionTab;
 use crate::tabs::{tab_closed, tab_index};
 use crate::wire::readback::{EVERY_FORBIDDEN_TEST, Readback, journal};
+use command::DeskCommand;
 
 pub const LIST_CAPABILITY_ID: &str = "strategy.desk.list";
 pub const DETAIL_CAPABILITY_ID: &str = "strategy.desk.detail";
@@ -76,6 +77,10 @@ pub const EVERY_DESK_ACTION_TEST: &str = "every_desk_action_has_a_call";
 
 /// The handler test that sets a script's action and reads it back.
 pub const ACTION_SET_TEST: &str = "script_action_set_reads_back_through_list";
+
+pub type Command = StrategyDeskCommand<DrawingId>;
+/// One command for the tab it names.
+pub type Sent = (u64, Command);
 
 /// The longest symbol or bar type an asset call may give.
 pub const ASSET_TEXT_MAX_BYTES: usize = 64;
@@ -519,68 +524,75 @@ const COMMAND: CallSpec = CallSpec {
     posture: |spec| script_action(spec, BY_INSTANCE),
 };
 
-/// Send the command `command` builds for the instance `input` names.
-fn for_instance<H: StrategyDeskHost + ?Sized>(
-    host: &mut H,
-    input: InstanceInput,
-    command: fn(InstanceRef<DrawingId>) -> StrategyDeskCommand<DrawingId>,
-) -> Result<CommandResult, ControlError> {
-    let command = command(instance_ref(input.instance));
-    send(host, input.tab_id.get(), command, MAY_START_ORDERS)
+/// `pub` only because the blanket [`Call`] impl names it; the private module
+/// keeps it the family's.
+mod command {
+    use super::{CallSpec, JsonSchema, Sent};
+    use serde::de::DeserializeOwned;
+
+    /// One of the desk's own commands: its spec and what its input sends.
+    pub trait DeskCommand {
+        type Input: DeserializeOwned + JsonSchema;
+        const SPEC: CallSpec;
+        fn command(input: Self::Input) -> Sent;
+    }
 }
 
-/// Send the command `command` builds for the asset `input` names.
-fn for_asset<H: StrategyDeskHost + ?Sized>(
-    host: &mut H,
-    input: AssetInput,
-    command: fn(Asset) -> StrategyDeskCommand<DrawingId>,
-) -> Result<CommandResult, ControlError> {
-    let AssetInput { symbol, bar_type } = input;
-    let command = command(Asset { symbol, bar_type });
-    send(host, 0, command, MAY_START_ORDERS)
+/// Every desk command runs the one path the Strategies tab shares, and none
+/// may start a drawn instance's paper orders.
+impl<H: StrategyDeskHost + ?Sized, C: DeskCommand> Call<H> for C {
+    type Input = C::Input;
+    type Answer = CommandResult;
+
+    const SPEC: CallSpec = C::SPEC;
+
+    fn run<A: JournalAccess>(
+        input: C::Input,
+        host: &mut H,
+        _cx: &mut CallCx<'_, A>,
+    ) -> Result<CommandResult, ControlError> {
+        let (tab_id, command) = C::command(input);
+        send(host, tab_id, command, MAY_START_ORDERS)
+    }
+}
+
+/// `command` for the instance `input` names, on its tab.
+fn of_instance(input: InstanceInput, command: fn(InstanceRef<DrawingId>) -> Command) -> Sent {
+    (input.tab_id.get(), command(instance_ref(input.instance)))
+}
+
+/// `command` for the asset `input` names, which reaches every tab.
+fn of_asset(AssetInput { symbol, bar_type }: AssetInput, command: fn(Asset) -> Command) -> Sent {
+    (0, command(Asset { symbol, bar_type }))
 }
 
 struct Pause;
 
-impl<H: StrategyDeskHost + ?Sized> Call<H> for Pause {
+impl DeskCommand for Pause {
     type Input = InstanceInput;
-    type Answer = CommandResult;
-
     const SPEC: CallSpec = CallSpec {
         id: PAUSE_CAPABILITY_ID,
         title: "Pause a strategy",
         description: "Pauses one watching strategy: it rings and places nothing, while its script or ruler keeps reading closes, so a resume judges the next close as a never-paused one would. A resting order or an open position keeps its course. Pausing a paused one changes nothing; an ended one is refused. Journaled as strategy.desk.changed.",
         ..COMMAND
     };
-
-    fn run<A: JournalAccess>(
-        input: InstanceInput,
-        host: &mut H,
-        _cx: &mut CallCx<'_, A>,
-    ) -> Result<CommandResult, ControlError> {
-        for_instance(host, input, StrategyDeskCommand::Pause)
+    fn command(input: InstanceInput) -> Sent {
+        of_instance(input, StrategyDeskCommand::Pause)
     }
 }
 
 struct Resume;
 
-impl<H: StrategyDeskHost + ?Sized> Call<H> for Resume {
+impl DeskCommand for Resume {
     type Input = InstanceInput;
-    type Answer = CommandResult;
-
     const SPEC: CallSpec = CallSpec {
         id: RESUME_CAPABILITY_ID,
         title: "Resume a strategy",
         description: "Resumes one paused strategy from the next close. Resuming a watching one changes nothing; an ended one is refused, and so is a drawn strategy that places paper orders: only the trader restarts those. Journaled as strategy.desk.changed.",
         ..COMMAND
     };
-
-    fn run<A: JournalAccess>(
-        input: InstanceInput,
-        host: &mut H,
-        _cx: &mut CallCx<'_, A>,
-    ) -> Result<CommandResult, ControlError> {
-        for_instance(host, input, StrategyDeskCommand::Resume)
+    fn command(input: InstanceInput) -> Sent {
+        of_instance(input, StrategyDeskCommand::Resume)
     }
 }
 
@@ -588,10 +600,8 @@ const REMOVED_ONCE: &str = "A second remove of the same id finds no instance and
 
 struct Remove;
 
-impl<H: StrategyDeskHost + ?Sized> Call<H> for Remove {
+impl DeskCommand for Remove {
     type Input = InstanceInput;
-    type Answer = CommandResult;
-
     const SPEC: CallSpec = CallSpec {
         id: REMOVE_CAPABILITY_ID,
         title: "Remove a strategy",
@@ -599,13 +609,8 @@ impl<H: StrategyDeskHost + ?Sized> Call<H> for Remove {
         posture: |spec| script_action(spec, REMOVED_ONCE),
         ..COMMAND
     };
-
-    fn run<A: JournalAccess>(
-        input: InstanceInput,
-        host: &mut H,
-        _cx: &mut CallCx<'_, A>,
-    ) -> Result<CommandResult, ControlError> {
-        for_instance(host, input, StrategyDeskCommand::Remove)
+    fn command(input: InstanceInput) -> Sent {
+        of_instance(input, StrategyDeskCommand::Remove)
     }
 }
 
@@ -613,10 +618,8 @@ const PAUSED_AGAIN: &str = "Pausing again changes nothing; the answer counts wha
 
 struct AssetPause;
 
-impl<H: StrategyDeskHost + ?Sized> Call<H> for AssetPause {
+impl DeskCommand for AssetPause {
     type Input = AssetInput;
-    type Answer = CommandResult;
-
     const SPEC: CallSpec = CallSpec {
         id: ASSET_PAUSE_CAPABILITY_ID,
         title: "Pause an asset's strategies",
@@ -624,13 +627,8 @@ impl<H: StrategyDeskHost + ?Sized> Call<H> for AssetPause {
         posture: |spec| script_action(spec, PAUSED_AGAIN),
         ..COMMAND
     };
-
-    fn run<A: JournalAccess>(
-        input: AssetInput,
-        host: &mut H,
-        _cx: &mut CallCx<'_, A>,
-    ) -> Result<CommandResult, ControlError> {
-        for_asset(host, input, StrategyDeskCommand::PauseAsset)
+    fn command(input: AssetInput) -> Sent {
+        of_asset(input, StrategyDeskCommand::PauseAsset)
     }
 }
 
@@ -638,10 +636,8 @@ const RESUMED_AGAIN: &str = "Resuming again changes nothing; the answer counts w
 
 struct AssetResume;
 
-impl<H: StrategyDeskHost + ?Sized> Call<H> for AssetResume {
+impl DeskCommand for AssetResume {
     type Input = AssetInput;
-    type Answer = CommandResult;
-
     const SPEC: CallSpec = CallSpec {
         id: ASSET_RESUME_CAPABILITY_ID,
         title: "Resume an asset's strategies",
@@ -649,44 +645,30 @@ impl<H: StrategyDeskHost + ?Sized> Call<H> for AssetResume {
         posture: |spec| script_action(spec, RESUMED_AGAIN),
         ..COMMAND
     };
-
-    fn run<A: JournalAccess>(
-        input: AssetInput,
-        host: &mut H,
-        _cx: &mut CallCx<'_, A>,
-    ) -> Result<CommandResult, ControlError> {
-        for_asset(host, input, StrategyDeskCommand::ResumeAsset)
+    fn command(input: AssetInput) -> Sent {
+        of_asset(input, StrategyDeskCommand::ResumeAsset)
     }
 }
 
 struct Arm;
 
-impl<H: StrategyDeskHost + ?Sized> Call<H> for Arm {
+impl DeskCommand for Arm {
     type Input = InstanceInput;
-    type Answer = CommandResult;
-
     const SPEC: CallSpec = CallSpec {
         id: ARM_CAPABILITY_ID,
         title: "Arm an ended strategy",
         description: "Arms one ended strategy again, warmed on the chart's latest closes and unpaused; a script is recompiled from the source it was armed with. A watching one, one whose drawing no longer passes the arm check, and a drawn one that places paper orders are refused. Journaled as strategy.desk.changed.",
         ..COMMAND
     };
-
-    fn run<A: JournalAccess>(
-        input: InstanceInput,
-        host: &mut H,
-        _cx: &mut CallCx<'_, A>,
-    ) -> Result<CommandResult, ControlError> {
-        for_instance(host, input, StrategyDeskCommand::Arm)
+    fn command(input: InstanceInput) -> Sent {
+        of_instance(input, StrategyDeskCommand::Arm)
     }
 }
 
 const SAVED_ONCE: &str = "A second save under the same name is refused because the file exists.";
 
-impl<H: StrategyDeskHost + ?Sized> Call<H> for SaveAsInput {
+impl DeskCommand for SaveAsInput {
     type Input = Self;
-    type Answer = CommandResult;
-
     const SPEC: CallSpec = CallSpec {
         id: SAVE_AS_CAPABILITY_ID,
         title: "Save a script strategy as",
@@ -694,17 +676,10 @@ impl<H: StrategyDeskHost + ?Sized> Call<H> for SaveAsInput {
         posture: |spec| script_action(spec, SAVED_ONCE),
         ..COMMAND
     };
-
-    fn run<A: JournalAccess>(
-        input: Self,
-        host: &mut H,
-        _cx: &mut CallCx<'_, A>,
-    ) -> Result<CommandResult, ControlError> {
-        let command = StrategyDeskCommand::SaveAs {
-            instance: instance_ref(input.instance),
-            name: input.name,
-        };
-        send(host, input.tab_id.get(), command, MAY_START_ORDERS)
+    fn command(input: Self) -> Sent {
+        let instance = instance_ref(input.instance);
+        let name = input.name;
+        (input.tab_id.get(), StrategyDeskCommand::SaveAs { instance, name })
     }
 }
 
@@ -712,10 +687,8 @@ const EACH_DUPLICATE_ARMS: &str = "Each duplicate arms another copy; read strate
 
 struct Duplicate;
 
-impl<H: StrategyDeskHost + ?Sized> Call<H> for Duplicate {
+impl DeskCommand for Duplicate {
     type Input = InstanceInput;
-    type Answer = CommandResult;
-
     const SPEC: CallSpec = CallSpec {
         id: DUPLICATE_CAPABILITY_ID,
         title: "Duplicate a strategy",
@@ -723,13 +696,8 @@ impl<H: StrategyDeskHost + ?Sized> Call<H> for Duplicate {
         posture: |spec| script_action(spec, EACH_DUPLICATE_ARMS),
         ..COMMAND
     };
-
-    fn run<A: JournalAccess>(
-        input: InstanceInput,
-        host: &mut H,
-        _cx: &mut CallCx<'_, A>,
-    ) -> Result<CommandResult, ControlError> {
-        for_instance(host, input, StrategyDeskCommand::Duplicate)
+    fn command(input: InstanceInput) -> Sent {
+        of_instance(input, StrategyDeskCommand::Duplicate)
     }
 }
 
@@ -782,7 +750,7 @@ impl<H: StrategyDeskHost + ?Sized> Call<H> for ActionSetInput {
 const TRADE_TIER_MAY_START_ORDERS: bool = true;
 
 /// The call that carries `command`.
-const fn capability(command: &StrategyDeskCommand<DrawingId>) -> &'static str {
+const fn capability(command: &Command) -> &'static str {
     match command {
         StrategyDeskCommand::Pause(_) => PAUSE_CAPABILITY_ID,
         StrategyDeskCommand::Resume(_) => RESUME_CAPABILITY_ID,
@@ -808,7 +776,7 @@ const fn capability(command: &StrategyDeskCommand<DrawingId>) -> &'static str {
 pub fn send<H: StrategyDeskHost + ?Sized>(
     host: &mut H,
     tab_id: u64,
-    command: StrategyDeskCommand<DrawingId>,
+    command: Command,
     may_start_orders: bool,
 ) -> Result<CommandResult, ControlError> {
     let mut result = CommandResult {
@@ -871,7 +839,7 @@ pub fn send<H: StrategyDeskHost + ?Sized>(
 fn on_asset<H: StrategyDeskHost + ?Sized>(
     host: &mut H,
     asset: &Asset,
-    command: &StrategyDeskCommand<DrawingId>,
+    command: &Command,
     may_start_orders: bool,
 ) -> usize {
     let mut changed = 0;

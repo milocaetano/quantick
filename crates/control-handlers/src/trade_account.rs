@@ -15,7 +15,7 @@ use quantick_control::registry::{CapabilityDescriptor, IdempotencyPolicy, Regist
 use quantick_control::wire::{ActorContext, ActorKind};
 use quantick_control_host::actions::ReplayTrace;
 use quantick_control_host::admission::known_error;
-use quantick_control_host::authority::{ReadSpec, TRADE_MODULE_ID, read_descriptor};
+use quantick_control_host::authority::TRADE_MODULE_ID;
 use quantick_control_host::journal::NewEvent;
 use quantick_paper::route::{
     Actor, Leave, Refusal, Route, RouteRead, RouteRequest, RowGesture, RowState,
@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::JournalAccess;
-use crate::call::{Call, CallCx, CallSpec, dock_call};
+use crate::call::{Call, CallCx, CallSpec, dock_call, read_posture};
 use crate::dock::ActionDock;
 use crate::trade::{PaperHost, PaperOwner, TRADE_PERMISSION_ID, descriptor};
 use crate::wire::readback::{Readback, TRADE_UNREACHABLE_TEST, journal};
@@ -265,16 +265,7 @@ impl<H: PaperHost + ?Sized> Call<H> for AccountReadInput {
         permissions: &["observe", "observe.paper"],
         event: None,
         replay: ReplayTrace::Recorded,
-        posture: |spec| {
-            read_descriptor::<AccountReadInput, AccountRouteResult>(&ReadSpec {
-                id: spec.id,
-                module: spec.module,
-                title: spec.title,
-                description: spec.description,
-                permissions: spec.permissions,
-                pagination: None,
-            })
-        },
+        posture: read_posture,
     };
 
     fn run<A: JournalAccess>(

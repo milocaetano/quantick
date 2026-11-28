@@ -17,6 +17,7 @@ use quantick_control::{
     schema::generated_schema,
     wire::ActorContext,
 };
+use quantick_control_host::authority::{ReadSpec, read_descriptor};
 use quantick_control_host::{actions::ReplayTrace, journal::NewEvent};
 use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
@@ -75,6 +76,20 @@ pub trait Call<H: ?Sized> {
     fn entry(_asked: Value, answer: &Value) -> Value {
         answer.clone()
     }
+}
+
+/// The posture of a read that changes nothing; [`dock_call`] sets both
+/// schemas from the call's own types.
+#[must_use]
+pub fn read_posture(spec: &CallSpec) -> CapabilityDescriptor {
+    read_descriptor::<(), ()>(&ReadSpec {
+        id: spec.id,
+        module: spec.module,
+        title: spec.title,
+        description: spec.description,
+        permissions: spec.permissions,
+        pagination: None,
+    })
 }
 
 /// The descriptor `C` publishes.

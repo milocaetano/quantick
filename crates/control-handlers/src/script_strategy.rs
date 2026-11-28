@@ -25,7 +25,7 @@ use quantick_control::schema::generated_schema;
 use quantick_control::wire::WireU64;
 use quantick_control_host::actions::ReplayTrace;
 use quantick_control_host::authority::{
-    ANNOTATE_PERMISSION_ID, ReadSpec, SCRIPT_PERMISSION_ID, STRATEGY_MODULE_ID, read_descriptor,
+    ANNOTATE_PERMISSION_ID, SCRIPT_PERMISSION_ID, STRATEGY_MODULE_ID,
 };
 use quantick_control_host::journal::NewEvent;
 use quantick_drawings::{DrawingId, DrawingTool, Drawings};
@@ -43,7 +43,7 @@ use serde_json::Value;
 use std::path::Path;
 
 use crate::JournalAccess;
-use crate::call::{Call, CallCx, CallSpec, dock_call};
+use crate::call::{Call, CallCx, CallSpec, dock_call, read_posture};
 use crate::dock::ActionDock;
 use crate::invalid;
 use crate::market_tab::{LentTab, MarketTabHost};
@@ -317,18 +317,7 @@ pub(crate) fn script_action(spec: &CallSpec, stale_input_safety: &str) -> Capabi
     }
 }
 
-/// A read that changes nothing. `dock_call` sets both schemas from the
-/// call's own types.
-pub(crate) fn read_posture(spec: &CallSpec) -> CapabilityDescriptor {
-    read_descriptor::<(), ()>(&ReadSpec {
-        id: spec.id,
-        module: spec.module,
-        title: spec.title,
-        description: spec.description,
-        permissions: spec.permissions,
-        pagination: None,
-    })
-}
+const ARMED_TWICE: &str = "Each arm adds one instance with a new id, so arming twice rings twice; no retry key can make that safe. Read strategy.script.list, or the strategy.script.armed events after a cursor taken before the call, before retrying one whose answer was lost.";
 
 impl<H: ScriptStrategyHost + ?Sized> Call<H> for ArmInput {
     type Input = Self;
@@ -342,12 +331,7 @@ impl<H: ScriptStrategyHost + ?Sized> Call<H> for ArmInput {
         permissions: SCRIPT_TIER,
         event: Some(ARMED_EVENT_KIND),
         replay: ReplayTrace::Recorded,
-        posture: |spec| {
-            script_action(
-                spec,
-                "Each arm adds one instance with a new id, so arming twice rings twice; no retry key can make that safe. Read strategy.script.list, or the strategy.script.armed events after a cursor taken before the call, before retrying one whose answer was lost.",
-            )
-        },
+        posture: |spec| script_action(spec, ARMED_TWICE),
     };
 
     fn run<A: JournalAccess>(
@@ -444,6 +428,8 @@ impl<H: ScriptStrategyHost + ?Sized> Call<H> for ListInput {
     }
 }
 
+const DISARMED_ONCE: &str = "Disarming names one instance by id, and a second disarm of the same id reports it was not there.";
+
 impl<H: ScriptStrategyHost + ?Sized> Call<H> for DisarmInput {
     type Input = Self;
     type Answer = DisarmResult;
@@ -457,12 +443,7 @@ impl<H: ScriptStrategyHost + ?Sized> Call<H> for DisarmInput {
         // Journaled by `run`, and only when one was removed.
         event: None,
         replay: ReplayTrace::Recorded,
-        posture: |spec| {
-            script_action(
-                spec,
-                "Disarming names one instance by id, and a second disarm of the same id reports it was not there.",
-            )
-        },
+        posture: |spec| script_action(spec, DISARMED_ONCE),
     };
 
     fn run<A: JournalAccess>(
