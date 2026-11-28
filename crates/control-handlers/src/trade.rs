@@ -65,7 +65,7 @@ use quantick_session::paper::{
     FlattenInput, PLACE_EVENT_KIND, PlaceInput, REVERSE_EVENT_KIND, ReverseInput, SharedChange,
     TradeCommand, TradeOutcome, TradeRefusal, TradeResult,
 };
-use quantick_sim::{Order, VenueEvent};
+use quantick_trading::{Order, VenueEvent};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

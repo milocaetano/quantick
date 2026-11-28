@@ -18,8 +18,9 @@
 
 use quantick_engine::Bar;
 use quantick_indicators::{Indicator, IndicatorHost, InstanceId, PlotId};
-use quantick_sim::{Command, Order, Position, VenueEvent};
+use quantick_sim::Command;
 use quantick_strategy::runner::{StrategyPort, apply_and_echo};
+use quantick_trading::{Order, Position, VenueEvent};
 use rust_decimal::Decimal;
 
 /// A trading rule the harness can run.

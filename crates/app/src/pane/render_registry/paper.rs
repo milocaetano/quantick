@@ -24,7 +24,7 @@ pub(in crate::pane) struct PaperPass<'a> {
 }
 pub(in crate::pane) struct TradesPass<'a> {
     pub frame: &'a TradePaintFrame<'a>,
-    pub trades: &'a [quantick_sim::ClosedTrade],
+    pub trades: &'a [quantick_trading::ClosedTrade],
     pub selected: Option<usize>,
     pub slot: &'a dyn Fn(i64) -> Option<usize>,
     pub x: &'a dyn Fn(usize) -> f32,

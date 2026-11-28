@@ -1122,7 +1122,7 @@ fn a_resting_retest_limit_stands_down_over_a_manual_position() {
         .apply_sim_command_for_tests(quantick_sim::Command::PlaceMarket {
             side: quantick_engine::Side::Buy,
             quantity: Decimal::ONE,
-            bracket: quantick_sim::Bracket::none(),
+            bracket: quantick_trading::Bracket::none(),
         });
     print(&mut app, &mut id, "104");
     assert!(
@@ -1324,7 +1324,7 @@ fn clicking_the_chart_tag_close_cancels_the_order() {
             side: quantick_engine::Side::Buy,
             quantity: Decimal::ONE,
             price,
-            bracket: quantick_sim::Bracket::none(),
+            bracket: quantick_trading::Bracket::none(),
             cancel_at: None,
             flat_only: false,
         });
@@ -1385,7 +1385,7 @@ fn an_armed_tool_does_not_also_cancel_the_order_under_the_pointer() {
             side: quantick_engine::Side::Buy,
             quantity: Decimal::ONE,
             price,
-            bracket: quantick_sim::Bracket::none(),
+            bracket: quantick_trading::Bracket::none(),
             cancel_at: None,
             flat_only: false,
         });
@@ -1446,7 +1446,7 @@ fn a_right_button_with_no_quick_range_leaves_the_close_live() {
             side: quantick_engine::Side::Buy,
             quantity: Decimal::ONE,
             price,
-            bracket: quantick_sim::Bracket::none(),
+            bracket: quantick_trading::Bracket::none(),
             cancel_at: None,
             flat_only: false,
         });

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use quantick_engine::{Side, Trade};
 use quantick_paper::PaperAccount;
-use quantick_sim::{Bracket, OrderId, OrderIntent};
+use quantick_trading::{Bracket, OrderId, OrderIntent};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 
@@ -229,13 +229,13 @@ fn the_position_calls_go_flat_and_flip() {
 fn the_lock_refuses_a_named_order_over_the_budget() {
     let mut account = PaperAccount::with_trades_dir(PathBuf::new());
     account.set_symbol("WIN$N");
-    let money = quantick_sim::InstrumentMoney {
+    let money = quantick_trading::InstrumentMoney {
         point_value: Decimal::new(20, 2),
         size_step: Decimal::ONE,
         min_size: Decimal::ONE,
         max_size: None,
-        currency: quantick_sim::Currency::new("BRL").expect("BRL"),
-        source: quantick_sim::MoneySource::Declared,
+        currency: quantick_trading::Currency::new("BRL").expect("BRL"),
+        source: quantick_trading::MoneySource::Declared,
     };
     account.set_instrument_money([("WIN$N".to_owned(), money)].into_iter().collect());
     account.set_risk_settings(quantick_paper::risk_sizing::RiskSettings {

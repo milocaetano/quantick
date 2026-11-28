@@ -9,7 +9,8 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_sim::{Command, Position};
+use quantick_sim::Command;
+use quantick_trading::Position;
 use rust_decimal::Decimal;
 
 use crate::paper_chrome::{

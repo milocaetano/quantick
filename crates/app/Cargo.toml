@@ -66,6 +66,7 @@ quantick-broker-mt5 = { path = "../broker-mt5", optional = true }
 quantick-platform = { path = "../platform" }
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
+quantick-trading = { path = "../trading" }
 # The cockpit stores: every document the chart remembers between launches.
 quantick-stores = { path = "../stores" }
 quantick-strategy = { path = "../strategy" }

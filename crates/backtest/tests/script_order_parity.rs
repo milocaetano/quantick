@@ -15,10 +15,11 @@ use quantick_backtest::script_orders::ScriptOrders;
 use quantick_engine::{BarBuilder as _, Side, TickBarBuilder, Trade};
 use quantick_replay::format::{self, ParseOptions, UtcOffset, WriteHeader};
 use quantick_replay::session::Session;
-use quantick_sim::{ClosedTrade, Command, Simulator, VenueEvent};
+use quantick_sim::{Command, Simulator};
 use quantick_strategy::runner::{self, StrategyPort};
 use quantick_strategy::script::{Script, ScriptInstance, ScriptPlacement};
 use quantick_strategy::{OrderQuantity, PriceBracket, SignalAction, SignalOrder};
+use quantick_trading::{ClosedTrade, VenueEvent};
 use rust_decimal::Decimal;
 
 /// The harness run's fills, recorded when script orders landed.

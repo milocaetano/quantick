@@ -7,8 +7,8 @@
 
 use quantick_engine::Side;
 use quantick_paper::PaperAccount;
-use quantick_sim::{Bracket, OrderId, OrderIntent, VenueEvent};
 use quantick_trading::{ActionEntryKind, ActionSide, EntryKind};
+use quantick_trading::{Bracket, OrderId, OrderIntent, VenueEvent};
 use rust_decimal::Decimal;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

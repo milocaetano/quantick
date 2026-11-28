@@ -20,7 +20,8 @@ use quantick_indicators::{
 };
 use quantick_replay::format::{self, ParseOptions, UtcOffset, WriteHeader};
 use quantick_replay::session::Session;
-use quantick_sim::{Command, ExitReason};
+use quantick_sim::Command;
+use quantick_trading::ExitReason;
 use quantick_trading::{Commission, FillCosts};
 use rust_decimal::Decimal;
 
@@ -349,7 +350,7 @@ fn a_foreign_strategy_docks_reads_indicators_and_reaches_the_tape() {
             Command::PlaceMarket {
                 side: Side::Buy,
                 quantity: Decimal::ONE,
-                bracket: quantick_sim::Bracket::none(),
+                bracket: quantick_trading::Bracket::none(),
             },
         ),
         (4, Command::ClosePosition),
@@ -400,7 +401,7 @@ fn a_position_left_open_is_reported_rather_than_flattened() {
         Command::PlaceMarket {
             side: Side::Buy,
             quantity: Decimal::ONE,
-            bracket: quantick_sim::Bracket::none(),
+            bracket: quantick_trading::Bracket::none(),
         },
     )]);
 
@@ -418,7 +419,7 @@ fn a_position_left_open_is_reported_rather_than_flattened() {
         Command::PlaceMarket {
             side: Side::Buy,
             quantity: Decimal::ONE,
-            bracket: quantick_sim::Bracket::none(),
+            bracket: quantick_trading::Bracket::none(),
         },
     )]);
     let run = run_session(&session, BarSpec::Tick(10), &mut strategy);
@@ -446,7 +447,7 @@ fn refusals_are_counted_not_swallowed() {
                 quantity: Decimal::ONE,
                 // Far above the market: a buy limit there fills instantly.
                 price: Decimal::from(10_000),
-                bracket: quantick_sim::Bracket::none(),
+                bracket: quantick_trading::Bracket::none(),
                 cancel_at: None,
                 flat_only: false,
             },
@@ -477,7 +478,7 @@ fn a_dropped_bracket_is_counted() {
         Command::PlaceMarket {
             side: Side::Buy,
             quantity: Decimal::ONE,
-            bracket: quantick_sim::Bracket::whole(None, Some(Decimal::new(1_195, 1))),
+            bracket: quantick_trading::Bracket::whole(None, Some(Decimal::new(1_195, 1))),
         },
     )]);
 
@@ -599,7 +600,7 @@ fn the_aggregate_keeps_the_spread_the_average_hides() {
                 Command::PlaceMarket {
                     side: Side::Buy,
                     quantity: Decimal::ONE,
-                    bracket: quantick_sim::Bracket::none(),
+                    bracket: quantick_trading::Bracket::none(),
                 },
             ),
             (4, Command::ClosePosition),
@@ -894,7 +895,7 @@ fn bricks_cut_from_held_prints_warm_the_indicators_and_place_no_order() {
     let buy = Command::PlaceMarket {
         side: Side::Buy,
         quantity: Decimal::ONE,
-        bracket: quantick_sim::Bracket::none(),
+        bracket: quantick_trading::Bracket::none(),
     };
     // A buy on every brick: the history's would fill on the next print.
     let mut strategy = ScriptedOrders::new((0..34).map(|index| (index, buy)).collect());
@@ -970,7 +971,7 @@ fn a_run_with_costs_books_slipped_fills_and_reports_gross_fees_and_net() {
             Command::PlaceMarket {
                 side: Side::Buy,
                 quantity: Decimal::from(2),
-                bracket: quantick_sim::Bracket::whole(
+                bracket: quantick_trading::Bracket::whole(
                     Some(Decimal::from(50)),
                     Some(Decimal::from(130)),
                 ),

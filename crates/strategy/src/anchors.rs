@@ -520,7 +520,7 @@ mod tests {
     /// An instance on `drawing` whose entry `order` is still pending: a
     /// 3-bar ruler that fired on the third bar (body 4 over average 2).
     fn pending(drawing: DrawingId, order: u64) -> AnchoredInstance {
-        use quantick_sim::{Bracket, EntryKind, Order, OrderId, VenueEvent};
+        use quantick_trading::{Bracket, EntryKind, Order, OrderId, VenueEvent};
 
         let mut riding = instance(drawing);
         riding.armed = ArmedStrategy::new(
@@ -547,7 +547,7 @@ mod tests {
             cancel_at: None,
             flat_only: false,
             placed_ms: 0,
-            role: quantick_sim::OrderRole::Entry,
+            role: quantick_trading::OrderRole::Entry,
             oco: None,
             reduce_only: false,
         })]);
@@ -559,7 +559,8 @@ mod tests {
     /// with no bot is the one thing removal must not orphan.
     #[test]
     fn removal_sweeps_the_pending_entry() {
-        use quantick_sim::{Command, OrderId};
+        use quantick_sim::Command;
+        use quantick_trading::OrderId;
 
         let mut anchors = StrategyAnchors::default();
         anchors.arm(pending(DrawingId(3), 11));
@@ -577,7 +578,8 @@ mod tests {
     /// and never a bot on another drawing.
     #[test]
     fn deleting_a_drawing_disarms_every_instance_on_it() {
-        use quantick_sim::{Command, OrderId};
+        use quantick_sim::Command;
+        use quantick_trading::OrderId;
 
         let mut anchors = StrategyAnchors::default();
         anchors.arm(pending(DrawingId(5), 21));

@@ -30,7 +30,7 @@
 use eframe::egui;
 use quantick_appearance::Token;
 use quantick_engine::Side;
-use quantick_sim::ClosedTrade;
+use quantick_trading::ClosedTrade;
 use rust_decimal::prelude::ToPrimitive;
 
 use crate::chart::PriceScale;

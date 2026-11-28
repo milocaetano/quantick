@@ -16,8 +16,9 @@ use std::path::PathBuf;
 use quantick_engine::{BarBuilderDiagnostics, Side};
 use quantick_indicators::{IndicatorHost, InstanceId};
 use quantick_replay::Session;
-use quantick_sim::{ClosedTrade, PerformanceReport, RejectReason, Simulator, VenueEvent};
+use quantick_sim::{PerformanceReport, Simulator};
 use quantick_trading::FillCosts;
+use quantick_trading::{ClosedTrade, RejectReason, VenueEvent};
 use rust_decimal::Decimal;
 
 use crate::strategy::{Account, Signals, SimPort, Strategy};
@@ -156,8 +157,8 @@ pub fn reject_code(reason: &RejectReason) -> &'static str {
 /// A stable snake_case token per cancellation, same contract as
 /// [`reject_code`].
 #[must_use]
-pub fn cancel_code(reason: &quantick_sim::CancelReason) -> &'static str {
-    use quantick_sim::CancelReason;
+pub fn cancel_code(reason: &quantick_trading::CancelReason) -> &'static str {
+    use quantick_trading::CancelReason;
     match reason {
         CancelReason::User => "user",
         CancelReason::Flatten => "flatten",

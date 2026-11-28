@@ -17,8 +17,9 @@ use quantick_indicators::{
     native::{Cvd, Ema},
 };
 use quantick_pine::{CompiledScript, PineError, ScriptIndicator};
-use quantick_sim::{Bracket, Command};
+use quantick_sim::Command;
 use quantick_strategy::runner;
+use quantick_trading::Bracket;
 use rust_decimal::Decimal;
 
 use crate::strategy::{Account, BarView, Signals, SimPort, Strategy};
@@ -328,7 +329,7 @@ impl Strategy for ForceRegion {
         &self.name
     }
 
-    fn on_print_events(&mut self, events: &[quantick_sim::VenueEvent], port: &mut dyn SimPort) {
+    fn on_print_events(&mut self, events: &[quantick_trading::VenueEvent], port: &mut dyn SimPort) {
         runner::deliver_print_events(std::slice::from_mut(&mut self.instance), events, port);
     }
 
@@ -368,7 +369,7 @@ impl Strategy for ForceRegion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quantick_sim::{Order, Position};
+    use quantick_trading::{Order, Position};
 
     fn account<'a>(position: Option<&'a Position>, orders: &'a [Order]) -> Account<'a> {
         Account {

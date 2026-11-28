@@ -27,7 +27,8 @@
 //! lends it the paper account and the harness its simulator.
 
 use quantick_engine::Bar;
-use quantick_sim::{Command, VenueEvent};
+use quantick_sim::Command;
+use quantick_trading::VenueEvent;
 use rust_decimal::Decimal;
 
 use crate::anchors::AnchoredInstance;
@@ -206,8 +207,8 @@ mod tests {
     use crate::{ArmedState, DisarmReason, Execution, ForceParams, ForceTrigger, Rearm};
     use crate::{BreakPolicy, Region, StrategyParams};
     use quantick_engine::Side;
-    use quantick_sim::RejectReason;
-    use quantick_sim::{Bracket, EntryKind, Fill, FillRole, Order, OrderId, OrderRole};
+    use quantick_trading::RejectReason;
+    use quantick_trading::{Bracket, EntryKind, Fill, FillRole, Order, OrderId, OrderRole};
     use rust_decimal::Decimal;
     use std::cell::RefCell;
 

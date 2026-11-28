@@ -12,7 +12,8 @@ use crate::format::{fmt_decimal, fmt_duration_ms, position_word, sanitize_symbol
 use crate::pnl::{PnlReader, SymbolPnl};
 use quantick_civil::{CivilDate, TzOffset};
 use quantick_engine::Side;
-use quantick_sim::{ClosedTrade, history::SessionSource};
+use quantick_sim::history::SessionSource;
+use quantick_trading::ClosedTrade;
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, BTreeSet};
 /// One virtualised ledger line.

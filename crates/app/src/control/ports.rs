@@ -47,7 +47,7 @@ impl TradeDesk for PaperTrading {
     fn execute(&mut self, command: TradeCommand) -> TradeOutcome {
         (**self).execute(command)
     }
-    fn working_orders(&self) -> &[quantick_sim::Order] {
+    fn working_orders(&self) -> &[quantick_trading::Order] {
         (**self).working_orders()
     }
     fn risk_report(&self) -> (quantick_paper::risk_sizing::RiskState, bool) {

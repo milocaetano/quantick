@@ -18,7 +18,7 @@ use quantick_appearance::paper::{
 };
 use quantick_paper::pnl::SymbolPnl;
 use quantick_paper::report::fit::{FittedPieces, fit_pieces, fit_trade_row};
-use quantick_sim::ClosedTrade;
+use quantick_trading::ClosedTrade;
 use rust_decimal::Decimal;
 
 use super::sessions::trade_source_mark;

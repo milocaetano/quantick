@@ -95,18 +95,5 @@ mod venue;
 pub mod history;
 pub mod report;
 
-// The order vocabulary is not the simulator's: orders, brackets, positions
-// and round trips are facts about trading, and `quantick-trading` owns them
-// so a real venue can speak them too. They are re-exported here because a
-// consumer that already talks to the paper simulator should not have to
-// learn where each type happens to live. New code imports them from their owner,
-// `quantick_trading`.
-pub use quantick_trading::{
-    Bracket, BracketTarget, CancelReason, CloseAmount, ClosedTrade, Currency, EntryKind, ExitPart,
-    ExitReason, Fill, FillRole, InstrumentMoney, LadderError, MAX_EXIT_PARTS, Money, MoneySource,
-    OcoId, Order, OrderId, OrderIntent, OrderRole, Position, RejectReason, SizeOutcome,
-    SizeRefusal, SizedEntry, TradingVenue, VenueEvent, risk_at, signed_points, size_for_risk,
-    stop_distance_per_unit,
-};
 pub use report::{PerformanceReport, ReasonReport, SideReport};
 pub use simulator::{Command, QueuedAction, Simulator};

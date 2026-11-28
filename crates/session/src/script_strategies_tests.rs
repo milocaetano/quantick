@@ -2,9 +2,10 @@
 //! through the same sweep as the drawn instances.
 
 use quantick_engine::{Bar, Side};
-use quantick_sim::{Command, EntryKind, Order, OrderId, OrderRole, VenueEvent};
+use quantick_sim::Command;
 use quantick_strategy::Region;
 use quantick_strategy::runner::StrategyPort;
+use quantick_trading::{EntryKind, Order, OrderId, OrderRole, VenueEvent};
 use rust_decimal::Decimal;
 
 use crate::script_strategies::{

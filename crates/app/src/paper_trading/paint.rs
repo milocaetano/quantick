@@ -10,7 +10,7 @@
 use eframe::egui;
 use quantick_appearance::paper::{LevelState, outlined_tag};
 use quantick_engine::Side;
-use quantick_sim::{Bracket, BracketTarget, OrderRole, signed_points};
+use quantick_trading::{Bracket, BracketTarget, OrderRole, signed_points};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 

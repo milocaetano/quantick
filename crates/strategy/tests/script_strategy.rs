@@ -3,12 +3,13 @@
 //! kernel knows decides where the alarm may ring.
 
 use quantick_engine::{Bar, Side};
-use quantick_sim::{Command, VenueEvent};
+use quantick_sim::Command;
 use quantick_strategy::runner::StrategyPort;
 use quantick_strategy::script::{
     ArmRefusal, ResolvedPlacement, Script, ScriptInstance, ScriptPlacement, ScriptState,
 };
 use quantick_strategy::{DisarmReason, Region, SignalAction};
+use quantick_trading::VenueEvent;
 use rust_decimal::Decimal;
 
 const RENKO_POC_FLIP: &str = include_str!("../../app/scripts/renko_poc_flip.pine");

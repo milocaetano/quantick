@@ -1,7 +1,7 @@
 use super::*;
 use crate::report::readout::LedgerTotals;
 use quantick_engine::Side;
-use quantick_sim::ExitReason;
+use quantick_trading::ExitReason;
 
 #[test]
 fn a_hook_scope_reads_chart_all_or_a_symbol_and_blank_is_none() {

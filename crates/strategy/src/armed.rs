@@ -10,7 +10,8 @@
 //! the chart, never a silent halt.
 
 use quantick_engine::{Bar, Side};
-use quantick_sim::{Bracket, Command, OrderId, RejectReason, VenueEvent};
+use quantick_sim::Command;
+use quantick_trading::{Bracket, OrderId, RejectReason, VenueEvent};
 use rust_decimal::Decimal;
 
 use crate::placement::{Placement, Reach};
@@ -719,7 +720,7 @@ impl ArmedStrategy {
                         order_id: Some(id), ..
                     },
                     VenueEvent::Filled(fill),
-                ) if fill.role == quantick_sim::FillRole::Entry(*id) => {
+                ) if fill.role == quantick_trading::FillRole::Entry(*id) => {
                     self.state = ArmedState::InPosition;
                     my_fill_in_batch = true;
                     let at_fill = (self.params.bracket).and_then(|legs| {
@@ -749,7 +750,7 @@ impl ArmedStrategy {
                         // the projected target before the retest. No trade
                         // happened — an auto instance goes straight back to
                         // hunting, a one-shot stops with the reason named.
-                        quantick_sim::CancelReason::PriceTouched => match self.params.rearm {
+                        quantick_trading::CancelReason::PriceTouched => match self.params.rearm {
                             Rearm::Auto => ArmedState::Armed,
                             Rearm::OneShot => ArmedState::Disarmed {
                                 reason: DisarmReason::TargetBeforeRetest,
@@ -760,12 +761,14 @@ impl ArmedStrategy {
                         // instance returns to hunting (its fire gate will
                         // hold until the account is clean again); one shot
                         // stops with the reason on the badge.
-                        quantick_sim::CancelReason::AccountOccupied => match self.params.rearm {
-                            Rearm::Auto => ArmedState::Armed,
-                            Rearm::OneShot => ArmedState::Disarmed {
-                                reason: DisarmReason::AccountOccupied,
-                            },
-                        },
+                        quantick_trading::CancelReason::AccountOccupied => {
+                            match self.params.rearm {
+                                Rearm::Auto => ArmedState::Armed,
+                                Rearm::OneShot => ArmedState::Disarmed {
+                                    reason: DisarmReason::AccountOccupied,
+                                },
+                            }
+                        }
                         // A human hand (or a reset) swept the entry away;
                         // the bot does not insist.
                         _ => ArmedState::Disarmed {
@@ -1195,17 +1198,17 @@ mod tests {
         let mut instance = force_instance(Side::Buy);
         warm_then_force(&mut instance, &region);
 
-        let order = quantick_sim::Order {
+        let order = quantick_trading::Order {
             id: OrderId(7),
             side: Side::Buy,
-            kind: quantick_sim::EntryKind::Market,
+            kind: quantick_trading::EntryKind::Market,
             price: None,
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
             cancel_at: None,
             flat_only: false,
             placed_ms: 0,
-            role: quantick_sim::OrderRole::Entry,
+            role: quantick_trading::OrderRole::Entry,
             oco: None,
             reduce_only: false,
         };
@@ -1219,19 +1222,19 @@ mod tests {
         );
 
         // A fill for some *other* order must not advance the machine.
-        let foreign_fill = quantick_sim::Fill {
+        let foreign_fill = quantick_trading::Fill {
             timestamp_ms: 1,
             agg_id: 10,
             side: Side::Buy,
             price: dec("106"),
             quantity: Decimal::ONE,
-            role: quantick_sim::FillRole::Entry(OrderId(99)),
+            role: quantick_trading::FillRole::Entry(OrderId(99)),
         };
         let _ = instance.on_sim_events(&[VenueEvent::Filled(foreign_fill)]);
         assert!(matches!(instance.state(), ArmedState::Fired { .. }));
 
-        let fill = quantick_sim::Fill {
-            role: quantick_sim::FillRole::Entry(OrderId(7)),
+        let fill = quantick_trading::Fill {
+            role: quantick_trading::FillRole::Entry(OrderId(7)),
             ..foreign_fill
         };
         let _ = instance.on_sim_events(&[VenueEvent::Filled(fill)]);
@@ -1260,27 +1263,27 @@ mod tests {
             })),
         );
         warm_then_force(&mut instance, &region);
-        let _ = instance.on_sim_events(&[VenueEvent::Placed(quantick_sim::Order {
+        let _ = instance.on_sim_events(&[VenueEvent::Placed(quantick_trading::Order {
             id: OrderId(1),
             side: Side::Buy,
-            kind: quantick_sim::EntryKind::Market,
+            kind: quantick_trading::EntryKind::Market,
             price: None,
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
             cancel_at: None,
             flat_only: false,
             placed_ms: 0,
-            role: quantick_sim::OrderRole::Entry,
+            role: quantick_trading::OrderRole::Entry,
             oco: None,
             reduce_only: false,
         })]);
-        let _ = instance.on_sim_events(&[VenueEvent::Filled(quantick_sim::Fill {
+        let _ = instance.on_sim_events(&[VenueEvent::Filled(quantick_trading::Fill {
             timestamp_ms: 1,
             agg_id: 10,
             side: Side::Buy,
             price: dec("106"),
             quantity: Decimal::ONE,
-            role: quantick_sim::FillRole::Entry(OrderId(1)),
+            role: quantick_trading::FillRole::Entry(OrderId(1)),
         })]);
         assert_eq!(instance.state(), &ArmedState::InPosition);
 
@@ -1310,24 +1313,24 @@ mod tests {
         let region = Region::new(dec("100"), dec("110"));
         let mut instance = force_instance(Side::Buy);
         warm_then_force(&mut instance, &region);
-        let order = quantick_sim::Order {
+        let order = quantick_trading::Order {
             id: OrderId(3),
             side: Side::Buy,
-            kind: quantick_sim::EntryKind::Market,
+            kind: quantick_trading::EntryKind::Market,
             price: None,
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
             cancel_at: None,
             flat_only: false,
             placed_ms: 0,
-            role: quantick_sim::OrderRole::Entry,
+            role: quantick_trading::OrderRole::Entry,
             oco: None,
             reduce_only: false,
         };
         let _ = instance.on_sim_events(&[VenueEvent::Placed(order.clone())]);
         let _ = instance.on_sim_events(&[VenueEvent::Cancelled {
             order,
-            reason: quantick_sim::CancelReason::Flatten,
+            reason: quantick_trading::CancelReason::Flatten,
         }]);
         assert_eq!(
             instance.state(),
@@ -1529,17 +1532,17 @@ mod tests {
         let region = Region::new(dec("100"), dec("110"));
         let mut instance = force_instance(Side::Buy);
         warm_then_force(&mut instance, &region);
-        let order = quantick_sim::Order {
+        let order = quantick_trading::Order {
             id: OrderId(7),
             side: Side::Buy,
-            kind: quantick_sim::EntryKind::Market,
+            kind: quantick_trading::EntryKind::Market,
             price: None,
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
             cancel_at: None,
             flat_only: false,
             placed_ms: 0,
-            role: quantick_sim::OrderRole::Entry,
+            role: quantick_trading::OrderRole::Entry,
             oco: None,
             reduce_only: false,
         };
@@ -1547,13 +1550,13 @@ mod tests {
 
         // The fill and the drop arrive in one batch, exactly as the
         // simulator reports them when the market outran the level.
-        let fill = quantick_sim::Fill {
+        let fill = quantick_trading::Fill {
             timestamp_ms: 1,
             agg_id: 10,
             side: Side::Buy,
             price: dec("102.9"),
             quantity: Decimal::ONE,
-            role: quantick_sim::FillRole::Entry(OrderId(7)),
+            role: quantick_trading::FillRole::Entry(OrderId(7)),
         };
         let commands = instance.on_sim_events(&[
             VenueEvent::Filled(fill),
@@ -1574,17 +1577,17 @@ mod tests {
         // arrived with it.
         let mut bystander = force_instance(Side::Buy);
         warm_then_force(&mut bystander, &region);
-        let _ = bystander.on_sim_events(&[VenueEvent::Placed(quantick_sim::Order {
+        let _ = bystander.on_sim_events(&[VenueEvent::Placed(quantick_trading::Order {
             id: OrderId(9),
             side: Side::Buy,
-            kind: quantick_sim::EntryKind::Market,
+            kind: quantick_trading::EntryKind::Market,
             price: None,
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
             cancel_at: None,
             flat_only: false,
             placed_ms: 0,
-            role: quantick_sim::OrderRole::Entry,
+            role: quantick_trading::OrderRole::Entry,
             oco: None,
             reduce_only: false,
         })]);
@@ -1868,18 +1871,18 @@ mod tests {
         );
     }
 
-    fn retest_order(id: u64) -> quantick_sim::Order {
-        quantick_sim::Order {
+    fn retest_order(id: u64) -> quantick_trading::Order {
+        quantick_trading::Order {
             id: OrderId(id),
             side: Side::Sell,
-            kind: quantick_sim::EntryKind::Limit,
+            kind: quantick_trading::EntryKind::Limit,
             price: Some(dec("105")),
             quantity: Decimal::ONE,
             bracket: Bracket::whole(Some(dec("110")), Some(dec("98"))),
             cancel_at: Some(dec("98")),
             flat_only: true,
             placed_ms: 0,
-            role: quantick_sim::OrderRole::Entry,
+            role: quantick_trading::OrderRole::Entry,
             oco: None,
             reduce_only: false,
         }
@@ -1898,7 +1901,7 @@ mod tests {
         let _ = one_shot.on_sim_events(&[VenueEvent::Placed(order.clone())]);
         let _ = one_shot.on_sim_events(&[VenueEvent::Cancelled {
             order,
-            reason: quantick_sim::CancelReason::PriceTouched,
+            reason: quantick_trading::CancelReason::PriceTouched,
         }]);
         assert_eq!(
             one_shot.state(),
@@ -1926,7 +1929,7 @@ mod tests {
         let _ = auto.on_sim_events(&[VenueEvent::Placed(order.clone())]);
         let _ = auto.on_sim_events(&[VenueEvent::Cancelled {
             order,
-            reason: quantick_sim::CancelReason::PriceTouched,
+            reason: quantick_trading::CancelReason::PriceTouched,
         }]);
         assert_eq!(
             auto.state(),
@@ -1948,7 +1951,7 @@ mod tests {
         let _ = one_shot.on_sim_events(&[VenueEvent::Placed(order.clone())]);
         let _ = one_shot.on_sim_events(&[VenueEvent::Cancelled {
             order,
-            reason: quantick_sim::CancelReason::AccountOccupied,
+            reason: quantick_trading::CancelReason::AccountOccupied,
         }]);
         assert_eq!(
             one_shot.state(),
@@ -1976,7 +1979,7 @@ mod tests {
         let _ = auto.on_sim_events(&[VenueEvent::Placed(order.clone())]);
         let _ = auto.on_sim_events(&[VenueEvent::Cancelled {
             order,
-            reason: quantick_sim::CancelReason::AccountOccupied,
+            reason: quantick_trading::CancelReason::AccountOccupied,
         }]);
         assert_eq!(auto.state(), &ArmedState::Armed);
     }
@@ -1992,7 +1995,7 @@ mod tests {
         let _ = instance.on_sim_events(&[VenueEvent::Placed(order.clone())]);
         let _ = instance.on_sim_events(&[VenueEvent::Cancelled {
             order,
-            reason: quantick_sim::CancelReason::Flatten,
+            reason: quantick_trading::CancelReason::Flatten,
         }]);
         assert_eq!(
             instance.state(),
@@ -2008,13 +2011,13 @@ mod tests {
         let mut instance = retest_instance(Side::Sell);
         warm_then_sell_cut(&mut instance, &region);
         let _ = instance.on_sim_events(&[VenueEvent::Placed(retest_order(7))]);
-        let fill = quantick_sim::Fill {
+        let fill = quantick_trading::Fill {
             timestamp_ms: 9,
             agg_id: 30,
             side: Side::Sell,
             price: dec("105"),
             quantity: Decimal::ONE,
-            role: quantick_sim::FillRole::Entry(OrderId(7)),
+            role: quantick_trading::FillRole::Entry(OrderId(7)),
         };
         let _ = instance.on_sim_events(&[VenueEvent::Filled(fill)]);
         assert_eq!(instance.state(), &ArmedState::InPosition);
@@ -2248,28 +2251,28 @@ mod tests {
         let region = Region::new(dec("100"), dec("110"));
         let mut instance = force_instance(Side::Buy);
         assert!(!warm_then_force(&mut instance, &region).is_empty());
-        let order = quantick_sim::Order {
+        let order = quantick_trading::Order {
             id: OrderId(7),
             side: Side::Buy,
-            kind: quantick_sim::EntryKind::Market,
+            kind: quantick_trading::EntryKind::Market,
             price: None,
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
             cancel_at: None,
             flat_only: false,
             placed_ms: 0,
-            role: quantick_sim::OrderRole::Entry,
+            role: quantick_trading::OrderRole::Entry,
             oco: None,
             reduce_only: false,
         };
         let _ = instance.on_sim_events(&[VenueEvent::Placed(order)]);
-        let _ = instance.on_sim_events(&[VenueEvent::Filled(quantick_sim::Fill {
+        let _ = instance.on_sim_events(&[VenueEvent::Filled(quantick_trading::Fill {
             timestamp_ms: 1,
             agg_id: 10,
             side: Side::Buy,
             price: dec("106"),
             quantity: Decimal::ONE,
-            role: quantick_sim::FillRole::Entry(OrderId(7)),
+            role: quantick_trading::FillRole::Entry(OrderId(7)),
         })]);
         // Flat again on the next bar: the one shot is spent.
         instance.on_closed_bar(&bar("106", "107"), &region, true, true);

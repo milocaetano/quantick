@@ -262,9 +262,10 @@ fn divider_x(app: &QuantickApp) -> f32 {
 
 /// Arm the ticket's sell limit: a level above the mark is a price it takes.
 fn arm_a_sell(app: &mut QuantickApp) {
-    app.active_tab_mut()
-        .paper
-        .arm_for_tests(quantick_engine::Side::Sell, quantick_sim::EntryKind::Limit);
+    app.active_tab_mut().paper.arm_for_tests(
+        quantick_engine::Side::Sell,
+        quantick_trading::EntryKind::Limit,
+    );
 }
 
 /// The divider's lane-side half resizes the lane under an armed ticket and
