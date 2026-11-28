@@ -21,7 +21,8 @@ use quantick_engine::Side;
 use quantick_paper::PaperAccount;
 use quantick_replay::format::ParseOptions;
 use quantick_replay::session::Session;
-use quantick_sim::{Bracket, Command, ExitReason, history};
+use quantick_sim::{Command, history};
+use quantick_trading::{Bracket, ExitReason};
 use rust_decimal::Decimal;
 
 use scratch::ScratchDir;

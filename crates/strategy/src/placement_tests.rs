@@ -5,7 +5,8 @@
 use core::str::FromStr;
 
 use quantick_engine::{Bar, Side};
-use quantick_sim::{Bracket, Command};
+use quantick_sim::Command;
+use quantick_trading::Bracket;
 use rust_decimal::Decimal;
 
 use crate::{

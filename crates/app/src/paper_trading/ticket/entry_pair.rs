@@ -5,7 +5,7 @@
 
 use eframe::egui;
 use quantick_engine::Side;
-use quantick_sim::EntryKind;
+use quantick_trading::EntryKind;
 
 use super::super::{PaperTrading, kind_word, side_word_upper};
 use crate::paper_chrome::{fmt_decimal, points_color, trade_action_ink};

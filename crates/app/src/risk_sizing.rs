@@ -7,7 +7,7 @@
 //! trader types into, rewritten from the model while they do not hold the
 //! keyboard. Every policy name is re-exported so callers keep one address.
 
-use quantick_sim::InstrumentMoney;
+use quantick_trading::InstrumentMoney;
 use rust_decimal::Decimal;
 
 pub(crate) use quantick_paper::risk_sizing::*;

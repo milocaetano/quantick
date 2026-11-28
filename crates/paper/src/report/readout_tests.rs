@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use quantick_civil::TzOffset;
 use quantick_engine::Side;
-use quantick_sim::{ExitReason, history};
+use quantick_sim::history;
+use quantick_trading::ExitReason;
 
 use super::*;
 use crate::instruments::InstrumentCatalog;

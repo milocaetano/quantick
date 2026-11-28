@@ -11,7 +11,8 @@ mod light_plate_tests;
 use eframe::egui;
 use quantick_engine::{Side, Trade};
 use quantick_paper::desk::PaperControl;
-use quantick_sim::{ClosedTrade, Command, history};
+use quantick_sim::{Command, history};
+use quantick_trading::{ClosedTrade, EntryKind};
 use rust_decimal::Decimal;
 
 use crate::chart::PriceScale;
@@ -22,7 +23,6 @@ use crate::paper_trading::*;
 use crate::timezone::TzOffset;
 use quantick_paper::desk::PaperDrag;
 use quantick_paper::desk::geometry::{TAG_BUTTON_PX, TAG_GAP_PX};
-use quantick_sim::EntryKind;
 
 fn print(agg_id: u64, price: i64) -> Trade {
     Trade {
@@ -798,7 +798,7 @@ fn the_ledger_cache_excludes_the_live_session_file() {
         opened_ms: 10,
         closed_ms: 20,
         pnl_points: Decimal::from(5),
-        exit_reason: quantick_sim::ExitReason::Manual,
+        exit_reason: quantick_trading::ExitReason::Manual,
         entry_agg_id: Some(1),
         exit_agg_id: Some(2),
         mae_points: Some(Decimal::ZERO),

@@ -11,7 +11,7 @@ use quantick_paper::report::session_edit::{
 };
 use quantick_paper::risk_sizing::RiskState;
 use quantick_session::paper::{SharedChange, TabPaper, TradeCommand, TradeOutcome};
-use quantick_sim::Order;
+use quantick_trading::Order;
 use rust_decimal::Decimal;
 
 /// The fake window keeps no paper desk: every trade action finds no

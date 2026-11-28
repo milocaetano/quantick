@@ -64,7 +64,7 @@ fn ingest(app: &mut QuantickApp, trades: &[quantick_engine::Trade]) {
     }
 }
 
-fn position(app: &QuantickApp) -> Option<quantick_sim::Position> {
+fn position(app: &QuantickApp) -> Option<quantick_trading::Position> {
     app.active_tab().paper.account().venue().position().cloned()
 }
 

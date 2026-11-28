@@ -27,7 +27,8 @@ use quantick_paper::account::{AccountEnv, TimelineReset};
 use quantick_paper::desk::{CmdTradingSettings, Desk, TradeBar};
 use quantick_paper::format::PositionSummary;
 use quantick_paper::risk_sizing::RiskState;
-use quantick_sim::{Bracket, ClosedTrade, Command, EntryKind, Order, VenueEvent};
+use quantick_sim::Command;
+use quantick_trading::{Bracket, ClosedTrade, EntryKind, Order, VenueEvent};
 use rust_decimal::Decimal;
 
 #[path = "paper_command.rs"]

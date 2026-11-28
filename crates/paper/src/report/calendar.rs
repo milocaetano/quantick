@@ -1,6 +1,6 @@
 //! Calendar statistics, selection and date labels shared by report surfaces.
 use quantick_civil::{CivilDate, DateRange, TzOffset, parse_iso_date};
-use quantick_sim::ClosedTrade;
+use quantick_trading::ClosedTrade;
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, BTreeSet};
 /// `January`…`December`, for the calendar's own header.
@@ -516,7 +516,7 @@ mod tests {
             opened_ms: closed_ms - 1_000,
             closed_ms,
             pnl_points: Decimal::from(pnl),
-            exit_reason: quantick_sim::ExitReason::Manual,
+            exit_reason: quantick_trading::ExitReason::Manual,
             entry_agg_id: None,
             exit_agg_id: None,
             mae_points: None,

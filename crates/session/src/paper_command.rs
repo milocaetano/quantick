@@ -16,8 +16,8 @@ use std::borrow::BorrowMut;
 
 use quantick_engine::Side;
 use quantick_paper::PaperAccount;
-use quantick_sim::{Bracket, OrderId, OrderIntent, VenueEvent};
 use quantick_sources::sync::Desync;
+use quantick_trading::{Bracket, OrderId, OrderIntent, VenueEvent};
 
 use super::TabPaper;
 

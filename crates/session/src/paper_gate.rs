@@ -16,8 +16,9 @@ use std::borrow::BorrowMut;
 use quantick_engine::Side;
 use quantick_paper::PaperAccount;
 use quantick_paper::desk::ChartCommand;
-use quantick_sim::{Command, OrderId, RejectReason, VenueEvent};
+use quantick_sim::Command;
 use quantick_sources::sync::{Desync, STRATEGY_ENTRY_PAUSED, SyncReading};
+use quantick_trading::{OrderId, RejectReason, VenueEvent};
 use rust_decimal::Decimal;
 
 use super::{TabPaper, TradeCommand};

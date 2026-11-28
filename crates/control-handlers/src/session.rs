@@ -23,7 +23,7 @@ use quantick_control_host::{
 };
 use quantick_paper::{format::PositionSummary, risk_sizing::RiskState};
 use quantick_replay::Session;
-use quantick_sim::Order;
+use quantick_trading::Order;
 
 use crate::OpenTabs;
 use crate::dock::ProjectionDock;

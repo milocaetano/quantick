@@ -14,6 +14,7 @@ quantick-indicators = { path = "../indicators" }
 # The compiler, the alert titles it reads and the runtime fault it keeps.
 quantick-pine = { path = "../pine" }
 quantick-sim = { path = "../sim" }
+quantick-trading = { path = "../trading" }
 # The one store-write gate (DS7) the bank asks before it writes.
 quantick-workspace = { path = "../workspace" }
 rust_decimal = { workspace = true }

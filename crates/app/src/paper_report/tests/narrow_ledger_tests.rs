@@ -7,7 +7,7 @@ use quantick_paper::pnl::PnlReader;
 use quantick_paper::report::readout::LedgerTotals;
 use quantick_paper::report::sessions::{SessionKey, TradeRef};
 use quantick_sim::history::SessionSource;
-use quantick_sim::{ClosedTrade, ExitReason};
+use quantick_trading::{ClosedTrade, ExitReason};
 use rust_decimal::Decimal;
 
 use super::super::ledger::draw_totals_strip;

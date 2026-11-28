@@ -10,8 +10,9 @@ use std::path::PathBuf;
 
 use quantick_engine::{Side, Trade};
 use quantick_paper::PaperAccount;
-use quantick_sim::{Command, VenueEvent};
+use quantick_sim::Command;
 use quantick_strategy::runner::StrategyPort;
+use quantick_trading::VenueEvent;
 use rust_decimal::Decimal;
 
 use crate::paper::TabPaper;
@@ -76,8 +77,11 @@ fn a_live_print_fills_a_resting_limit_and_its_target_journals_the_close() {
     let mut paper = flat();
     paper.seed(&print(0, 100));
     let events = paper.account.venue_mut().submit(
-        quantick_sim::OrderIntent::limit(Side::Buy, Decimal::ONE, Decimal::from(95))
-            .with_bracket(quantick_sim::Bracket::whole(None, Some(Decimal::from(105)))),
+        quantick_trading::OrderIntent::limit(Side::Buy, Decimal::ONE, Decimal::from(95))
+            .with_bracket(quantick_trading::Bracket::whole(
+                None,
+                Some(Decimal::from(105)),
+            )),
     );
     paper.account.handle_events(events);
     assert_eq!(paper.working_orders().len(), 1, "the limit rests");
@@ -153,7 +157,7 @@ fn a_timeline_reset_flattens_and_empties_the_hand() {
     let _ = paper.account.take_toast();
     paper.desk.armed = Some(quantick_paper::desk::ArmedPlacement {
         side: Side::Buy,
-        kind: quantick_sim::EntryKind::Limit,
+        kind: quantick_trading::EntryKind::Limit,
     });
 
     paper.on_timeline_reset();
@@ -170,7 +174,7 @@ fn a_timeline_reset_that_sweeps_orders_says_so() {
     let events = paper
         .account
         .venue_mut()
-        .submit(quantick_sim::OrderIntent::limit(
+        .submit(quantick_trading::OrderIntent::limit(
             Side::Buy,
             Decimal::ONE,
             Decimal::from(90),
@@ -218,13 +222,13 @@ fn a_saved_flatten_says_so_and_an_unsaved_one_leaves_the_warning() {
 fn the_quantity_steppers_walk_the_instruments_own_size_step() {
     let mut paper = flat();
     paper.set_symbol("BTCUSDT");
-    let money = quantick_sim::InstrumentMoney {
+    let money = quantick_trading::InstrumentMoney {
         point_value: Decimal::ONE,
         size_step: Decimal::new(1, 5),
         min_size: Decimal::new(1, 5),
         max_size: None,
-        currency: quantick_sim::Currency::new("USDT").expect("USDT"),
-        source: quantick_sim::MoneySource::Declared,
+        currency: quantick_trading::Currency::new("USDT").expect("USDT"),
+        source: quantick_trading::MoneySource::Declared,
     };
     let book = [("BTCUSDT".to_owned(), money)].into_iter().collect();
     paper.account.set_instrument_money(book);
@@ -243,7 +247,7 @@ fn the_strategy_port_reaches_the_account() {
     let events = paper.apply(Command::PlaceMarket {
         side: Side::Buy,
         quantity: Decimal::ONE,
-        bracket: quantick_sim::Bracket::none(),
+        bracket: quantick_trading::Bracket::none(),
     });
     assert!(
         matches!(events.as_slice(), [VenueEvent::Placed(_)]),

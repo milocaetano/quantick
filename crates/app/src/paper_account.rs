@@ -30,7 +30,7 @@ use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 
 use quantick_paper::PaperAccount as Core;
-use quantick_sim::VenueEvent;
+use quantick_trading::VenueEvent;
 
 mod export;
 mod report;

@@ -2,8 +2,8 @@
 use super::calendar::DaySet;
 use super::{HistoryRow, ReportPeriod, ReportView, SourceSelection};
 use crate::format::PositionSummary;
-use quantick_sim::ClosedTrade;
 use quantick_sim::PerformanceReport;
+use quantick_trading::ClosedTrade;
 use rust_decimal::Decimal;
 use std::path::{Path, PathBuf};
 

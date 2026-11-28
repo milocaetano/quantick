@@ -9,11 +9,12 @@
 //! with the pane's other strategies ([`TabStrategies::evaluate`]).
 
 use quantick_engine::{Bar, Side};
-use quantick_sim::{Command, VenueEvent};
+use quantick_sim::Command;
 use quantick_strategy::runner::StrategyPort;
 pub use quantick_strategy::script::ScriptPlacement;
 use quantick_strategy::script::{Script, ScriptInstance, ScriptState, WARMUP_BARS};
 pub use quantick_strategy::{OrderQuantity, SignalAction, SignalOrder};
+use quantick_trading::VenueEvent;
 use rust_decimal::Decimal;
 
 use crate::strategies::TabStrategies;

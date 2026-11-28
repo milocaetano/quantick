@@ -10,7 +10,7 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::Side;
 use quantick_session::paper::TradeCommand;
-use quantick_sim::EntryKind;
+use quantick_trading::EntryKind;
 use rust_decimal::Decimal;
 
 use quantick_paper::desk::ticket::parse_offset;
@@ -76,8 +76,8 @@ impl PaperTrading {
                 fmt_decimal(price),
             );
             let reason = match kind {
-                EntryKind::Limit => quantick_sim::RejectReason::LimitOnWrongSide(side),
-                _ => quantick_sim::RejectReason::StopOnWrongSide(side),
+                EntryKind::Limit => quantick_trading::RejectReason::LimitOnWrongSide(side),
+                _ => quantick_trading::RejectReason::StopOnWrongSide(side),
             };
             let response = ui
                 .add_enabled(valid, egui::Button::new(label))

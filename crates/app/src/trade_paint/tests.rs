@@ -1,5 +1,5 @@
 use super::*;
-use quantick_sim::ExitReason;
+use quantick_trading::ExitReason;
 use rust_decimal::Decimal;
 
 fn trade(open_s: i64, close_s: i64, pnl: i64) -> ClosedTrade {

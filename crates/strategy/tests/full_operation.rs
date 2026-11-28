@@ -4,11 +4,12 @@
 //! in the workspace keeps.
 
 use quantick_engine::{BarBuilder as _, Side, TickBarBuilder, Trade};
-use quantick_sim::{ClosedTrade, Command, ExitReason, Position, Simulator};
+use quantick_sim::{Command, Simulator};
 use quantick_strategy::{
     ArmedState, ArmedStrategy, ForceParams, ForceTrigger, PriceBracket, Rearm, Region,
     StrategyParams,
 };
+use quantick_trading::{ClosedTrade, ExitReason, Position};
 use rust_decimal::Decimal;
 
 fn dec(s: &str) -> Decimal {
@@ -217,7 +218,7 @@ fn the_retest_fills_at_the_edge_and_rides_to_the_target() {
             side: Side::Sell,
             quantity: Decimal::ONE,
             price: dec("105"),
-            bracket: quantick_sim::Bracket::whole(Some(dec("108")), Some(dec("100"))),
+            bracket: quantick_trading::Bracket::whole(Some(dec("108")), Some(dec("100"))),
             cancel_at: Some(dec("100")),
             flat_only: true,
         }]

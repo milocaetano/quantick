@@ -8,9 +8,10 @@ use quantick_engine::{Side, Trade};
 use quantick_paper::PaperAccount;
 use quantick_paper::desk::ChartCommand;
 use quantick_paper::fake_broker::{TradeMode, broker};
-use quantick_sim::{Bracket, Command, EntryKind, OrderId, OrderIntent, RejectReason, VenueEvent};
+use quantick_sim::Command;
 use quantick_sources::sync::{Desync, LinkState, STRATEGY_ENTRY_PAUSED, SyncLimits, SyncReading};
 use quantick_strategy::runner::StrategyPort;
+use quantick_trading::{Bracket, EntryKind, OrderId, OrderIntent, RejectReason, VenueEvent};
 use rust_decimal::Decimal;
 
 use crate::paper::{TabPaper, TradeCommand, TradeRefusal};

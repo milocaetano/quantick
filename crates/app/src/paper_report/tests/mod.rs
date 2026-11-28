@@ -9,7 +9,8 @@
 
 use eframe::egui;
 use quantick_engine::Side;
-use quantick_sim::{ExitReason, history};
+use quantick_sim::history;
+use quantick_trading::ExitReason;
 use rust_decimal::Decimal;
 
 // The items the split gave owners; `super::*` still carries the state
@@ -88,7 +89,7 @@ fn a_ledger_row_names_its_market_its_clock_its_age_and_its_ending() {
     let utc = TzOffset::new(0);
     let mut trade = trade_at(1_773_666_068_000, -25);
     trade.opened_ms = trade.closed_ms - 246_000;
-    trade.exit_reason = quantick_sim::ExitReason::TakeProfit;
+    trade.exit_reason = quantick_trading::ExitReason::TakeProfit;
     // The detail line spends every character it has on the reason:
     // the instrument rides the head line and the date the right-hand
     // stamp, precisely so "take profit" is never cut to "take prof…".

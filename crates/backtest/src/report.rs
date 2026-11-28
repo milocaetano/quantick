@@ -16,7 +16,8 @@
 use std::fmt::Write as _;
 
 use quantick_engine::Side;
-use quantick_sim::{ExitReason, PerformanceReport};
+use quantick_sim::PerformanceReport;
+use quantick_trading::ExitReason;
 use rust_decimal::Decimal;
 
 use crate::run::{Anomalies, RunOutcome, SessionRun};
@@ -384,8 +385,8 @@ mod tests {
     }
 
     /// A finished round trip with the given signed result.
-    fn trade(points: i64) -> quantick_sim::ClosedTrade {
-        quantick_sim::ClosedTrade {
+    fn trade(points: i64) -> quantick_trading::ClosedTrade {
+        quantick_trading::ClosedTrade {
             side: quantick_engine::Side::Buy,
             quantity: Decimal::ONE,
             entry_price: Decimal::from(100),
