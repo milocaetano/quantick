@@ -12,7 +12,7 @@ import subprocess
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
-FROZEN_LEXER = ROOT / "tools/outside_score/measure.py"
+FROZEN_LEXER = ROOT / "tools/edit_loop/lexer.py"
 LEXER_SPEC = importlib.util.spec_from_file_location("edit_loop_frozen_lexer", FROZEN_LEXER)
 LEXER = importlib.util.module_from_spec(LEXER_SPEC)
 LEXER_SPEC.loader.exec_module(LEXER)
@@ -126,7 +126,7 @@ def command_environment(repo, target, jobs, inherited=None):
 
 
 def input_hashes(repo):
-    paths = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "tools/outside_score/measure.py",
+    paths = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
              "crates/app/config/bubbles.toml", "tools/edit_loop/budgets.json"]
     paths += [path.relative_to(repo).as_posix() for path in (repo / "tools/edit_loop").glob("*.py")]
     paths += [path.relative_to(repo).as_posix() for path in (repo / "crates").glob("*/Cargo.toml")]
@@ -134,8 +134,8 @@ def input_hashes(repo):
 
 
 def protocol_hash(hashes):
-    paths = [path for path in hashes if path == "tools/outside_score/measure.py"
-             or (path.startswith("tools/edit_loop/") and path.endswith(".py")
+    paths = [path for path in hashes
+             if (path.startswith("tools/edit_loop/") and path.endswith(".py")
                  and not Path(path).name.startswith("test_"))]
     return digest("\n".join(f"{path} {hashes[path]}" for path in sorted(paths)).encode())
 

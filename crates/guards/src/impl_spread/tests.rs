@@ -5,12 +5,12 @@ use std::path::PathBuf;
 
 // --- The port of `measure.py`, against the shared corpus ---------------------
 //
-// `tools/outside_score/fixtures/expected.tsv` holds the per-file counts
+// `tests/fixtures/impl_spread/expected.tsv` holds the per-file counts
 // `measure.py` gives the corpus, so the port is pinned to one table rather
 // than to a hand-copied number.
 
 fn corpus() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/outside_score/fixtures")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/impl_spread")
 }
 
 #[test]

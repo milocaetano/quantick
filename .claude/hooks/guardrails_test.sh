@@ -497,14 +497,14 @@ else
     mkdir -p "$root/readcost/crates/core/src" \
         "$root/readcost/docs/quality/read-cost" \
         "$root/readcost/tools/read_cost" \
-        "$root/readcost/tools/outside_score"
+        "$root/readcost/tools/edit_loop"
     # Every module, not the three the advisory needed on the day this was
     # written: a fourth one arriving makes the copied calculator fail to
     # import, the advisory fall silent, and these cases fail for a reason
     # that has nothing to do with the hook.
     cp "$script_dir/../../tools/read_cost/"*.py "$root/readcost/tools/read_cost/"
-    cp "$script_dir/../../tools/outside_score/measure.py" \
-        "$root/readcost/tools/outside_score/"
+    cp "$script_dir/../../tools/edit_loop/lexer.py" \
+        "$root/readcost/tools/edit_loop/"
     printf '[package]\nname = "core"\n' > "$root/readcost/crates/core/Cargo.toml"
     printf 'pub fn helper() {}\n' > "$root/readcost/crates/core/src/helper.rs"
     printf 'mod helper;\npub fn before() {}\n' > "$root/readcost/crates/core/src/lib.rs"

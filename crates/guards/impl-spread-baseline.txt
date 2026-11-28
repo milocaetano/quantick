@@ -7,7 +7,7 @@
 # The impl-spread ratchet's one ceiling (`crates/guards/src/impl_spread.rs`):
 # the most distinct production files that one type's inherent `impl` blocks
 # may span, in any crate over 20,000 production lines, counted as
-# `tools/outside_score/measure.py` counts `crate.<name>.impl_spread`. Every
+# `tools/edit_loop/lexer.py` counts `crate.<name>.impl_spread`. Every
 # type over it fails. The slack is zero, so a spread that fell fails too until
 # `cargo run -p quantick-guards -- --tighten` writes the new ceiling.
 #

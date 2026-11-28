@@ -2,7 +2,7 @@
 """Print the measured rows the outside-score rubric grades, for one tree.
 
 Usage:
-    python tools/outside_score/measure.py <tree> [--ui-crate app] [--top 10]
+    python tools/edit_loop/lexer.py <tree> [--ui-crate app] [--top 10]
         [--ui-toolkit egui,eframe]
 
 <tree> is a checkout or an exported revision (`git archive <sha>`). An unknown

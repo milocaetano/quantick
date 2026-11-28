@@ -377,7 +377,7 @@ class ProductionLexerCorpusTest(unittest.TestCase):
     # frozen lexer this calculator loads and the guard cannot drift apart.
     def test_the_shared_corpus_measures_as_expected(self):
         lexer = read_cost.PRODUCTION
-        fixtures = os.path.join(HERE, "..", "outside_score", "fixtures")
+        fixtures = os.path.join(HERE, "..", "..", "crates", "guards", "tests", "fixtures", "impl_spread")
         with open(os.path.join(fixtures, "expected.tsv"), encoding="utf-8") as f:
             table = [line.split("\t") for line in f.read().splitlines() if line and not line.startswith("#")]
         self.assertTrue(table)

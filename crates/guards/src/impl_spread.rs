@@ -17,7 +17,7 @@
 //!
 //! # What is counted
 //!
-//! The definition is `tools/outside_score/measure.py`'s, ported in [`lex`]
+//! The definition is `tools/edit_loop/lexer.py`'s, ported in [`lex`]
 //! so the guard and that script agree on every tree whose crates have distinct
 //! directory names, as this tree's do: test files and
 //! `#[cfg(test)]` items are out, a crate's production lines are its non-blank
@@ -32,7 +32,7 @@
 //! keyed by that directory and named by its leaf, so two nested crates that
 //! share a leaf name stay two crates here; the script merges them under one
 //! row, a shape this tree does not have. The shared corpus in
-//! `tools/outside_score/fixtures/` pins the per-file definition: the guard's
+//! `crates/guards/tests/fixtures/impl_spread/` pins the per-file definition: the guard's
 //! tests read its `expected.tsv`.
 //!
 //! The edit-time [`check_file`] answers with the whole-tree verdict
